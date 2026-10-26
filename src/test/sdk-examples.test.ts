@@ -10,6 +10,10 @@ import { declareKey } from '../lib/identity/keyDeclaration';
 import { createVerifyGateway } from '../lib/identity/edgeVerify';
 import { createLegacyGateway, memoryQuarantineStore } from '../lib/sync/transports/legacyGateway';
 import type { KeyDeclaration } from '../lib/identity/keyDeclaration';
+import { fileURLToPath } from 'node:url';
+
+// Repo-relative files resolve from this file, so the tests run from any working directory (also as a submodule).
+const ROOT = join(fileURLToPath(import.meta.url), '../../..');
 
 const hasPython = spawnSync('python3', ['-c', 'import cryptography'], { encoding: 'utf8' }).status === 0;
 
@@ -24,7 +28,7 @@ describe('SDK examples', () => {
 
   it.skipIf(!hasPython)('sign_request.py signs an RFC 9421 drop that the edge gateway verifies against a wallet declaration', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cappz-py-'));
-    const script = 'packages/cappz-sdk/examples/sign_request.py';
+    const script = join(ROOT, 'packages/cappz-sdk/examples/sign_request.py');
     const pub = execFileSync('python3', [script, '--new-key', join(dir, 'device.key')], { encoding: 'utf8' }).trim();
     const wallet = keyPairFromPhrase(generateRecoveryPhrase());
     const decl = await declareKey(wallet.privateKey, wallet.address, { publicKey: pub, algorithm: 'ed25519', purpose: 'signing' });

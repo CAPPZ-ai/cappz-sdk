@@ -12,6 +12,10 @@ import { declareKey, revokeKeyDeclaration, type KeyDeclaration, type KeyRevocati
 import { generateRecoveryPhrase, keyPairFromPhrase } from '../lib/auth/wallet/session';
 import { generateSigningKey } from '../lib/sync/helloSignature';
 import { createLegacyGateway, memoryQuarantineStore } from '../lib/sync/transports/legacyGateway';
+import { fileURLToPath } from 'node:url';
+
+// Repo-relative files resolve from this file, so the tests run from any working directory (also as a submodule).
+const ROOT = join(fileURLToPath(import.meta.url), '../../..');
 
 const hasPhp = spawnSync('php', ['-r', 'exit(function_exists("sodium_crypto_sign_verify_detached") ? 0 : 1);']).status === 0;
 const cost = { instanceUsdPerHour: 0.034, vcpus: 2, label: 'assumption' };
@@ -91,7 +95,7 @@ describe('shadow verification of a legacy route', () => {
     const { w, dev, decl } = await walletWithKey();
     writeFileSync(join(dir, 'keys.json'), JSON.stringify({ [w.address]: [dev.publicKeyHex] }));
     const port = 40000 + Math.floor(Math.random() * 20000);
-    const php = spawn('php', ['-S', `127.0.0.1:${port}`, 'packages/cappz-sdk/examples/php/verify_route.php'], { env: { ...process.env, CAPPZ_PHP_KEYS: join(dir, 'keys.json') }, stdio: 'ignore' });
+    const php = spawn('php', ['-S', `127.0.0.1:${port}`, join(ROOT, 'packages/cappz-sdk/examples/php/verify_route.php')], { env: { ...process.env, CAPPZ_PHP_KEYS: join(dir, 'keys.json') }, stdio: 'ignore' });
     try {
       for (let i = 0; i < 50; i++) { try { await fetch(`http://127.0.0.1:${port}/`); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
       const declarations: KeyDeclaration[] = [decl]; const revocations: KeyRevocation[] = [];
@@ -124,7 +128,7 @@ describe('shadow verification of a legacy route', () => {
 
   it.skipIf(!hasPhp)('cappz_drop.php signs a drop the edge gateway verifies (PHP example now runs)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cappz-phpdrop-'));
-    const script = 'packages/cappz-sdk/examples/cappz_drop.php';
+    const script = join(ROOT, 'packages/cappz-sdk/examples/cappz_drop.php');
     const pub = await new Promise<string>((ok) => execFile('php', [script, '--new-key', join(dir, 'device.key')], (_e, out) => ok(String(out).trim())));
     const w = keyPairFromPhrase(generateRecoveryPhrase());
     writeFileSync(join(dir, 'decl.json'), JSON.stringify(await declareKey(w.privateKey, w.address, { publicKey: pub, algorithm: 'ed25519', purpose: 'signing' })));

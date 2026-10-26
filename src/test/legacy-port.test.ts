@@ -9,6 +9,10 @@ import { compileRoutes, createRouteHost, defineRoute, isPorted, nginxLocations, 
 import { inventoryPhpApp, parseAccessLog, planMarkdown, scaffoldRoutes, type PhpSource } from '../lib/legacyPort/phpInventory';
 import type { VerifyGateway } from '../lib/identity/edgeVerify';
 import * as sdkPort from '@cappz/sdk/port';
+import { fileURLToPath } from 'node:url';
+
+// Repo-relative files resolve from this file, so the tests run from any working directory (also as a submodule).
+const ROOT = join(fileURLToPath(import.meta.url), '../../..');
 
 const enc = new TextEncoder();
 const res = (status: number, type: string, body: string, extra: Record<string, string> = {}): CapturedResponse => ({ status, headers: new Headers({ 'content-type': type, ...extra }), body: enc.encode(body) });
@@ -190,7 +194,7 @@ describe('PHP inventory', () => {
       '127.0.0.1 - - [26/Oct/2026:10:00:04 +0000] "GET /legacy/report HTTP/1.1" 500 10 "-" "Mozilla"',
       '127.0.0.1 - - [26/Oct/2026:10:00:05 +0000] "GET /style.css HTTP/1.1" 200 10 "-" "Mozilla"',
     ].join('\n');
-    const inv = inventoryPhpApp({ files: read('packages/cappz-sdk/examples/php-app'), accessLog: log, crontab: '*/5 * * * * php /var/www/app/cron/cleanup.php\n0 3 * * * /usr/bin/backup.sh' });
+    const inv = inventoryPhpApp({ files: read(join(ROOT, 'packages/cappz-sdk/examples/php-app')), accessLog: log, crontab: '*/5 * * * * php /var/www/app/cron/cleanup.php\n0 3 * * * /usr/bin/backup.sh' });
     expect(inv.framework).toEqual(['plain']);
     const keys = inv.routes.map((r) => r.key);
     expect(keys).toEqual(expect.arrayContaining(['GET /api/orders.php', 'POST /api/orders.php', 'GET /']));
@@ -244,7 +248,7 @@ const hasPhp = spawnSync('php', ['-v'], { encoding: 'utf8' }).status === 0;
 describe('the example port against the real PHP app', () => {
   it.skipIf(!hasPhp)('every compared response matches (php -S), including the empty-string query cases', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cappz-php-'));
-    cpSync('packages/cappz-sdk/examples/php-app', dir, { recursive: true });
+    cpSync(join(ROOT, 'packages/cappz-sdk/examples/php-app'), dir, { recursive: true });
     process.env.CAPPZ_ORDERS_FILE = join(dir, 'data/orders.json');
     const port = 20000 + Math.floor(Math.random() * 20000);
     const php = spawn('php', ['-S', `127.0.0.1:${port}`, '-t', join(dir, 'public')], { stdio: 'ignore' });
@@ -271,7 +275,7 @@ describe('the example port against the real PHP app', () => {
 describe('overlapping writes (v15-12-01, tools/write-race.ts)', () => {
   it('the served port keeps every order it confirms, with distinct ids, and lists them from the node log', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cappz-race-'));
-    cpSync('packages/cappz-sdk/examples/php-app/data/orders.json', join(dir, 'orders.json'));
+    cpSync(join(ROOT, 'packages/cappz-sdk/examples/php-app/data/orders.json'), join(dir, 'orders.json'));
     process.env.CAPPZ_ORDERS_FILE = join(dir, 'orders.json'); process.env.CAPPZ_NODE_DATA = dir;
     try {
       vi.resetModules();
