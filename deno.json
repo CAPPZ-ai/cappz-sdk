@@ -1,0 +1,10 @@
+{
+  "imports": {
+    "@cappz/sdk/port": "./packages/cappz-sdk/port.ts",
+    "@cappz/sdk/identity": "./packages/cappz-sdk/identity.ts",
+    "@cappz/sdk/edge": "./packages/cappz-sdk/edge.ts",
+    "@cappz/sdk/transports": "./packages/cappz-sdk/transports.ts",
+    "@cappz/sdk/paidAgent": "./packages/cappz-sdk/paidAgent.ts"
+  },
+  "nodeModulesDir": "auto"
+}
