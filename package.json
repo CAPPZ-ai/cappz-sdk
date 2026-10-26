@@ -1,7 +1,7 @@
 {
   "name": "@cappz/sdk",
-  "version": "15.12.4",
-  "description": "CAPPZ SDK: move a PHP app off php-fpm route by route, KeyZ wallet-keyed trust, KeyZ Gate edge verification, edge transports through firewalls, paid agents, and the CAPPZ edge node.",
+  "version": "15.12.5",
+  "description": "CAPPZ SDK: local-first wallet storage, sync, skills, governance and RepoZ; move a PHP app off php-fpm route by route; KeyZ trust and KeyZ Gate; edge transports through firewalls; paid agents; the CAPPZ edge node.",
   "type": "module",
   "license": "Apache-2.0",
   "repository": {
@@ -14,7 +14,11 @@
     "./identity": "./packages/cappz-sdk/identity.ts",
     "./edge": "./packages/cappz-sdk/edge.ts",
     "./transports": "./packages/cappz-sdk/transports.ts",
-    "./paidAgent": "./packages/cappz-sdk/paidAgent.ts"
+    "./paidAgent": "./packages/cappz-sdk/paidAgent.ts",
+    "./skills": "./packages/cappz-sdk/skills.ts",
+    "./sync": "./packages/cappz-sdk/sync.ts",
+    "./governance": "./packages/cappz-sdk/governance.ts",
+    "./repoz": "./packages/cappz-sdk/repoz.ts"
   },
   "scripts": {
     "test": "vitest run",
@@ -22,14 +26,18 @@
   },
   "dependencies": {
     "@noble/curves": "^1.9.6",
-    "@noble/hashes": "^1.8.0 || ^2.0.0",
+    "@noble/hashes": "^2.4.0",
     "@noble/secp256k1": "^3.2.0",
     "@scure/bip39": "^2.4.0",
+    "crypto-js": "^4.2.0",
+    "fflate": "^0.8.3",
+    "graphology": "^0.26.0",
     "xrpl": "^4.4.0"
   },
   "devDependencies": {
     "vitest": "^3.2.7",
     "typescript": "^5.6.3",
-    "@types/node": "^22.7.9"
+    "@types/node": "^22.7.9",
+    "@types/crypto-js": "^4.2.2"
   }
 }

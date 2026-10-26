@@ -1,12 +1,13 @@
 # CAPPZ SDK
 
-The public part of [CAPPZ](https://cappz.ai), version 15.12.4. Apache-2.0.
+The public part of [CAPPZ](https://cappz.ai), version 15.12.5. Apache-2.0.
 
 - **`@cappz/sdk/port`**: move a PHP app off php-fpm one route at a time. Inventory the app, run each new handler beside PHP and compare every response, cut over on the evidence, roll back in about a second.
 - **`@cappz/sdk/identity`**: KeyZ, wallet-keyed trust. Keys are trusted through declarations the wallet signs, with revocations replayed offline and short delegations; SD-JWT identity claims; X.509 as a projection of a declaration.
 - **`@cappz/sdk/edge`**: KeyZ Gate, edge verification of signed HTTP requests (RFC 9421).
 - **`@cappz/sdk/transports`**: copies that reach each other through firewalls and proxies: signed hellos, the HTTPS relay and tunnel, WebTransport and WebSocket rungs, LAN multicast, body pull, chunked bodies.
 - **`@cappz/sdk/paidAgent`**: run an agent on your own device and get paid in XRP or CAPPZ, stage by stage.
+- **`@cappz/sdk/skills`, `/sync`, `/governance`, `/repoz`**: the wallet layer. Local-first storage (OPFS `cappz-store`, memory elsewhere), the Replicator's sync primitives, hash-verified principles, and RepoZ versioning. A hosted mirror is optional: register one with `registerHostedClient`, or run with none.
 - **`packages/cappz-edge-node`**: the CAPPZ edge node (relay, KeyZ Gate, route host, legacy faces) and its tools.
 
 Tutorials: [Move off PHP](https://cappz.ai/tutorials/move-off-php) · [Identity and trust](https://cappz.ai/tutorials/identity-and-trust) · [Replicate through firewalls](https://cappz.ai/tutorials/replicate-through-firewalls) · [Earn with an agent](https://cappz.ai/tutorials/earn-with-your-agent)
@@ -30,6 +31,15 @@ Moving your own app: [docs/MOVE_OFF_PHP.md](docs/MOVE_OFF_PHP.md). Identity, Key
 
 ## What is in the box
 
+- **Skills** — `FetchSkillsOnChain`: read the notarized skill catalog from the
+  wallet graph, not a static registry.
+- **Sync** — `CreateEventSubscription`, `runSyncCycle`, `syncCacheWalletCopies`:
+  the Replicator's sync primitives for wallet copies.
+- **Governance** — `PrinciplesChainlet`, `principlesChainlet`, `sha256Hex`:
+  hash-verified principle anchoring (COPE).
+- **RepoZ** — one inherited wallet-native versioning skill with generic
+  `ContentCreated` / `ContentAmended` history, multi-parent signed merges,
+  branch-scoped administration, and exact build dependency manifests.
 - **Frames and sessions** (`@cappz/sdk/transports`) — CPZ1 frames (`encodeJsonFrame`,
   `decodeJsonFrame`, `FrameDecoder`), pairing codes (`mintPairingCode`, `pairingCodeValid`), edge
   sessions (`openEdgeSession`) and hello helpers (`asEdgeTransport`, `canonicalHelloJson`).
@@ -97,6 +107,64 @@ Moving your own app: [docs/MOVE_OFF_PHP.md](docs/MOVE_OFF_PHP.md). Identity, Key
   address with the stage's destination tag; each result is held (HTTP 402 in
   the ready-made agent) until its stage is paid. Guided setup:
   https://cappz.ai/tutorials/earn-with-your-agent.
+
+## Storage, and an optional hosted mirror
+
+Data lives in wallets, stored on the device first: OPFS (`cappz-store`) in browsers, memory in Node and Deno
+tests. A hosted table mirror and hosted functions are a port, not a dependency
+(`src/lib/sync/hostedBackend.ts`):
+
+```ts
+import { registerHostedClient } from '@cappz/sdk/sync';
+registerHostedClient('routed', supabaseLikeClient);   // optional: from(table) builders + functions.invoke
+```
+
+With nothing registered, reads return no hosted rows, writes stay local (the sync adapter queues them in its
+outbox) and `suggestMerge` (a hosted agent) reports that it needs a backend. cappz.ai registers its own client.
+
+## Federated RepoZ
+
+```ts
+import { includeRepoZSkill, createRepoZContent, amendRepoZContent } from '@cappz/sdk/repoz';
+
+await includeRepoZSkill(appRoot);
+await createRepoZContent({ appRoot, artifactId, objectType: 'document', contentHash, contentAddress, actorAddress, signature });
+await amendRepoZContent({ appRoot, artifactId, objectType: 'document', contentHash: nextHash, contentAddress, actorAddress, signature, baseHeads });
+```
+
+The shared RepoZ POW is read-only by default. Each app's Administrators group
+may receive a wallet-signed amendment grant scoped from that app branch top
+node downward. Private bytes remain in the owning wallet; shared branches
+carry only version identity, hashes, dependencies, and build evidence.
+Grant issuance is deliberately absent from this public SDK until the trusted
+group-replay signer boundary is connected.
+
+> Each current location of documents have a repoz skill. If the included skill is anchored on a branch of the chain based graph, there is both functional isolation coordinated shared versioned reuse in a distributed manner.  
+> Create a single cappz-repoz wallet PTW that includes RepoZ skill.  Because each App and platform PTW holds the RepoZ skill respectively anchored to their sub graph of the ontological blockchain platform graph, any overlapping branches are multi-master version coordinated. Each app builds of specific versions.  App dependencies are traced via Txs within each App PTW. The vin diagram dependency graph made manifest. Each App PTW, PTO, and UAW have the embedded auto-syncing cappz-repoz seeparate from their private namespace encapsulating wallet whereee instance specific private content is strored.
+
+> from the app specific branch top node down. Same scoping as the resident admin agent.  Distributed synchronized and tenant ring-fenced federated development repoz. Need BPMN to capture it all.
+
+PTW means Prime Template Wallet. PTO/POW is the Prime Operational Wallet.
+UAW means User Application Wallet. See the full BPMN and architecture guide
+in `docs/CAPPZ_REPOZ_GUIDE.md`.
+
+## Storage compaction (v14-16-03)
+
+Archive = Replication + purge. Three notarized TXs: `ContentCompressed` (source → `<address>/compressed/gzip` child alias), `ContentArchived` (source → archive wallet, from a verified one-way Replicator receipt), `ContentPurged` (AgentAdmin → original, last; placeholder never replicates). See docs/CAPPZ_REPOZ_GUIDE.md.
+
+**Lazy decompress (decompress only on a cache hit):** the index and metadata load on boot; code and documents stay gzip-compressed in memory and are unzipped, hash-checked, only when opened (`lazyContent`), then kept in the hot cache. Untouched content costs no memory or CPU.
+
+**Archive activation (v14-16-04):** the Archive button checks every platform/app wallet for an archive replica; missing ones are created with `ReplicantCreated` + derived `ArchiveCreated` (same correlationId), then archive-content.bpmn runs. Only deltas are archived: content with no `ContentArchived` TX.
+
+## Process execution: clones vs copies (v14-16-07)
+
+BPMN templates declare external/async IN and OUT ports once. A running instance is localized to the executing wallet: `processInstanceAddress(walletRoot, process, n)`.
+
+- **Clone** (by value): own root; instances and instance ports are unique HD children of the clone. Use for wide distribution with active edge execution.
+- **Copy** (by reference): a connected shared library tracking the template head; owns no instance addresses, even when embedded in a clone (e.g. the PTW copy inside bible-codex POW/UAW clones). It runs in the host clone's scope (`executingWalletRoot`).
+- Caution: each clone grows its own instance tree. Instance ports are written only when a TX crosses them.
+
+Process → function bindings are written by `ConstructBPMN` → `BindBPMNFunctionsOnchain` (idempotent diff of `ConstituentIncluded`/`ConstituentRemoved`), from the build cycle or on demand by an admin.
 
 ## Use it in code
 

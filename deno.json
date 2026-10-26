@@ -4,7 +4,14 @@
     "@cappz/sdk/identity": "./packages/cappz-sdk/identity.ts",
     "@cappz/sdk/edge": "./packages/cappz-sdk/edge.ts",
     "@cappz/sdk/transports": "./packages/cappz-sdk/transports.ts",
-    "@cappz/sdk/paidAgent": "./packages/cappz-sdk/paidAgent.ts"
+    "@cappz/sdk/paidAgent": "./packages/cappz-sdk/paidAgent.ts",
+    "@cappz/sdk/skills": "./packages/cappz-sdk/skills.ts",
+    "@cappz/sdk/sync": "./packages/cappz-sdk/sync.ts",
+    "@cappz/sdk/governance": "./packages/cappz-sdk/governance.ts",
+    "@cappz/sdk/repoz": "./packages/cappz-sdk/repoz.ts"
   },
-  "nodeModulesDir": "auto"
+  "nodeModulesDir": "auto",
+  "unstable": [
+    "sloppy-imports"
+  ]
 }
