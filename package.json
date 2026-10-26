@@ -1,6 +1,6 @@
 {
   "name": "@cappz/sdk",
-  "version": "15.12.2",
+  "version": "15.12.4",
   "description": "CAPPZ SDK: move a PHP app off php-fpm route by route, KeyZ wallet-keyed trust, KeyZ Gate edge verification, edge transports through firewalls, paid agents, and the CAPPZ edge node.",
   "type": "module",
   "license": "Apache-2.0",
@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@noble/curves": "^1.9.6",
-    "@noble/hashes": "^1.8.0",
+    "@noble/hashes": "^1.8.0 || ^2.0.0",
     "@noble/secp256k1": "^3.2.0",
     "@scure/bip39": "^2.4.0",
     "xrpl": "^4.4.0"
