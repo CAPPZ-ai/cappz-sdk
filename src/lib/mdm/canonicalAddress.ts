@@ -9,8 +9,8 @@
  * Recorded events are never rewritten (AX-82). The COPE principles anchor is
  * the one address where `/v1` is part of the canonical name.
  *
- * One implementation (v15-12-05): this file. The server functions import it from the
- * public SDK at a pinned commit (supabase/functions/_shared/canonicalAddress.ts).
+ * The CAPPZ platform's edge functions keep a copy (supabase/functions/_shared) while they are
+ * frozen; its tests require that copy to match this code.
  */
 const PRINCIPLES_ANCHOR = /\/principles\/[^/]+\/v1$/;
 const VERSION_SEGMENT = /\/v1(?=\/|$)/g;
