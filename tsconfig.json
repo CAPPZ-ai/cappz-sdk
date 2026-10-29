@@ -24,6 +24,7 @@
   },
   "include": [
     "src",
-    "packages/cappz-sdk"
+    "packages/cappz-sdk",
+    "packages/cappz-mesh-node"
   ]
 }

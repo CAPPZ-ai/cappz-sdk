@@ -1,6 +1,6 @@
 # CAPPZ SDK
 
-The public part of [CAPPZ](https://cappz.ai), version 15.12.5. Apache-2.0.
+The public part of [CAPPZ](https://cappz.ai), version 15.13.0. Apache-2.0.
 
 - **`@cappz/sdk/port`**: move a PHP app off php-fpm one route at a time. Inventory the app, run each new handler beside PHP and compare every response, cut over on the evidence, roll back in about a second.
 - **`@cappz/sdk/identity`**: KeyZ, wallet-keyed trust. Keys are trusted through declarations the wallet signs, with revocations replayed offline and short delegations; SD-JWT identity claims; X.509 as a projection of a declaration.
@@ -8,6 +8,7 @@ The public part of [CAPPZ](https://cappz.ai), version 15.12.5. Apache-2.0.
 - **`@cappz/sdk/transports`**: copies that reach each other through firewalls and proxies: signed hellos, the HTTPS relay and tunnel, WebTransport and WebSocket rungs, LAN multicast, body pull, chunked bodies.
 - **`@cappz/sdk/paidAgent`**: run an agent on your own device and get paid in XRP or CAPPZ, stage by stage.
 - **`@cappz/sdk/skills`, `/sync`, `/governance`, `/repoz`**: the wallet layer. Local-first storage (OPFS `cappz-store`, memory elsewhere), the Replicator's sync primitives, hash-verified principles, and RepoZ versioning. A hosted mirror is optional: register one with `registerHostedClient`, or run with none.
+- **`@cappz/sdk/mesh`**: a resilience mesh for when the internet is down. Phones, laptops and small boards pass signed, delay-tolerant bundles device to device (hotspot, Wi-Fi Direct, WebRTC, BLE/LoRa fragments, USB sticks). KeyZ declarations and a KeyZ Gate check every bundle at every hop, offline. It includes text and voice messaging with names, messages to everyone, and blocking; LoRa via RNode boards; and native iPhone/Android shells. `packages/cappz-mesh-node` runs it on Linux, macOS, Windows and Android, serves a browser app for iPhone, and builds a signed go-kit: a one-file program with Node.js runtimes that a device that was never set up can copy and run with no internet. Field guide: [docs/MESH_FIELD_GUIDE.md](docs/MESH_FIELD_GUIDE.md).
 - **`packages/cappz-edge-node`**: the CAPPZ edge node (relay, KeyZ Gate, route host, legacy faces) and its tools.
 
 Tutorials: [Move off PHP](https://cappz.ai/tutorials/move-off-php) · [Identity and trust](https://cappz.ai/tutorials/identity-and-trust) · [Replicate through firewalls](https://cappz.ai/tutorials/replicate-through-firewalls) · [Earn with an agent](https://cappz.ai/tutorials/earn-with-your-agent)
@@ -100,6 +101,21 @@ Moving your own app: [docs/MOVE_OFF_PHP.md](docs/MOVE_OFF_PHP.md). Identity, Key
   (Python, RFC 9421 signing), `cappz_drop.php` (PHP, same spec, not run in CI),
   `legacy-clients.sh` (curl drops, FTPS, ldapsearch), `nginx-cappz.conf`. The
   TypeScript and Python examples run in this repository's tests as shipped.
+- **Resilience mesh** (`@cappz/sdk/mesh`, 15.13.0): offline store-carry-forward between devices.
+  - **Founding a mesh.** An authority wallet signs a charter (`createCharter`; the mesh id is its hash) and grants roles (`grantMembership`, `revokeMembership`). Precedence runs FLASH / IMMEDIATE / PRIORITY / ROUTINE and is bounded by role. Guests are carried at ROUTINE.
+  - **Bundles.** Each bundle is signed by a device key that the sender's wallet declared (KeyZ), carries its own credentials (sent by reference to neighbours that already hold them), and has its body sealed to the recipient's declared P-256 key (`sealBytesTo`).
+  - **The gate.** `MeshGate` is a KeyZ Gate for bundles, applied at every hop: signature, body hash, key trust and revocation, membership, precedence, and per-source origination rate.
+  - **The node.** `MeshNode` announces then pulls over CPZ1 frames and routes with spray-and-wait plus PRoPHET. Receipts are signed by the recipient and verifiable by every carrier. The store has per-source quotas, and KeyZ revocations are gossiped at FLASH.
+  - **Links.**
+    - TCP on any local network.
+    - WebSocket for browsers.
+    - WebRTC with offline pairing codes (`offerPairing` / `answerPairing`).
+    - LoRa through `RadioMedium` (a shared channel turned into links per neighbour, with an airtime budget and the duty-cycle rules in `LORA_REGIONS`) and KISS / RNode framing (`kissEncode`, `rnodeConfigFrames`).
+    - Native radios through `attachNativeBridge`: MultipeerConnectivity and Nearby Connections shells in `packages/cappz-mesh-native`, not yet compiled.
+    - Carry files (`writeCarryFile` / `readCarryFile`).
+  - **Messaging.** Text and voice messages (`splitVoice`, `VoiceAssembler`, `recordVoice`); signed, display-only names with nicknames and ambiguity-safe lookup (`ContactBook`); a channel for everyone (`EVERYONE_CHANNEL`); and a personal block list that stops showing and carrying a sender's messages while their revocations still apply.
+  - **Simulator and evals.** `runSimulation` and `runMeshEvals`: dense, sparse, shelters with couriers, forgers, flooders, a captured device, black holes, forged receipts, and jammed BLE, each with declared thresholds. Run them with `npm run mesh -- evals [--full]`.
+  - **Docs.** [docs/MESH_RESILIENCE.md](docs/MESH_RESILIENCE.md) covers the design; [docs/MESH_FIELD_GUIDE.md](docs/MESH_FIELD_GUIDE.md) is the field guide.
 - **Paid agents** — `createPaidAgent`, `SCHEDULE_PRESETS`, `paymentRequest`,
   `checkPayment`, `replayJob`: run an agent on your own device and get paid
   in XRP or CAPPZ stage by stage (upfront deposit, milestones, completion).

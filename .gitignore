@@ -3,3 +3,5 @@ node-data/
 *.phrase
 operator.json
 .env
+packages/cappz-mesh-node/web/app.js
+dist/

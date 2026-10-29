@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#14171c">
+<title>CAPPZ Mesh</title>
+<style>
+  :root { --bg: #f6f7f9; --fg: #14171c; --muted: #5b6573; --card: #fff; --line: #dde1e7; --accent: #1f6feb; --flash: #c62828; --immediate: #d97706; --priority: #2563eb; --routine: #4b5563; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0f1216; --fg: #e8ebef; --muted: #9aa4b2; --card: #171b21; --line: #2a3039; --accent: #5aa0ff; --flash: #ff6b6b; --immediate: #fbbf24; --priority: #7aa7ff; --routine: #a3acb9; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.45 -apple-system, system-ui, sans-serif; padding: env(safe-area-inset-top) 16px 24px; }
+  h1 { font-size: 20px; margin: 16px 0 4px; } h2 { font-size: 16px; margin: 20px 0 8px; }
+  section, details { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin: 12px 0; }
+  button, select, input, textarea { font: inherit; color: inherit; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); padding: 8px 10px; }
+  button { background: var(--accent); color: #fff; border: 0; cursor: pointer; } button[disabled] { opacity: .4; }
+  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; } .row > * { flex: 1 1 auto; min-width: 0; }
+  textarea { width: 100%; min-height: 70px; font: 12px ui-monospace, monospace; }
+  code.addr { font-size: 12px; word-break: break-all; } .muted { color: var(--muted); font-size: 14px; }
+  ul#feed { list-style: none; padding: 0; margin: 0; } #feed li { border-bottom: 1px solid var(--line); padding: 8px 0; overflow-wrap: anywhere; }
+  .p-flash { color: var(--flash); } .p-immediate { color: var(--immediate); } .p-priority { color: var(--priority); } .p-routine { color: var(--routine); }
+  li.flash { border-left: 4px solid var(--flash); padding-left: 8px !important; } li.receipt, li.mine { color: var(--muted); font-size: 14px; }
+  button.link { background: none; border: 0; color: var(--accent); padding: 0 4px; font-size: 13px; } button.rec { background: var(--flash); color: #fff; }
+  ul.plain { list-style: none; padding: 0; } ul.plain li { padding: 8px 0; border-bottom: 1px solid var(--line); } .who { font-weight: 600; } audio { max-width: 100%; vertical-align: middle; }
+  pre#notes { white-space: pre-wrap; font-size: 12px; color: var(--muted); max-height: 140px; overflow: auto; margin: 0; }
+  label { display: block; margin: 8px 0 4px; font-size: 14px; color: var(--muted); }
+</style>
+</head>
+<body>
+<h1>CAPPZ Mesh</h1>
+<p class="muted">Works with no internet. Messages hop phone to phone; every hop checks who sent them.</p>
+
+<div id="setup">
+  <section>
+    <h2>1 · Your wallet</h2>
+    <p id="wallet-state"></p>
+    <div class="row"><button id="make-wallet">Create wallet</button><button id="share-address" class="secondary">Share my address with the coordinator</button></div>
+  </section>
+  <section>
+    <h2>2 · The mesh charter</h2>
+    <p id="charter-state"></p>
+    <div class="row"><button id="charter-from-node" class="secondary">Use this node’s charter</button></div>
+    <label for="charter-file">or open a charter file</label><input id="charter-file" type="file" accept=".json,application/json">
+  </section>
+  <section>
+    <h2>3 · Your membership grant (from the coordinator)</h2>
+    <p id="grant-state"></p>
+    <label for="grant-file">open the grant file (AirDrop, Files)</label><input id="grant-file" type="file" accept=".json,application/json">
+    <div class="row"><button id="grant-paste" class="secondary">Paste grant</button></div>
+  </section>
+  <section><button id="provision" disabled>Set up this phone</button></section>
+</div>
+
+<div id="mesh" hidden>
+  <p id="me" class="muted"></p>
+  <p id="status" class="muted"></p>
+  <section>
+    <form id="compose">
+      <div class="row"><label for="to" style="flex:0 0 auto;margin:0">To</label><select id="to" style="flex:1 1 auto"></select><select id="prec" aria-label="precedence" style="flex:0 0 auto"></select></div>
+      <div class="row" style="margin-top:8px"><input id="text" autocomplete="off" placeholder="Message"><button type="button" id="mic" class="secondary" style="flex:0 0 auto" aria-label="record a voice message">🎤</button><button type="submit" style="flex:0 0 auto">Send</button></div>
+      <p class="muted" style="margin:6px 0 0">“Everyone” reaches every device. Use a higher precedence only for what matters. Voice: tap 🎤, speak, tap again to send (Wi-Fi only, not over LoRa).</p>
+    </form>
+  </section>
+  <section><ul id="feed"></ul></section>
+  <details>
+    <summary>People</summary>
+    <p class="muted">Names are chosen by each person and are not unique, so each is shown with the start of their address (⚠ = several people use that name). A nickname you set is only on this device. Blocking hides and stops carrying that person’s messages, including messages to everyone.</p>
+    <ul id="people" class="plain"></ul>
+    <button id="add-person" class="secondary">Add someone by address</button>
+  </details>
+  <details>
+    <summary>Me</summary>
+    <label for="alias">Name others see (with your address)</label>
+    <div class="row"><input id="alias" maxlength="32" autocomplete="off"><button id="alias-save" class="secondary" style="flex:0 0 auto">Save</button></div>
+  </details>
+  <details>
+    <summary>Link directly to another phone</summary>
+    <p class="muted">Both phones on the same Wi-Fi or hotspot. One taps “Make offer” and sends the code (AirDrop, message, QR, read aloud); the other pastes it and taps “Answer / Finish”, then sends its code back; the first pastes that and taps “Answer / Finish”.</p>
+    <div class="row"><button id="pair-offer" class="secondary">Make offer</button><button id="pair-share" class="secondary">Share my code</button></div>
+    <label for="pair-code">My code</label><textarea id="pair-code" readonly></textarea>
+    <label for="pair-input">Their code</label><textarea id="pair-input"></textarea>
+    <div class="row"><button id="pair-answer">Answer / Finish</button></div>
+  </details>
+</div>
+<details>
+    <summary>Backup, restore, my address</summary>
+    <div class="row"><button id="copy-me" class="secondary">Share my address</button><button id="backup" class="secondary">Download backup</button></div>
+    <label for="restore">Restore a backup</label><input id="restore" type="file" accept=".json,application/json">
+</details>
+<details open><summary>Activity</summary><pre id="notes"></pre></details>
+<script src="app.js"></script>
+</body>
+</html>

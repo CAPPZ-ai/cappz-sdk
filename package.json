@@ -1,7 +1,7 @@
 {
   "name": "@cappz/sdk",
-  "version": "15.12.5",
-  "description": "CAPPZ SDK: local-first wallet storage, sync, skills, governance and RepoZ; move a PHP app off php-fpm route by route; KeyZ trust and KeyZ Gate; edge transports through firewalls; paid agents; the CAPPZ edge node.",
+  "version": "15.13.0",
+  "description": "CAPPZ SDK: local-first wallet storage, sync, skills, governance and RepoZ; move a PHP app off php-fpm route by route; KeyZ trust and KeyZ Gate; edge transports through firewalls; paid agents; the CAPPZ edge node; a resilience mesh (phones and laptops carrying each other's traffic when the internet is down).",
   "type": "module",
   "license": "Apache-2.0",
   "repository": {
@@ -18,11 +18,14 @@
     "./skills": "./packages/cappz-sdk/skills.ts",
     "./sync": "./packages/cappz-sdk/sync.ts",
     "./governance": "./packages/cappz-sdk/governance.ts",
-    "./repoz": "./packages/cappz-sdk/repoz.ts"
+    "./repoz": "./packages/cappz-sdk/repoz.ts",
+    "./mesh": "./packages/cappz-sdk/mesh.ts"
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "mesh": "vite-node packages/cappz-mesh-node/main.ts --",
+    "mesh:kit": "vite-node packages/cappz-mesh-node/main.ts -- kit-build"
   },
   "dependencies": {
     "@noble/curves": "^1.9.6",

@@ -8,7 +8,8 @@
     "@cappz/sdk/skills": "./packages/cappz-sdk/skills.ts",
     "@cappz/sdk/sync": "./packages/cappz-sdk/sync.ts",
     "@cappz/sdk/governance": "./packages/cappz-sdk/governance.ts",
-    "@cappz/sdk/repoz": "./packages/cappz-sdk/repoz.ts"
+    "@cappz/sdk/repoz": "./packages/cappz-sdk/repoz.ts",
+    "@cappz/sdk/mesh": "./packages/cappz-sdk/mesh.ts"
   },
   "nodeModulesDir": "auto",
   "unstable": [
