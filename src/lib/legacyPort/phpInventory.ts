@@ -27,6 +27,7 @@
  *                   quarantine; mail and outbound HTTP without secrets → edge node
  *   4 secrets-last  reads a third-party secret → hosted only where the secret forces it
  */
+import { callIndex } from '../text/textScan.ts';
 
 export interface PhpSource { path: string; text: string }
 
@@ -170,8 +171,8 @@ function frameworkRoutes(files: PhpSource[]): Def[] {
   for (const f of files) { const m = /\bclass\s+(\w+)/.exec(f.text); if (m) byClass.set(m[1], f); }
   const methodText = (cls: string, method: string): { src: string; line: number; text: string } | null => {
     const f = byClass.get(cls); if (!f) return null;
-    const m = new RegExp(`function\\s+${method}\\s*\\(`).exec(f.text); if (!m) return { src: f.path, line: 1, text: f.text };
-    return { src: `${f.path}#${method}`, line: lineOf(f.text, m.index), text: blockAt(f.text, m.index) };
+    const at = callIndex(f.text, method, 'function'); if (at < 0) return { src: f.path, line: 1, text: f.text };
+    return { src: `${f.path}#${method}`, line: lineOf(f.text, at), text: blockAt(f.text, at) };
   };
   const ROUTE = /(?:Route::|\$app->|\$router->|\$routes->|\$group->)(get|post|put|patch|delete|any|options)\s*\(\s*['"]([^'"]*)['"]\s*,\s*/gi;
   for (const f of files) {
@@ -278,7 +279,7 @@ export function inventoryPhpApp(input: { files: PhpSource[]; accessLog?: string;
       const f = resolveInclude(d.source, inc); if (!f) continue;
       // A library of functions contributes only the functions this route calls; other includes count whole.
       const fns = Array.from(f.text.matchAll(/\bfunction\s+(\w+)\s*\(/g));
-      text += '\n' + (fns.length ? fns.filter((m) => new RegExp(`\\b${m[1]}\\s*\\(`).test(d.text)).map((m) => blockAt(f.text, m.index!)).join('\n') : f.text);
+      text += '\n' + (fns.length ? fns.filter((m) => callIndex(d.text, m[1]) >= 0).map((m) => blockAt(f.text, m.index!)).join('\n') : f.text);
     }
     const uses = analyse(text);
     let hits = 0; let errors = 0;
@@ -350,7 +351,7 @@ export function scaffoldRoutes(inv: Inventory, importFrom = '@cappz/sdk/port'): 
   for (const r of inv.routes) {
     L.push(`  // ${r.key} — ${r.source}:${r.line} · wave ${r.wave} · effort ${r.effort}${r.hits ? ` · ${r.hits} hits` : ''}`);
     for (const s of r.steps) L.push(`  //   - ${s}`);
-    const compare = r.uses.output === 'json' ? `, compare: { ignoreJsonPaths: [] }` : r.uses.output === 'html' ? `, compare: { ignorePatterns: ['name="_token" value="[^"]*"', 'name="csrf[^"]*" value="[^"]*"'] }` : '';
+    const compare = r.uses.output === 'json' ? `, compare: { ignoreJsonPaths: [] }` : r.uses.output === 'html' ? `, compare: { ignoreTemplates: ['name="_token" value="*"', 'name="csrf*" value="*"'] }` : '';
     L.push(`  defineRoute({ method: '${r.method}', path: '${r.path}', legacySource: '${r.source.replace(/'/g, "\\'")}'${compare}, handler: notPorted }),`);
   }
   L.push('];', '');

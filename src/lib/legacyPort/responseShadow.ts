@@ -31,7 +31,18 @@ export interface CompareRules {
   headers?: string[];
   /** JSON paths ignored, e.g. $.generatedAt, $.items[*].updatedAt, $..requestId (any depth). */
   ignoreJsonPaths?: string[];
-  /** Regular expressions (source) whose matches are blanked in text bodies before comparing (CSRF tokens, nonces). */
+  /**
+   * Spans blanked in text bodies before comparing (CSRF tokens, nonces): literal
+   * text with `*` holes, e.g. `name="_token" value="*"`. A hole is a run without
+   * the first character of the literal after it (here `"`); a trailing hole runs
+   * to the end of the line; `\*` is a literal star. Never compiled as a regex.
+   */
+  ignoreTemplates?: string[];
+  /**
+   * Legacy: regular-expression sources. Only literals joined by `[^c]*` (where c
+   * starts the next literal) are honoured, read as templates; any other pattern
+   * is reported as a mismatch (`ignore rule unsupported`) instead of compiled.
+   */
   ignorePatterns?: string[];
   /** Collapse whitespace between HTML tags and runs of whitespace. Default true for text/html. */
   normalizeHtml?: boolean;
@@ -97,15 +108,77 @@ function jsonDiff(a: unknown, b: unknown, segs: string[], ig: Ignore[], emptyEq:
   out.push(`${render(segs)} ${typeof a === typeof b ? 'value' : `type ${typeof a}≠${typeof b}`}`);
 }
 
-function normalText(s: string, html: boolean, patterns: RegExp[]): string {
+function normalText(s: string, html: boolean, templates: Template[]): string {
   let t = s;
-  for (const re of patterns) t = t.replace(re, '∅');
+  for (const tpl of templates) t = blankTemplate(t, tpl);
   if (html) t = t.replace(/>\s+</g, '><').replace(/\s+/g, ' ').trim();
   return t;
 }
 
-const compiledPatterns = new WeakMap<CompareRules, RegExp[]>();
-const patternsOf = (r: CompareRules) => { let p = compiledPatterns.get(r); if (!p) { p = (r.ignorePatterns ?? []).map((x) => new RegExp(x, 'g')); compiledPatterns.set(r, p); } return p; };
+/** Literal parts of an ignore template; a hole sits between consecutive parts (and after the last when `open`). */
+interface Template { parts: string[]; open: boolean }
+
+function parseTemplate(src: string): Template | null {
+  const parts: string[] = []; let cur = '';
+  for (let i = 0; i < src.length; i++) {
+    if (src[i] === '\\' && src[i + 1] === '*') { cur += '*'; i++; }
+    else if (src[i] === '*') { parts.push(cur); cur = ''; }
+    else cur += src[i];
+  }
+  parts.push(cur);
+  const open = parts.length > 1 && parts[parts.length - 1] === '';
+  if (open) parts.pop();
+  if (!parts[0] || parts.slice(1).some((p) => !p)) return null; // needs a literal start and no adjacent holes
+  return { parts, open };
+}
+
+const REGEX_SYNTAX = new Set(['\\', '^', '$', '.', '|', '?', '*', '+', '(', ')', '[', ']', '{', '}']);
+
+/** A legacy regex source read as a template: literals joined by `[^c]*` where c starts the next literal. */
+function templateFromPattern(src: string): Template | null {
+  const parts: string[] = []; let cur = '';
+  for (let i = 0; i < src.length; i++) {
+    if (src[i] === '[' && src[i + 1] === '^' && src[i + 3] === ']' && src[i + 4] === '*') {
+      const stop = src[i + 2]; const rest = src.slice(i + 5);
+      if (!rest.startsWith(stop) && rest !== '') return null;
+      parts.push(cur); cur = ''; i += 4;
+    } else if (src[i] === '\\' && i + 1 < src.length && REGEX_SYNTAX.has(src[i + 1])) { cur += src[++i]; }
+    else if (REGEX_SYNTAX.has(src[i])) return null;
+    else cur += src[i];
+  }
+  parts.push(cur);
+  const open = parts.length > 1 && parts[parts.length - 1] === '';
+  if (open) parts.pop();
+  return parts[0] && !parts.slice(1).some((p) => !p) ? { parts, open } : null;
+}
+
+function blankTemplate(text: string, { parts, open }: Template): string {
+  let out = ''; let from = 0;
+  for (let at = text.indexOf(parts[0], from); at >= 0; at = text.indexOf(parts[0], from)) {
+    let cur = at + parts[0].length; let ok = true;
+    for (let k = 1; k < parts.length && ok; k++) {
+      const stop = parts[k][0]; let end = cur;
+      while (end < text.length && text[end] !== stop) end++;
+      if (text.startsWith(parts[k], end)) cur = end + parts[k].length; else ok = false;
+    }
+    if (ok && open) { while (cur < text.length && text[cur] !== '\n') cur++; }
+    if (!ok) { out += text.slice(from, at + 1); from = at + 1; continue; }
+    out += text.slice(from, at) + '∅'; from = cur;
+  }
+  return out + text.slice(from);
+}
+
+const compiledTemplates = new WeakMap<CompareRules, { templates: Template[]; unsupported: string[] }>();
+function templatesOf(r: CompareRules) {
+  let c = compiledTemplates.get(r);
+  if (!c) {
+    c = { templates: [], unsupported: [] };
+    for (const t of r.ignoreTemplates ?? []) { const p = parseTemplate(t); if (p) c.templates.push(p); else c.unsupported.push(t); }
+    for (const t of r.ignorePatterns ?? []) { const p = templateFromPattern(t); if (p) c.templates.push(p); else c.unsupported.push(t); }
+    compiledTemplates.set(r, c);
+  }
+  return c;
+}
 
 /** Where two responses differ under the rules ([] = equivalent). */
 export function compareResponses(legacy: CapturedResponse, port: CapturedResponse, rules: CompareRules = {}): string[] {
@@ -127,8 +200,9 @@ export function compareResponses(legacy: CapturedResponse, port: CapturedRespons
     else jsonDiff(a, b, [], ignoresOf(rules), rules.emptyArrayEqualsObject !== false, where);
   } else if (/^text\/|xml|javascript/.test(type) || type === '') {
     const html = rules.normalizeHtml ?? /html/.test(type);
-    const pats = patternsOf(rules);
-    if (normalText(td.decode(legacy.body), html, pats) !== normalText(td.decode(port.body), html, pats)) where.push('body text');
+    const { templates, unsupported } = templatesOf(rules);
+    for (const u of unsupported) where.push(`ignore rule unsupported: ${u}`);
+    if (normalText(td.decode(legacy.body), html, templates) !== normalText(td.decode(port.body), html, templates)) where.push('body text');
   } else if (!bytesEqual(legacy.body, port.body)) where.push('body bytes');
   return where;
 }

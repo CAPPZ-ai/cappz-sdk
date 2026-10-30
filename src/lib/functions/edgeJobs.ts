@@ -16,6 +16,7 @@
  * v15-01-00 ships the runner with no bound jobs: every timer and webhook in
  * the plan belongs to a state domain moved to vNext (DMS, staking, AI vaults).
  */
+import { attrValue } from '../text/textScan.ts';
 
 export interface TimerSchedule {
   /** Function the timer runs (cappz:function on the timer start event). */
@@ -74,7 +75,7 @@ export function isoDurationMs(d: string): number | null {
   return ms > 0 ? ms : null;
 }
 
-const attr = (tag: string, name: string) => tag.match(new RegExp(`\\s${name.replace(':', '\\:')}="([^"]*)"`))?.[1];
+const attr = attrValue;
 
 /**
  * Timer schedules declared in a BPMN document. A timer start event without

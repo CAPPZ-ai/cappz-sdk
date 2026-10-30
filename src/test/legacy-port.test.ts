@@ -37,6 +37,13 @@ describe('response comparison', () => {
     const a = res(200, 'text/html', '<input name="_token" value="abc">'); const b = res(200, 'text/html', '<input name="_token" value="zzz">');
     expect(compareResponses(a, b)).toEqual(['body text']);
     expect(compareResponses(a, b, { ignorePatterns: ['value="[^"]*"'] })).toEqual([]);
+    expect(compareResponses(a, b, { ignoreTemplates: ['name="_token" value="*"'] })).toEqual([]);
+    expect(compareResponses(a, b, { ignoreTemplates: ['name="other" value="*"'] })).toEqual(['body text']);
+    // Legacy patterns are never compiled: anything beyond literals + [^c]* is reported, not run.
+    expect(compareResponses(a, b, { ignorePatterns: ['value="(a+)+"'] })).toEqual(['ignore rule unsupported: value="(a+)+"', 'body text']);
+    const c = res(200, 'text/html', '<i name="csrf_x" value="1"><i name="csrf_y" value="2">'); const d = res(200, 'text/html', '<i name="csrf_x" value="9"><i name="csrf_y" value="8">');
+    expect(compareResponses(c, d, { ignoreTemplates: ['name="csrf*" value="*"'] })).toEqual([]);
+    expect(compareResponses(c, d, { ignorePatterns: ['name="csrf[^"]*" value="[^"]*"'] })).toEqual([]);
     expect(compareResponses(res(302, 'text/html', '', { location: '/a' }), res(302, 'text/html', '', { location: '/b' }))).toEqual(['header location']);
     expect(compareResponses(res(200, 'application/xml', '<a/>'), res(200, J, '<a/>'))).toEqual(['header content-type']);
   });

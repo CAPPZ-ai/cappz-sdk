@@ -123,9 +123,14 @@ export async function pruneWalletBlobs(slug: string, keep = 2): Promise<number> 
   const dir = await getDir();
   if (!dir) return 0;
   const names = await listWalletBlobs();
-  const re = new RegExp(`^${slug}-v(\\d+)\\.cappz$`);
+  const prefix = `${slug}-v`;
+  const versionOf = (n: string) => {
+    if (!n.startsWith(prefix) || !n.endsWith('.cappz')) return NaN;
+    const digits = n.slice(prefix.length, -'.cappz'.length);
+    return digits && [...digits].every((c) => c >= '0' && c <= '9') ? Number(digits) : NaN;
+  };
   const versions = names
-    .map(n => ({ name: n, v: Number(n.match(re)?.[1] ?? NaN) }))
+    .map(n => ({ name: n, v: versionOf(n) }))
     .filter(x => Number.isFinite(x.v))
     .sort((a, b) => b.v - a.v);
   let removed = 0;
