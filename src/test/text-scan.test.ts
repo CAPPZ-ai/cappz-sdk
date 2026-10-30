@@ -1,3 +1,4 @@
+// @vitest-environment node
 /** Names read from documents are scanned literally; no runtime-built regex anywhere in src. */
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';

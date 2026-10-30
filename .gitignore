@@ -4,4 +4,5 @@ node-data/
 operator.json
 .env
 packages/cappz-mesh-node/web/app.js
+packages/cappz-mesh-node/web/opfs-write-worker.js
 dist/

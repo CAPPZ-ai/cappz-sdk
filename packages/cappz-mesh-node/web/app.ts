@@ -10,9 +10,10 @@
  * other phones directly (WebRTC pairing codes). Bundled by
  * `main.ts web-build` into web/app.js; no network beyond the local one.
  *
- * Storage: localStorage of this origin (https://<node ip>:41480). A different
- * node is a different origin, so a phone keeps using the node it was set up
- * with, or restores its backup on another (Backup / Restore below).
+ * Storage: cappz-store (OPFS) of this origin (https://<node ip>:41480). A
+ * different node is a different origin, so a phone keeps using the node it
+ * was set up with, or restores its backup on another (Backup / Restore
+ * below). 15.13.2: state kept in localStorage before is moved once.
  */
 
 import { generateRecoveryPhrase, keyPairFromPhrase } from '../../../src/lib/auth/wallet/session.ts';
@@ -24,11 +25,41 @@ import { offerPairing, answerPairing, type PendingPair } from '../../../src/lib/
 import { attachNativeBridge, detectNativeHost } from '../../../src/lib/mesh/meshNative.ts';
 import { ContactBook, VoiceAssembler, decodeChat, encodeChat, textMessage, splitVoice, sanitizeAlias, EVERYONE_CHANNEL, GENERAL_CHANNEL, type ContactBookData } from '../../../src/lib/mesh/meshChat.ts';
 import { recordVoice, type Recording } from '../../../src/lib/mesh/meshVoice.ts';
+import { KvDatabase } from '../../../src/lib/sync/storageEngines/kvDatabase.ts';
+import { createMemoryBackend, createOpfsBackend, opfsAvailable } from '../../../src/lib/sync/storageEngines/kvBackends.ts';
+import { setOpfsWriteWorkerUrl } from '../../../src/lib/sync/storageEngines/opfsWrite.ts';
+import { dropLegacyMeshState, readLegacyMeshState } from './legacyLocalState.ts';
 
-const KEY = 'cappz-mesh-v1';
 interface Saved { phrase?: string; charter?: MeshCharter; grant?: MeshMembership; device?: SavedMeshDevice; store?: string; log?: string[]; alias?: string; book?: ContactBookData }
-const load = (): Saved => { try { return JSON.parse(localStorage.getItem(KEY) ?? '{}') as Saved; } catch { return {}; } };
-const save = (s: Saved) => { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) { note(`could not save: ${(e as Error).message}`); } };
+setOpfsWriteWorkerUrl('opfs-write-worker.js'); // bundled beside app.js by web-build (Safari before 26 writes OPFS through it)
+const STORE = 'mesh';
+const ROW = 'state';
+const db = new KvDatabase('cappz-mesh', opfsAvailable() ? createOpfsBackend() : createMemoryBackend());
+let state: Saved = {};
+let writes: Promise<void> = Promise.resolve();
+const load = (): Saved => ({ ...state });
+/** Keep `s` and write it to cappz-store; resolves once it is flushed to OPFS, rejects if that fails. */
+const flushState = (s: Saved): Promise<void> => {
+  state = s;
+  const w = writes.then(() => db.write(STORE, [[ROW, s]])).then(() => db.flush());
+  writes = w.catch(() => undefined);
+  return w;
+};
+const save = (s: Saved): Promise<void> => flushState(s).catch((e) => note(`could not save: ${(e as Error).message}`));
+
+/** Read the saved state; move a pre-15.13.2 localStorage copy into cappz-store once. */
+async function openState() {
+  if (!opfsAvailable()) note('this browser has no private file storage: nothing is kept after reload, keep a backup');
+  state = (await db.read<Saved>(STORE, ROW)) ?? {};
+  const legacy = readLegacyMeshState();
+  if (legacy === null) return;
+  if (!state.phrase && !state.device) {
+    let old: Saved;
+    try { old = JSON.parse(legacy) as Saved; } catch { return note('old saved state is unreadable; left in place'); }
+    try { await flushState(old); } catch (e) { return note(`could not move old saved state: ${(e as Error).message}`); }
+  }
+  dropLegacyMeshState();
+}
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -64,7 +95,7 @@ async function provision() {
   if (s.grant && s.grant.member !== w.address) return note('that grant names another wallet');
   const id = await provisionMeshDevice({ walletPrivateKey: w.privateKey, walletAddress: w.address, grant: s.grant });
   s.device = await saveMeshDevice(await meshIdOf(s.charter!), id);
-  save(s);
+  await save(s);
   await start();
 }
 
@@ -147,7 +178,7 @@ async function start() {
 
 async function persist() {
   if (!node) return;
-  const s = load(); s.store = b64(await writeCarryFile(node.meshId, node.exportBundles(400))); save(s);
+  const s = load(); s.store = b64(await writeCarryFile(node.meshId, node.exportBundles(400))); await save(s);
 }
 
 function renderStatus() {
@@ -184,7 +215,7 @@ async function share(text: string) {
 function bind() {
   $('make-wallet').onclick = () => {
     const phrase = generateRecoveryPhrase();
-    const s = load(); s.phrase = phrase; save(s);
+    const s = load(); s.phrase = phrase; void save(s);
     alert(`Write these 24 words on paper and keep them safe. They are the only way to revoke this phone if it is lost:\n\n${phrase}`);
     renderSetup();
   };
@@ -266,11 +297,17 @@ function bind() {
     const blob = new Blob([JSON.stringify(load())], { type: 'application/json' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'cappz-mesh-backup.json'; a.click();
   };
-  ($('restore') as HTMLInputElement).onchange = async (e) => { const t = await readFile(e.target as HTMLInputElement); if (t && confirm('Replace this browser’s mesh identity with the backup?')) { localStorage.setItem(KEY, t); location.reload(); } };
+  ($('restore') as HTMLInputElement).onchange = async (e) => { const t = await readFile(e.target as HTMLInputElement); if (!t || !confirm('Replace this browser’s mesh identity with the backup?')) return;
+    let backup: Saved;
+    try { backup = JSON.parse(t) as Saved; } catch { return note('that file is not a mesh backup'); }
+    try { await flushState(backup); } catch (e) { return note(`restore not saved: ${(e as Error).message}`); }
+    location.reload();
+  };
   $('copy-me').onclick = () => { if (node) void share(node.identity.walletAddress); };
   window.addEventListener('pagehide', () => void persist());
 }
 
 bind();
-renderSetup();
-void start().catch((e) => { note((e as Error).message); show('setup'); });
+void openState()
+  .then(() => { renderSetup(); return start(); })
+  .catch((e) => { note((e as Error).message); show('setup'); });

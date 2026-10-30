@@ -13,12 +13,16 @@
 type Pending = { resolve: () => void; reject: (err: Error) => void };
 
 let worker: Worker | null = null;
+let workerUrl: string | URL | null = null;
 let nextId = 0;
+
+/** Where the write worker lives when this module is bundled into one file (a bundler drops `import.meta.url`). */
+export function setOpfsWriteWorkerUrl(url: string | URL): void { workerUrl = url; }
 const pending = new Map<number, Pending>();
 
 function writeWorker(): Worker {
   if (worker) return worker;
-  worker = new Worker(new URL('./opfsWriteWorker.ts', import.meta.url), { type: 'module' });
+  worker = new Worker(workerUrl ?? new URL('./opfsWriteWorker.ts', import.meta.url), { type: 'module' });
   worker.onmessage = (msg: MessageEvent<{ id: number; ok: boolean; error?: string }>) => {
     const p = pending.get(msg.data.id);
     if (!p) return;

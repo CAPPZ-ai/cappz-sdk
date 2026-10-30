@@ -41,7 +41,7 @@ import { writeCarryFile, readCarryFile } from '../../src/lib/mesh/meshCarry.ts';
 import { runMeshEvals, formatEvalReport } from '../../src/lib/mesh/meshEvals.ts';
 import { startIpMesh } from './ipLink.ts';
 import { serveMeshWeb, MESH_WEB_PORT } from './webServe.ts';
-import { buildKit, verifyKit, NODE_PLATFORMS, type NodePlatform } from './kit.ts';
+import { buildKit, verifyKit, bundleMeshWeb, MESH_WEB_WORKER, NODE_PLATFORMS, type NodePlatform } from './kit.ts';
 import { openSerialRadio } from './serialRadio.ts';
 import { RadioMedium, loraTimeOnAirMs, loraBitRate } from '../../src/lib/mesh/meshRadio.ts';
 import { LORA_REGIONS } from '../../src/lib/mesh/kiss.ts';
@@ -202,8 +202,7 @@ Files live in --home (default ~/.cappz-mesh). Guide: MESH_FIELD_GUIDE.md`;
 
 /** Bundle the browser app with esbuild (installed with the SDK's dev dependencies, so this works offline). */
 async function webBuild() {
-  const esbuild = await import('esbuild');
-  await esbuild.build({ entryPoints: [path.join(webDir, 'app.ts')], bundle: true, format: 'iife', platform: 'browser', target: ['safari15', 'chrome100'], minify: true, outfile: path.join(webDir, 'app.js'), logLevel: 'warning' });
+  await bundleMeshWeb(webDir, webDir);
   console.log(`built ${path.join(webDir, 'app.js')} (${Math.round(fs.statSync(path.join(webDir, 'app.js')).size / 1024)} KB)`);
 }
 
@@ -255,7 +254,7 @@ async function run() {
   const ip = await startIpMesh(node, { port: Number(opt('port') ?? 41460), peers: opts('peer'), discovery: !flag('no-discovery'), log: (l) => say(`· ${l}`) });
   let web: Awaited<ReturnType<typeof serveMeshWeb>> | null = null;
   if (!flag('no-web')) {
-    if (!fs.existsSync(path.join(webDir, 'app.js'))) await webBuild();
+    if (!fs.existsSync(path.join(webDir, 'app.js')) || !fs.existsSync(path.join(webDir, MESH_WEB_WORKER))) await webBuild();
     const kit = opt('kit') ? path.resolve(opt('kit')!) : kitDir;
     web = await serveMeshWeb(node, { home, webDir, kitDir: kit, port: Number(opt('web-port') ?? MESH_WEB_PORT), log: (l) => say(`· ${l}`) });
     console.log(`phones: open ${web.url.join(' or ')} (certificate SHA-256 ${web.sha256.slice(0, 16)}…)`);

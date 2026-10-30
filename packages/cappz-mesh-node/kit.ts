@@ -154,7 +154,7 @@ export async function buildKit(o: {
     outfile: path.join(o.out, 'cappz-mesh.mjs'), external: ['esbuild'], legalComments: 'none', logLevel: 'warning',
     banner: { js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" },
   });
-  await esbuild.build({ entryPoints: [path.join(pkg, 'web/app.ts')], bundle: true, format: 'iife', platform: 'browser', target: ['safari15', 'chrome100'], minify: true, outfile: path.join(o.out, 'web/app.js'), logLevel: 'warning' });
+  await bundleMeshWeb(path.join(pkg, 'web'), path.join(o.out, 'web'));
   fs.copyFileSync(path.join(pkg, 'web/index.html'), path.join(o.out, 'web/index.html'));
   fs.copyFileSync(path.join(o.sdkRoot, 'docs/MESH_FIELD_GUIDE.md'), path.join(o.out, 'MESH_FIELD_GUIDE.md'));
   fs.copyFileSync(path.join(o.sdkRoot, 'LICENSE'), path.join(o.out, 'LICENSE'));
@@ -209,4 +209,14 @@ export async function verifyKit(dir: string, charter?: MeshCharter): Promise<Kit
   if (!m.signature || !m.signer) return { state: 'unsigned', fingerprint };
   if (!(await verifySignature(unsignedBody(m), m.signature, m.signer))) return { state: 'bad-signature', fingerprint };
   return charter?.authorities.includes(m.signer) ? { state: 'verified-by-authority', signer: m.signer, fingerprint } : { state: 'signed-unknown-signer', signer: m.signer, fingerprint };
+}
+
+/** The phone app's two bundles: web/app.js, and the OPFS write worker Safari before 26 needs (MESH_WEB_WORKER). */
+export const MESH_WEB_WORKER = 'opfs-write-worker.js';
+export async function bundleMeshWeb(srcWebDir: string, outDir: string): Promise<void> {
+  const esbuild = await import('esbuild');
+  const common = { bundle: true, platform: 'browser' as const, target: ['safari15', 'chrome100'], minify: true, logLevel: 'warning' as const };
+  // app.ts names the worker file (setOpfsWriteWorkerUrl), so opfsWrite's import.meta default is unused here.
+  await esbuild.build({ ...common, entryPoints: [path.join(srcWebDir, 'app.ts')], format: 'iife', outfile: path.join(outDir, 'app.js'), logOverride: { 'empty-import-meta': 'silent' } });
+  await esbuild.build({ ...common, entryPoints: [path.join(srcWebDir, '../../../src/lib/sync/storageEngines/opfsWriteWorker.ts')], format: 'esm', outfile: path.join(outDir, MESH_WEB_WORKER) });
 }
