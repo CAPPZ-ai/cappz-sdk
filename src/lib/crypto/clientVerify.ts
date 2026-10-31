@@ -7,6 +7,8 @@
  */
 
 import { findNotaryReceiptByHash } from './clientNotarize';
+import { digestContent, type DigestSource } from './contentDigest';
+import type { NativeKernels } from '../native/cappzNative';
 
 // ─── Types ─────────────────────────────────────────────────────
 
@@ -14,10 +16,18 @@ export interface VerificationRequest {
   txId?: string;
   contentHash?: string;
   content?: string;
+  /** The file to recompute from; read in slices, never base64-encoded. */
+  file?: Blob;
+  fileBytes?: Uint8Array;
+  /** @deprecated pass `file` or `fileBytes`; base64 costs a third more bytes and two copies. */
   fileBase64?: string;
   salt?: string;
   expectedLeaf?: string;
   network?: 'mainnet' | 'testnet' | 'devnet';
+  /** Hashing progress for large files. */
+  onProgress?: (done: number, total: number) => void;
+  /** Kernels for streamed hashing of large files (default: the SDK's active kernels). */
+  kernels?: NativeKernels;
 }
 
 export interface VerificationResult {
@@ -52,16 +62,18 @@ const XRPL_HTTP_ENDPOINTS: Record<string, string> = {
 
 // ─── Pure crypto helpers (browser Web Crypto API) ─────────────
 
-export async function computeSaltedHash(content: Uint8Array, salt: string): Promise<string> {
-  const saltBytes = new TextEncoder().encode(salt);
-  const combined = new Uint8Array(saltBytes.length + content.length);
-  combined.set(saltBytes);
-  combined.set(content, saltBytes.length);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', combined);
-  return Array.from(new Uint8Array(hashBuffer))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
-    .toUpperCase();
+/** The notarization leaf: SHA-256(UTF-8 salt text || content), uppercase hex. */
+export async function computeSaltedHash(content: DigestSource, salt: string, o: { onProgress?: (done: number, total: number) => void; kernels?: NativeKernels } = {}): Promise<string> {
+  const { leaf } = await digestContent(content, { ...o, leafPrefix: new TextEncoder().encode(salt), contentHash: false });
+  return leaf!;
+}
+
+/** Bytes from the deprecated base64 field. */
+export function bytesFromBase64(b64: string): Uint8Array {
+  const binary = atob(b64);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+  return out;
 }
 
 function hexToString(hex: string): string {
@@ -167,19 +179,12 @@ export async function verifyClient(request: VerificationRequest): Promise<Verifi
   }
 
   // Method 3: Recompute hash from content (fully client-side)
-  if ((typeof request.content === 'string' || typeof request.fileBase64 === 'string') && request.salt) {
+  const source: DigestSource | null = request.file ?? request.fileBytes
+    ?? (typeof request.fileBase64 === 'string' ? bytesFromBase64(request.fileBase64) : null)
+    ?? (typeof request.content === 'string' ? new TextEncoder().encode(request.content) : null);
+  if (source && request.salt) {
     result.method = 'recompute';
-    let contentBytes: Uint8Array;
-    if (request.fileBase64) {
-      const binaryString = atob(request.fileBase64);
-      contentBytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
-        contentBytes[i] = binaryString.charCodeAt(i);
-      }
-    } else {
-      contentBytes = new TextEncoder().encode(request.content ?? '');
-    }
-    const computedHash = await computeSaltedHash(contentBytes, request.salt);
+    const computedHash = await computeSaltedHash(source, request.salt, { onProgress: request.onProgress, kernels: request.kernels });
     result.leaf = computedHash;
     if (request.expectedLeaf) {
       result.matchesExpected = computedHash === request.expectedLeaf.toUpperCase();
@@ -191,6 +196,6 @@ export async function verifyClient(request: VerificationRequest): Promise<Verifi
   }
 
   result.success = false;
-  result.error = 'Provide txId, contentHash, or (content/fileBase64 + salt)';
+  result.error = 'Provide txId, contentHash, or (file/fileBytes/content + salt)';
   return result;
 }

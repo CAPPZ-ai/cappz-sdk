@@ -1,8 +1,8 @@
 # Native kernels: Reed-Solomon and SHA-256 on ARM
 
-`packages/cappz-native` (15.14.0) is a small Rust crate with the SDK's two compute hot spots:
+`packages/cappz-native` (15.14.0; streaming SHA-256 in 15.15.0) is a small Rust crate with the SDK's two compute hot spots:
 
-- **SHA-256** — every content address, chunk id and model-weight shard in the SDK is one.
+- **SHA-256** — every content address, chunk id, model-weight shard and notarization leaf in the SDK is one. One-shot, per-chunk on all cores, and streamed for input that arrives in pieces.
 - **GF(2^8) matrix × shards** — the one kernel Reed-Solomon erasure coding needs.
 
 It is loaded three ways behind one TypeScript interface (`src/lib/native/cappzNative.ts`), and every backend produces byte-identical output:
@@ -22,6 +22,16 @@ Nothing requires the native build. Without it the SDK runs the TypeScript kernel
 **Corruption becomes loss, not wrong bytes.** Reed-Solomon repairs erasures, not errors: a damaged shard used as if it were good silently corrupts the result. The descriptor records each shard's SHA-256, and `rsDecode` drops any shard that does not match, then rebuilds from the rest. `lost` in the result says which shards were set aside.
 
 **Content addressing on all cores.** When native kernels are loaded, `putBody` (chunked bodies, `src/lib/sync/chunkedBodies.ts`) computes the whole-file hash and every chunk id in one call. The ids are the same as before; only the time changes.
+
+**Notarization in one pass** (15.15.0). `digestContent(file, { leafPrefix })` (`src/lib/crypto/contentDigest.ts`) reads a file once and returns both its SHA-256 and the salted leaf, SHA-256(prefix || content). The prefix is whatever the receipt scheme salts with: the salt text (`notarizeClient`, `verifyClient`, `cappz-notarize`) or raw salt bytes (a notary that salts with bytes). Leaves are byte-identical to before, checked against fixed vectors and against `crypto-js`. It picks its path by runtime and size:
+
+| Runtime | Path | Memory |
+|---|---|---|
+| Native kernels loaded (Node 26, Deno, Bun) | streamed; the two digests on two cores; the next slice read while this one is hashed | two 4 MiB slices |
+| Browser, up to 64 MiB | WebCrypto over one buffer — a browser's only route to the CPU's SHA instructions | the file plus the prefix |
+| Browser, larger | streamed on WASM (or TypeScript) kernels | two 4 MiB slices |
+
+`notarizeClient` and `verifyClient` take `file` (a `Blob`) or `fileBytes` and report `onProgress`; `fileBase64` still works but costs a third more bytes and two copies. `notarizeClient` also returns `contentSha256` from the same pass.
 
 ```ts
 import { loadKernels } from '@cappz/sdk/lib/native/cappzNative';
@@ -48,6 +58,17 @@ Windows Dev Kit 2023: Snapdragon 8cx Gen 3 (4 × Cortex-X1 + 4 × Cortex-A78), 3
 | Content-address 256 MiB (whole hash + 4 MiB chunk ids, `putBody`) | 141 MB/s (WebCrypto, the SDK until now) | 1,198 MB/s | 8.5× |
 | Reed-Solomon encode 10+4, 64 MiB (incl. hashing all 14 shards) | 71 MB/s (TypeScript) | 1,398 MB/s | 20× |
 | Reed-Solomon rebuild 10+4, 64 MiB, 4 data shards lost (incl. verifying shards) | 83 MB/s (TypeScript) | 891 MB/s | 11× |
+
+Notarizing a 64 MiB file (its SHA-256 plus the salted leaf):
+
+| Path | MB/s | Time | Speed-up |
+|---|---:|---:|---:|
+| `crypto-js` twice: a UI file hash, then the notary's whole-file leaf (the previous way) | 23 | 2.79 s | 1× |
+| `digestContent`, WebCrypto, one buffer | 206 | 310 ms | 9× |
+| `digestContent`, streamed, WASM | 94 | 684 ms | 4.1× |
+| `digestContent`, streamed, native | 649 | 99 ms | 28× |
+
+A single native SHA-256 stream runs at 1.39 GB/s. With both digests it reached 694 MB/s from memory, one after the other; reading the file's slices added 45 ms more. Hashing the two digests on two cores and reading ahead took the native path from 457 to 649 MB/s.
 
 For scale: XOR parity of the same 64 MiB ran at 673 MB/s, so real Reed-Solomon with integrity hashes on the native backend costs less time than the scheme it replaces.
 
@@ -83,6 +104,7 @@ All 8 cores: Reed-Solomon 7.7–8.4 GB/s (10+4) and 10.2–11.2 GB/s (4+2); chun
 - The native library is not committed. Build it from source; `loadKernels` reports why a backend was skipped.
 - SHA-256 here hashes public content, so it is not constant-time. Do not use it for secrets (MACs, KDFs).
 - The engines are checked against the FIPS 180-4 vectors, against `node:crypto` around every block boundary, and against each other for every length from 0 to 300 bytes.
+- A streaming SHA-256 state lives in caller-owned bytes (112, tagged). A wrong tag, an impossible buffer length or a length that disagrees with the buffer is refused (`-3`), a finished state is wiped so it cannot be reused, and the paired update refuses one state given twice.
 
 ## Build
 

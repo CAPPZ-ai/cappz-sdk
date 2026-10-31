@@ -184,6 +184,96 @@ pub fn sha256_chunks(engine: Engine, data: &[u8], chunk: usize, threads: usize) 
     out
 }
 
+/// Incremental SHA-256 for inputs that arrive in pieces (a file read slice by
+/// slice). The digest equals `sha256` over the concatenated pieces.
+#[derive(Clone)]
+pub struct Sha256 {
+    engine: Engine,
+    state: [u32; 8],
+    buf: [u8; 64],
+    buf_len: usize,
+    total: u64,
+}
+
+impl Sha256 {
+    pub fn new(engine: Engine) -> Self {
+        Sha256 { engine, state: H0, buf: [0; 64], buf_len: 0, total: 0 }
+    }
+
+    pub fn update(&mut self, mut data: &[u8]) {
+        self.total = self.total.wrapping_add(data.len() as u64);
+        if self.buf_len > 0 {
+            let take = (64 - self.buf_len).min(data.len());
+            self.buf[self.buf_len..self.buf_len + take].copy_from_slice(&data[..take]);
+            self.buf_len += take;
+            data = &data[take..];
+            if self.buf_len < 64 {
+                return;
+            }
+            let block = self.buf;
+            compress(self.engine, &mut self.state, &block);
+            self.buf_len = 0;
+        }
+        let full = data.len() & !63;
+        compress(self.engine, &mut self.state, &data[..full]);
+        let rest = &data[full..];
+        self.buf[..rest.len()].copy_from_slice(rest);
+        self.buf_len = rest.len();
+    }
+
+    pub fn finalize(mut self) -> [u8; 32] {
+        let bits = self.total.wrapping_mul(8);
+        let mut tail = [0u8; 128];
+        tail[..self.buf_len].copy_from_slice(&self.buf[..self.buf_len]);
+        tail[self.buf_len] = 0x80;
+        let tail_len = if self.buf_len < 56 { 64 } else { 128 };
+        tail[tail_len - 8..tail_len].copy_from_slice(&bits.to_be_bytes());
+        compress(self.engine, &mut self.state, &tail[..tail_len]);
+        let mut out = [0u8; 32];
+        for (i, s) in self.state.iter().enumerate() {
+            out[4 * i..4 * i + 4].copy_from_slice(&s.to_be_bytes());
+        }
+        out
+    }
+
+    /// Bytes of the portable serialised form (`save` / `load`), which lets a
+    /// caller across the C ABI or in WebAssembly memory own the state.
+    pub const SAVED_BYTES: usize = 112;
+    const MAGIC: [u8; 4] = *b"S256";
+
+    /// Layout: magic[4] · state u32 LE x8 · total u64 LE · buf[64] · buf_len u8 · pad[3].
+    pub fn save(&self, out: &mut [u8; Self::SAVED_BYTES]) {
+        out.fill(0);
+        out[..4].copy_from_slice(&Self::MAGIC);
+        for (i, w) in self.state.iter().enumerate() {
+            out[4 + 4 * i..8 + 4 * i].copy_from_slice(&w.to_le_bytes());
+        }
+        out[36..44].copy_from_slice(&self.total.to_le_bytes());
+        out[44..108].copy_from_slice(&self.buf);
+        out[108] = self.buf_len as u8;
+    }
+
+    /// Restore a saved state; `None` when the bytes are not one (wrong tag,
+    /// impossible buffer length, or a total that disagrees with the buffer).
+    pub fn load(engine: Engine, saved: &[u8; Self::SAVED_BYTES]) -> Option<Self> {
+        if saved[..4] != Self::MAGIC {
+            return None;
+        }
+        let buf_len = saved[108] as usize;
+        let total = u64::from_le_bytes(saved[36..44].try_into().ok()?);
+        if buf_len >= 64 || total % 64 != buf_len as u64 {
+            return None;
+        }
+        let mut state = [0u32; 8];
+        for (i, w) in state.iter_mut().enumerate() {
+            *w = u32::from_le_bytes(saved[4 + 4 * i..8 + 4 * i].try_into().ok()?);
+        }
+        let mut buf = [0u8; 64];
+        buf.copy_from_slice(&saved[44..108]);
+        Some(Sha256 { engine, state, buf, buf_len, total })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,5 +319,48 @@ mod tests {
         let par = sha256_chunks(Engine::best(), &data, 65_536, 4);
         let ser: Vec<[u8; 32]> = data.chunks(65_536).map(|c| sha256(Engine::Portable, c)).collect();
         assert_eq!(par, ser);
+    }
+
+    #[test]
+    fn streaming_matches_one_shot_for_any_split() {
+        let data: Vec<u8> = (0..5_000u32).map(|i| (i * 89 % 256) as u8).collect();
+        let want = sha256(Engine::Portable, &data);
+        for engine in [Engine::Portable, Engine::best()] {
+            for split in [0usize, 1, 55, 63, 64, 65, 127, 128, 1000, 4999, 5000] {
+                let mut h = Sha256::new(engine);
+                h.update(&data[..split]);
+                h.update(&[]);
+                h.update(&data[split..]);
+                assert_eq!(h.finalize(), want, "{} split {split}", engine.name());
+            }
+            // many tiny pieces
+            let mut h = Sha256::new(engine);
+            for c in data.chunks(7) {
+                h.update(c);
+            }
+            assert_eq!(h.finalize(), want);
+        }
+    }
+
+    #[test]
+    fn saved_state_round_trips_and_rejects_garbage() {
+        let data: Vec<u8> = (0..1000u32).map(|i| i as u8).collect();
+        let mut h = Sha256::new(Engine::best());
+        h.update(&data[..333]);
+        let mut saved = [0u8; Sha256::SAVED_BYTES];
+        h.save(&mut saved);
+        let mut back = Sha256::load(Engine::best(), &saved).expect("valid state");
+        back.update(&data[333..]);
+        assert_eq!(back.finalize(), sha256(Engine::Portable, &data));
+
+        let mut bad = saved;
+        bad[0] ^= 1;
+        assert!(Sha256::load(Engine::best(), &bad).is_none(), "wrong tag");
+        let mut bad = saved;
+        bad[108] = 64;
+        assert!(Sha256::load(Engine::best(), &bad).is_none(), "buffer length out of range");
+        let mut bad = saved;
+        bad[36] ^= 1;
+        assert!(Sha256::load(Engine::best(), &bad).is_none(), "total disagrees with buffer");
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "cappz-native"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "CAPPZ native kernels: GF(2^8) Reed-Solomon matrix multiply and SHA-256, with NEON/ARMv8 Crypto, WASM SIMD and portable paths."

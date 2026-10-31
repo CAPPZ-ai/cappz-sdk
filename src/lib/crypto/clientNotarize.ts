@@ -8,7 +8,9 @@
  */
 
 import { createOpfsBackend, opfsAvailable, type KvBackend } from '../sync/storageEngines/kvBackends';
-import { computeSaltedHash } from './clientVerify';
+import { bytesFromBase64 } from './clientVerify';
+import { digestContent, type DigestSource } from './contentDigest';
+import type { NativeKernels } from '../native/cappzNative';
 import { resolveNetworkAddresses } from '../network/networkConfig';
 import type { CappzNetwork } from '../network/networkConfig';
 
@@ -23,7 +25,15 @@ type Network = CappzNetwork;
 export interface NotarizeRequest {
   contentHash?: string;
   content?: string;
+  /** The file to notarize; read in slices, never base64-encoded. */
+  file?: Blob;
+  fileBytes?: Uint8Array;
+  /** @deprecated pass `file` or `fileBytes`; base64 costs a third more bytes and two copies. */
   fileBase64?: string;
+  /** Hashing progress for large files. */
+  onProgress?: (done: number, total: number) => void;
+  /** Kernels for streamed hashing of large files (default: the SDK's active kernels). */
+  kernels?: NativeKernels;
   userWallet: string;
   cappzPaymentTxHash?: string;
   fileName?: string;
@@ -55,6 +65,8 @@ export interface NotarizeResult {
   timestamp: string;
   verificationUrl: string;
   receipt: NotarizeReceipt;
+  /** SHA-256 of the content itself (lowercase hex), from the same pass as the leaf; absent for `contentHash` requests. */
+  contentSha256?: string;
   /** @deprecated name kept for callers — true when the receipt is durably stored in cappz-store. */
   persistedToDb: boolean;
   persistedLocally: boolean;
@@ -83,27 +95,25 @@ export async function notarizeClient(request: NotarizeRequest): Promise<Notarize
     throw new Error('Invalid XRPL wallet address');
   }
 
-  // Determine content bytes
-  let contentBytes: Uint8Array;
-  let preComputedHash: string | undefined;
-
-  if (request.contentHash) {
-    preComputedHash = request.contentHash.toUpperCase();
-    contentBytes = new TextEncoder().encode(preComputedHash);
-  } else if (request.fileBase64) {
-    const binaryString = atob(request.fileBase64);
-    contentBytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      contentBytes[i] = binaryString.charCodeAt(i);
-    }
-  } else if (request.content) {
-    contentBytes = new TextEncoder().encode(request.content);
-  } else {
-    throw new Error('One of contentHash, content, or fileBase64 is required');
-  }
+  // A precomputed hash is the leaf itself; anything else is hashed with the salt.
+  const preComputedHash = request.contentHash?.toUpperCase();
+  const source: DigestSource | null = preComputedHash ? null
+    : request.file ?? request.fileBytes
+      ?? (request.fileBase64 ? bytesFromBase64(request.fileBase64) : null)
+      ?? (request.content ? new TextEncoder().encode(request.content) : null);
+  if (!preComputedHash && !source) throw new Error('One of contentHash, content, file, fileBytes or fileBase64 is required');
 
   const salt = generateSalt();
-  const leaf = preComputedHash || await computeSaltedHash(contentBytes, salt);
+  let leaf: string;
+  let contentSha256: string | undefined;
+  if (preComputedHash) {
+    leaf = preComputedHash;
+  } else {
+    // One pass: the salted leaf and the content's own SHA-256.
+    const d = await digestContent(source!, { leafPrefix: new TextEncoder().encode(salt), onProgress: request.onProgress, kernels: request.kernels });
+    leaf = d.leaf!;
+    contentSha256 = d.sha256;
+  }
   const network = request.network || 'testnet';
   const networkConfig = resolveNetworkAddresses(network);
   const timestamp = new Date().toISOString();
@@ -140,6 +150,7 @@ export async function notarizeClient(request: NotarizeRequest): Promise<Notarize
     timestamp,
     verificationUrl,
     receipt,
+    ...(contentSha256 ? { contentSha256 } : {}),
     persistedToDb: persistedLocally,
     persistedLocally,
   };

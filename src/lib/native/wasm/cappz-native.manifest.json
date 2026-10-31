@@ -1,8 +1,8 @@
 {
   "artifact": "cappz_native.wasm",
   "crate": "cappz-native",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "target": "wasm32-unknown-unknown +simd128",
-  "sha256": "a33239977a9ef29298748e9591efe31d15a60724ce26c4fe70d4667c7336eb3d",
+  "sha256": "c1dd5fd38c287d53b3ac8ef9805d3564615dfb467fa0f948103dfdf860f5d395",
   "build": "RUSTFLAGS='-C target-feature=+simd128' cargo build --manifest-path packages/cappz-native/Cargo.toml --lib --profile wasm --target wasm32-unknown-unknown --locked"
 }

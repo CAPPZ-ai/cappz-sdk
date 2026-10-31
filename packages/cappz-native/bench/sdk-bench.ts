@@ -12,6 +12,8 @@ import path from 'node:path';
 import { sha256 as nobleSha256 } from '@noble/hashes/sha2.js';
 import { typescriptKernels, loadWasmKernels, loadNativeLibrary, nativeLibraryName, type NativeKernels } from '../../../src/lib/native/cappzNative';
 import { rsEncode, rsDecode } from '../../../src/lib/erasure/reedSolomon';
+import { digestContent } from '../../../src/lib/crypto/contentDigest';
+import CryptoJS from 'crypto-js';
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
 const MiB = 1 << 20;
@@ -69,6 +71,30 @@ for (const size of [1024, 64 * 1024, 64 * MiB]) {
     for (let at = 0; at < size; at += chunk) await webcrypto.subtle.digest('SHA-256', data.subarray(at, at + chunk));
   }, 5);
   if (native) await measure(g, 'cappz-native, all cores', mb, () => { native.sha256(data); native.sha256Chunks(data, chunk); }, 5);
+}
+
+// ── Notarization: file hash + salted leaf ──────────────────────────────
+{
+  const size = (quick ? 32 : 64) * MiB;
+  const data = bytes(size, 11);
+  const blob = new Blob([data]);
+  const salt = new Uint8Array(16).fill(7);
+  const g = `notarize a ${size / MiB} MiB file (file hash + salted leaf)`;
+  const mb = size / MiB;
+  // Today: the UI hashes the file with crypto-js in 1 MiB pieces, then the
+  // XRPL notary service hashes salt || file with crypto-js over the whole file.
+  await measure(g, 'crypto-js: UI file hash + notary leaf (today, 2 passes)', mb, async () => {
+    const h = CryptoJS.algo.SHA256.create();
+    for (let at = 0; at < size; at += MiB) h.update(CryptoJS.lib.WordArray.create(data.subarray(at, at + MiB)));
+    h.finalize().toString();
+    const all = new Uint8Array(await blob.arrayBuffer());
+    CryptoJS.SHA256(CryptoJS.lib.WordArray.create(salt).concat(CryptoJS.lib.WordArray.create(all))).toString();
+  }, 3);
+  await measure(g, 'digestContent · WebCrypto, one buffer (browser ≤ 64 MiB)', mb, () => digestContent(blob, { leafPrefix: salt, kernels: typescriptKernels }));
+  for (const b of backends) {
+    const runs = b.backend === 'typescript' ? 3 : undefined;
+    await measure(g, `digestContent · streamed, ${b.backend}`, mb, () => digestContent(blob, { leafPrefix: salt, kernels: b, webCryptoMaxBytes: -1 }), runs);
+  }
 }
 
 // ── Reed-Solomon ────────────────────────────────────────────────────────
