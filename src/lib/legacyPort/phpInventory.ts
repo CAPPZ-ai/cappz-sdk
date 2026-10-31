@@ -253,7 +253,8 @@ export function parseCrontab(text: string): CronEntry[] {
 }
 
 export function inventoryPhpApp(input: { files: PhpSource[]; accessLog?: string; crontab?: string; docroot?: string }): Inventory {
-  const php = input.files.filter((f) => f.path.endsWith('.php'));
+  // Paths are '/'-separated from here on, whatever OS listed the files (Windows lists 'public\\api\\a.php').
+  const php = input.files.filter((f) => f.path.endsWith('.php')).map((f) => ({ ...f, path: f.path.replace(/\\/g, '/') }));
   const fw = frameworkOf(php);
   const warnings: string[] = [];
   if (fw.includes('wordpress')) warnings.push('WordPress: port the REST routes and custom pages you use; themes and plugins are large — keep WordPress behind the route host until the pages you need are ported.');
