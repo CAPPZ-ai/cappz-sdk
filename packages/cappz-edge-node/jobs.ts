@@ -20,6 +20,7 @@ import {
   dueTimers,
   parseTimerSchedules,
   signEdgeTx,
+  timerFiredTx,
   webhookTx,
   type SignedEdgeTx,
 } from '../../src/lib/functions/edgeJobs.ts';
@@ -63,6 +64,14 @@ export async function serveJobs(opts: JobRunnerOptions): Promise<void> {
       for (const s of due) {
         lastRunAt[s.eventId] = Date.now();
         try {
+          if (s.trigger) {
+            // Trigger timer: sign, record, and post TimerFired; the function at the URL does the work.
+            const tx = await signEdgeTx(await timerFiredTx(s, opts.nodeAddress, new Date().toISOString()), key);
+            await append(tx);
+            const res = await fetch(s.trigger, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trigger: tx }) });
+            console.log(`[edge-node] ${s.functionName}: trigger ${res.ok ? 'accepted' : `refused (${res.status})`}`);
+            continue;
+          }
           const r = await EDGE_TIMER_JOBS[s.functionName].run(new Date());
           for (const tx of r.txs ?? []) await append(await signEdgeTx(tx, key));
           console.log(`[edge-node] ${s.functionName}: ${r.ok ? 'ok' : 'failed'}${r.detail ? ` — ${r.detail}` : ''}`);

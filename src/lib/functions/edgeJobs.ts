@@ -15,6 +15,14 @@
  *
  * v15-01-00 ships the runner with no bound jobs: every timer and webhook in
  * the plan belongs to a state domain moved to vNext (DMS, staking, AI vaults).
+ *
+ *   Triggers (15.19.0) — a timer with cappz:trigger="https://…" runs no work on
+ *              the node: when it fires, the node writes a TimerFired TX signed
+ *              with its key, records it, and POSTs it to that URL. The function
+ *              there does the work against its own (hosted) domain and checks
+ *              the trigger with verifyTimerTrigger: signature, an allowlisted
+ *              node key, the function it names, and freshness. So a domain that
+ *              has not moved gets a schedule without the node touching it.
  */
 import { attrValue } from '../text/textScan.ts';
 
@@ -25,6 +33,8 @@ export interface TimerSchedule {
   everyMs: number;
   /** cappz:governingPrinciple on the start event — required. */
   governingPrinciple: string;
+  /** cappz:trigger — an https URL the node POSTs a signed TimerFired TX to (no local job). */
+  trigger?: string;
 }
 
 export interface JobRunResult {
@@ -85,18 +95,29 @@ const attr = attrValue;
 export function parseTimerSchedules(xml: string): { schedules: TimerSchedule[]; rejected: Array<{ eventId: string; reason: string }> } {
   const schedules: TimerSchedule[] = [];
   const rejected: Array<{ eventId: string; reason: string }> = [];
-  for (const m of xml.matchAll(/<bpmn:startEvent\b([^>]*)>([\s\S]*?)<\/bpmn:startEvent>/g)) {
-    const [, attrs, inner] = m;
+  // Walk the start tags: a self-closing <bpmn:startEvent …/> has no body (and is
+  // never a timer); otherwise its body runs to the next closing tag. (A regex over
+  // open…close let a self-closing event swallow the timer event after it.)
+  const CLOSE = '</bpmn:startEvent>';
+  for (const m of xml.matchAll(/<bpmn:startEvent\b([^>]*)>/g)) {
+    const attrs = m[1];
+    if (attrs.endsWith('/')) continue;
+    const bodyStart = (m.index ?? 0) + m[0].length;
+    const bodyEnd = xml.indexOf(CLOSE, bodyStart);
+    if (bodyEnd < 0) continue;
+    const inner = xml.slice(bodyStart, bodyEnd);
     if (!inner.includes('timerEventDefinition')) continue;
     const eventId = attr(attrs, 'id') ?? '?';
     const functionName = attr(attrs, 'cappz:function');
     const governingPrinciple = attr(attrs, 'cappz:governingPrinciple');
     const cycle = inner.match(/<bpmn:timeCycle[^>]*>\s*R\d*\/([^<\s]+)\s*<\/bpmn:timeCycle>/)?.[1];
     const everyMs = cycle ? isoDurationMs(cycle) : null;
+    const trigger = attr(attrs, 'cappz:trigger');
     if (!functionName) rejected.push({ eventId, reason: 'no cappz:function' });
     else if (!governingPrinciple) rejected.push({ eventId, reason: 'no cappz:governingPrinciple' });
     else if (!everyMs) rejected.push({ eventId, reason: 'no repeating timeCycle (R/<duration>)' });
-    else schedules.push({ functionName, eventId, everyMs, governingPrinciple });
+    else if (trigger !== undefined && !/^https:\/\/[^\s/]+\/\S*$/.test(trigger)) rejected.push({ eventId, reason: 'cappz:trigger must be an https URL' });
+    else schedules.push({ functionName, eventId, everyMs, governingPrinciple, ...(trigger ? { trigger } : {}) });
   }
   return { schedules, rejected };
 }
@@ -111,7 +132,7 @@ export function dueTimers(
   const due: TimerSchedule[] = [];
   const unbound: string[] = [];
   for (const s of schedules) {
-    if (!bound[s.functionName]) { unbound.push(s.functionName); continue; }
+    if (!bound[s.functionName] && !s.trigger) { unbound.push(s.functionName); continue; }
     const last = lastRunAt[s.eventId];
     if (last === undefined || now - last >= s.everyMs) due.push(s);
   }
@@ -164,4 +185,42 @@ export async function verifyEdgeTx(tx: SignedEdgeTx): Promise<boolean> {
   const hex = (h: string) => new Uint8Array(h.match(/../g)!.map((x) => parseInt(x, 16)));
   const pub = await crypto.subtle.importKey('raw', hex(signerPublicKey), { name: 'Ed25519' }, false, ['verify']);
   return crypto.subtle.verify('Ed25519', pub, hex(signature), new TextEncoder().encode(txHash));
+}
+
+// ─── Triggers (15.19.0) ─────────────────────────────────────────
+
+export const TIMER_FIRED = 'TimerFired';
+/** A trigger older than this (or more than a minute ahead) is refused. */
+export const TRIGGER_MAX_AGE_MS = 10 * 60 * 1000;
+
+/** The TX a trigger timer posts. One txId per schedule and firing time. */
+export async function timerFiredTx(s: TimerSchedule, nodeAddress: string, firedAt: string): Promise<UnsignedEdgeTx> {
+  return {
+    txId: `${TIMER_FIRED}-${(await sha256HexOf(`${s.functionName}|${s.eventId}|${firedAt}`)).slice(0, 32)}`,
+    timestamp: firedAt,
+    eventType: TIMER_FIRED,
+    sourceAddress: nodeAddress,
+    targetAddress: s.trigger ?? s.functionName,
+    payload: { functionName: s.functionName, eventId: s.eventId, firedAt, governingPrinciple: s.governingPrinciple },
+  };
+}
+
+export type TriggerCheck = { ok: true; tx: SignedEdgeTx } | { ok: false; reason: 'malformed' | 'bad-signature' | 'unknown-node' | 'wrong-function' | 'stale' };
+
+/**
+ * Receiver side: is this a fresh TimerFired for `functionName`, signed by one
+ * of `allowedNodeKeys` (raw Ed25519 public keys, hex)? A replay inside the
+ * window gets through, so the triggered work must be idempotent.
+ */
+export async function verifyTimerTrigger(body: unknown, o: { functionName: string; allowedNodeKeys: readonly string[]; now?: number }): Promise<TriggerCheck> {
+  const tx = body as SignedEdgeTx | null;
+  if (!tx || typeof tx !== 'object' || tx.eventType !== TIMER_FIRED || typeof tx.signature !== 'string' || typeof tx.signerPublicKey !== 'string' || !tx.payload) return { ok: false, reason: 'malformed' };
+  if (!o.allowedNodeKeys.map((k) => k.toLowerCase()).includes(tx.signerPublicKey.toLowerCase())) return { ok: false, reason: 'unknown-node' };
+  let valid = false;
+  try { valid = await verifyEdgeTx(tx); } catch { valid = false; }
+  if (!valid) return { ok: false, reason: 'bad-signature' };
+  if (tx.payload.functionName !== o.functionName) return { ok: false, reason: 'wrong-function' };
+  const age = (o.now ?? Date.now()) - Date.parse(String(tx.payload.firedAt));
+  if (!Number.isFinite(age) || age > TRIGGER_MAX_AGE_MS || age < -60_000) return { ok: false, reason: 'stale' };
+  return { ok: true, tx };
 }

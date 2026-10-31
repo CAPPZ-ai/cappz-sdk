@@ -194,6 +194,7 @@ await Promise.all([
     port: jobsPort,
     nodeAddress: powAddress,
     dataDir,
-    bpmnPath: new URL('../../src/bpmn/substrate/functions/edge-node-jobs.bpmn', import.meta.url).pathname,
+    // The app's process file (e.g. cappz/src/bpmn/substrate/functions/edge-node-jobs.bpmn); CAPPZ_JOBS_BPMN overrides.
+    bpmnPath: Deno.env.get('CAPPZ_JOBS_BPMN') ?? new URL('../../src/bpmn/substrate/functions/edge-node-jobs.bpmn', import.meta.url).pathname,
   }),
 ]);

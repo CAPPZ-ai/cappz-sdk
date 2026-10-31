@@ -56,6 +56,13 @@ and a browser speak the same bytes.
   Needs `--unstable-net` and `CAPPZ_TLS_CERT` / `CAPPZ_TLS_KEY` (self-signed
   is fine — trust is the signed hello). Falls back to TCP otherwise.
 - **Jobs** (`jobs.ts`, `--jobs 41444`) — BPMN timers and secret-free webhooks.
+  The timers come from the app's process file, named by `CAPPZ_JOBS_BPMN`.
+  A timer with `cappz:trigger="https://…"` (15.19.0) does no work on the node:
+  when it fires, the node signs a `TimerFired` TX with its key, records it in
+  `edge-txs.jsonl` and POSTs `{ trigger: <tx> }` to that URL. The function there
+  checks it with `verifyTimerTrigger` (signature, an allowlisted node key, the
+  function it names, at most 10 minutes old) and does the work against its own
+  data. This gives a schedule to functions whose data has not moved.
 - **Read-only XRPL connector** (`src/lib/sync/connectors/xrplPeerConnector.ts`)
   watches validated ledger headers and verifies anchors. Never submits. It is
   shipped through `@cappz/sdk` (`src/sdk/transports.ts`); `main.ts` does not
