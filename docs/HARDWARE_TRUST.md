@@ -105,6 +105,17 @@ Deno's WebCrypto does not verify ECDSA P-384 with SHA-256, which Apple's interme
 
 This replaces keys derived from public values: an address, an address and an HD path string, an address and a file hash. Anyone could compute those. Tests confirm that a key derived from the address, another wallet, another purpose or scope, and any changed byte all fail to open a record.
 
+## 6. Records shared with other wallets (15.18.0)
+
+Some records are for more than one wallet: a prescription is for the prescriber, the pharmacy that fills it, and the patient. `walletEnvelope.ts` seals those once and wraps the data key for each party:
+
+- **One data key, several wraps.** `sealForRecipients(bytes, context, { ownerPrivateKey, recipients })` encrypts the record with a fresh data key (AES-256-GCM, `context` as associated data). The owner's wrap is a `sealForWallet` envelope of that key. Each recipient's wrap is an ECDH P-256 sealed box (`sealBytesTo`) to that recipient's encryption key.
+- **Format.** `cw2.` + base64url(JSON `{ v: 2, iv, ct, wraps }`). `envelopeRecipients(stored)` lists who holds a wrap; it reveals the recipients' wallet addresses, not the contents.
+- **Opening.** `openSharedEnvelope(stored, context, as)` opens as the owner (wallet private key) or as a recipient (its id and its encryption private key). It returns null for a party without a wrap, a wrong key, another record's context or any changed byte.
+- **Recipient keys.** `walletEncryptionKey(walletPrivateKey)` derives a wallet's P-256 encryption key (HKDF-SHA-256, then reduced into the scalar range), so the recovery phrase recovers it. The wallet publishes the public half with a KeyZ declaration (`declareKey`, purpose `encryption`, algorithm `p256`). A sender wraps only for keys that `evaluateKey(address, key, 'encryption', evidence)` reports as `declared`. A key that is merely claimed, declared for another purpose, signed by another wallet, expired or revoked is refused.
+
+Revoking a recipient's declaration stops new records from being shared with that key. It does not take back records that recipient could already open.
+
 ## Building blocks
 
 - `cbor.ts`: a strict CBOR decoder. It refuses indefinite lengths, tags, floats, duplicate keys, non-shortest encodings, nesting deeper than 16, and truncated or trailing input.

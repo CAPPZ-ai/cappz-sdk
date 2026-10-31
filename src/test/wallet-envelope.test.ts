@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { generateRecoveryPhrase, keyPairFromPhrase } from '../lib/auth/wallet/session';
-import { isWalletEnvelope, openForWallet, sealForWallet, WALLET_ENVELOPE_PREFIX } from '../lib/crypto/walletEnvelope';
+import { envelopeRecipients, isWalletEnvelope, openForWallet, openSharedEnvelope, sealForRecipients, sealForWallet, SHARED_ENVELOPE_PREFIX, WALLET_ENVELOPE_PREFIX, walletEncryptionKey } from '../lib/crypto/walletEnvelope';
 
 const enc = (s: string) => new TextEncoder().encode(s);
 const dec = (b: Uint8Array | null) => (b ? new TextDecoder().decode(b) : null);
@@ -38,5 +38,54 @@ describe('v15-17-00 data keys wrapped by a wallet', () => {
     }
     expect(await openForWallet('U2FsdGVkX1legacy', wallet.privateKey, ctx)).toBeNull();
     expect(dec(await openForWallet(await sealForWallet(new Uint8Array(0), wallet.privateKey, ctx), wallet.privateKey, ctx))).toBe('');
+  });
+});
+
+describe('v15-18-00 shared records: one data key, a wrap per party', () => {
+  const owner = keyPairFromPhrase(generateRecoveryPhrase());
+  const pharmacy = keyPairFromPhrase(generateRecoveryPhrase());
+  const patient = keyPairFromPhrase(generateRecoveryPhrase());
+  const ctx = `prescription|${owner.address}|rx-1`;
+
+  it('derives a stable P-256 encryption key from the wallet, recoverable from the phrase', async () => {
+    const a = await walletEncryptionKey(pharmacy.privateKey);
+    const b = await walletEncryptionKey(pharmacy.privateKey.slice());
+    expect(a.publicKey).toMatch(/^04[0-9a-f]{128}$/);
+    expect(b.publicKey).toBe(a.publicKey);
+    expect((await walletEncryptionKey(patient.privateKey)).publicKey).not.toBe(a.publicKey);
+    // The JWK is usable by WebCrypto ECDH.
+    await crypto.subtle.importKey('jwk', a.privateKey, { name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
+  });
+
+  it('the owner and each recipient open it with their own keys; nobody else does', async () => {
+    const ph = await walletEncryptionKey(pharmacy.privateKey);
+    const pt = await walletEncryptionKey(patient.privateKey);
+    const sealed = await sealForRecipients(enc('amoxicillin 500mg'), ctx, {
+      ownerPrivateKey: owner.privateKey,
+      recipients: [{ id: pharmacy.address, publicKey: ph.publicKey }, { id: patient.address, publicKey: pt.publicKey }],
+    });
+    expect(sealed.startsWith(SHARED_ENVELOPE_PREFIX)).toBe(true);
+    expect(sealed).not.toContain('amoxicillin');
+    expect(envelopeRecipients(sealed)).toEqual(['owner', pharmacy.address, patient.address]);
+    expect(dec(await openSharedEnvelope(sealed, ctx, { ownerPrivateKey: owner.privateKey }))).toBe('amoxicillin 500mg');
+    expect(dec(await openSharedEnvelope(sealed, ctx, { recipientId: pharmacy.address, encryptionPrivateKey: ph.privateKey }))).toBe('amoxicillin 500mg');
+    expect(dec(await openSharedEnvelope(sealed, ctx, { recipientId: patient.address, encryptionPrivateKey: pt.privateKey }))).toBe('amoxicillin 500mg');
+    // Wrong keys, a wrap that is not yours, another record's context:
+    expect(await openSharedEnvelope(sealed, ctx, { ownerPrivateKey: pharmacy.privateKey })).toBeNull();
+    expect(await openSharedEnvelope(sealed, ctx, { recipientId: pharmacy.address, encryptionPrivateKey: pt.privateKey })).toBeNull();
+    expect(await openSharedEnvelope(sealed, ctx, { recipientId: 'rStranger', encryptionPrivateKey: ph.privateKey })).toBeNull();
+    expect(await openSharedEnvelope(sealed, `prescription|${owner.address}|rx-2`, { ownerPrivateKey: owner.privateKey })).toBeNull();
+    expect(await openSharedEnvelope(sealed, `prescription|${owner.address}|rx-2`, { recipientId: patient.address, encryptionPrivateKey: pt.privateKey })).toBeNull();
+  });
+
+  it('refuses to seal for nobody, and rejects tampering and foreign formats', async () => {
+    await expect(sealForRecipients(enc('x'), ctx, { recipients: [] })).rejects.toThrow(/nobody/);
+    const sealed = await sealForRecipients(enc('x'), ctx, { ownerPrivateKey: owner.privateKey, recipients: [] });
+    const env = JSON.parse(atob(sealed.slice(4).replace(/-/g, '+').replace(/_/g, '/')));
+    env.ct = env.ct.slice(0, -2) + (env.ct.endsWith('AA') ? 'AB' : 'AA');
+    const tampered = SHARED_ENVELOPE_PREFIX + btoa(JSON.stringify(env)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    expect(await openSharedEnvelope(tampered, ctx, { ownerPrivateKey: owner.privateKey })).toBeNull();
+    expect(await openSharedEnvelope('cw1.abc', ctx, { ownerPrivateKey: owner.privateKey })).toBeNull();
+    expect(envelopeRecipients('garbage')).toEqual([]);
   });
 });
