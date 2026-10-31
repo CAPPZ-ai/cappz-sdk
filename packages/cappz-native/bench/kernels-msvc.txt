@@ -1,0 +1,78 @@
+cappz-native bench · aarch64 · 8 threads · features 0b111
+
+rs-encode k=10 m=4 shard=1024KiB
+  rust scalar                              514 MB/s      19.443 ms
+  rust neon                               4134 MB/s       2.419 ms
+  rust neon x8 threads                    7683 MB/s       1.301 ms
+  c++ msvc 19.44 neon                     3563 MB/s       2.806 ms
+
+rs-encode k=10 m=4 shard=64KiB
+  rust scalar                              485 MB/s       1.288 ms
+  rust neon                               5032 MB/s       0.124 ms
+  rust neon x8 threads                    5028 MB/s       0.124 ms
+  c++ msvc 19.44 neon                     4093 MB/s       0.153 ms
+
+rs-encode k=4 m=2 shard=4096KiB
+  rust scalar                             1062 MB/s      15.069 ms
+  rust neon                               6356 MB/s       2.517 ms
+  rust neon x8 threads                   10216 MB/s       1.566 ms
+  c++ msvc 19.44 neon                     6085 MB/s       2.629 ms
+
+sha256 64B
+  rust portable                            121 MB/s         504 ns
+  rust armv8-sha2                          848 MB/s          72 ns
+  c++ msvc 19.44 armv8-sha2                562 MB/s         109 ns
+  sha2 crate 0.10                          172 MB/s         354 ns
+
+sha256 1KiB
+  rust portable                            234 MB/s        4167 ns
+  rust armv8-sha2                         1350 MB/s         723 ns
+  c++ msvc 19.44 armv8-sha2               1283 MB/s         761 ns
+  sha2 crate 0.10                          343 MB/s        2845 ns
+
+sha256 64KiB
+  rust portable                            250 MB/s       0.250 ms
+  rust armv8-sha2                         1392 MB/s       0.045 ms
+  c++ msvc 19.44 armv8-sha2               1390 MB/s       0.045 ms
+  sha2 crate 0.10                          365 MB/s       0.171 ms
+
+sha256 64MiB
+  rust portable                            250 MB/s     255.945 ms
+  rust armv8-sha2                         1398 MB/s      45.785 ms
+  c++ msvc 19.44 armv8-sha2               1401 MB/s      45.674 ms
+  sha2 crate 0.10                          367 MB/s     174.275 ms
+
+sha256 chunks of 1MiB over 64MiB
+  rust armv8-sha2 x1 threads              1390 MB/s      46.037 ms
+  rust armv8-sha2 x8 threads              8664 MB/s       7.387 ms
+
+{"group":"rs-encode k=10 m=4 shard=1024KiB","name":"rust scalar","mb_s":514.3,"median_ms":19.442800}
+{"group":"rs-encode k=10 m=4 shard=1024KiB","name":"rust neon","mb_s":4133.9,"median_ms":2.419000}
+{"group":"rs-encode k=10 m=4 shard=1024KiB","name":"rust neon x8 threads","mb_s":7683.4,"median_ms":1.301500}
+{"group":"rs-encode k=10 m=4 shard=1024KiB","name":"c++ msvc 19.44 neon","mb_s":3563.3,"median_ms":2.806400}
+{"group":"rs-encode k=10 m=4 shard=64KiB","name":"rust scalar","mb_s":485.4,"median_ms":1.287500}
+{"group":"rs-encode k=10 m=4 shard=64KiB","name":"rust neon","mb_s":5032.2,"median_ms":0.124200}
+{"group":"rs-encode k=10 m=4 shard=64KiB","name":"rust neon x8 threads","mb_s":5028.2,"median_ms":0.124300}
+{"group":"rs-encode k=10 m=4 shard=64KiB","name":"c++ msvc 19.44 neon","mb_s":4093.0,"median_ms":0.152700}
+{"group":"rs-encode k=4 m=2 shard=4096KiB","name":"rust scalar","mb_s":1061.8,"median_ms":15.069200}
+{"group":"rs-encode k=4 m=2 shard=4096KiB","name":"rust neon","mb_s":6355.8,"median_ms":2.517400}
+{"group":"rs-encode k=4 m=2 shard=4096KiB","name":"rust neon x8 threads","mb_s":10216.5,"median_ms":1.566100}
+{"group":"rs-encode k=4 m=2 shard=4096KiB","name":"c++ msvc 19.44 neon","mb_s":6084.8,"median_ms":2.629500}
+{"group":"sha256 64B","name":"rust portable","mb_s":121.2,"median_ms":0.000504}
+{"group":"sha256 64B","name":"rust armv8-sha2","mb_s":848.1,"median_ms":0.000072}
+{"group":"sha256 64B","name":"c++ msvc 19.44 armv8-sha2","mb_s":561.7,"median_ms":0.000109}
+{"group":"sha256 64B","name":"sha2 crate 0.10","mb_s":172.3,"median_ms":0.000354}
+{"group":"sha256 1KiB","name":"rust portable","mb_s":234.4,"median_ms":0.004167}
+{"group":"sha256 1KiB","name":"rust armv8-sha2","mb_s":1350.3,"median_ms":0.000723}
+{"group":"sha256 1KiB","name":"c++ msvc 19.44 armv8-sha2","mb_s":1282.9,"median_ms":0.000761}
+{"group":"sha256 1KiB","name":"sha2 crate 0.10","mb_s":343.2,"median_ms":0.002845}
+{"group":"sha256 64KiB","name":"rust portable","mb_s":249.8,"median_ms":0.250169}
+{"group":"sha256 64KiB","name":"rust armv8-sha2","mb_s":1392.1,"median_ms":0.044897}
+{"group":"sha256 64KiB","name":"c++ msvc 19.44 armv8-sha2","mb_s":1390.3,"median_ms":0.044956}
+{"group":"sha256 64KiB","name":"sha2 crate 0.10","mb_s":364.9,"median_ms":0.171296}
+{"group":"sha256 64MiB","name":"rust portable","mb_s":250.1,"median_ms":255.945000}
+{"group":"sha256 64MiB","name":"rust armv8-sha2","mb_s":1397.8,"median_ms":45.785100}
+{"group":"sha256 64MiB","name":"c++ msvc 19.44 armv8-sha2","mb_s":1401.2,"median_ms":45.674000}
+{"group":"sha256 64MiB","name":"sha2 crate 0.10","mb_s":367.2,"median_ms":174.275400}
+{"group":"sha256 chunks of 1MiB over 64MiB","name":"rust armv8-sha2 x1 threads","mb_s":1390.2,"median_ms":46.037400}
+{"group":"sha256 chunks of 1MiB over 64MiB","name":"rust armv8-sha2 x8 threads","mb_s":8664.3,"median_ms":7.386600}

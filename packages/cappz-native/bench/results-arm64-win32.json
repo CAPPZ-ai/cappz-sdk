@@ -1,0 +1,203 @@
+{
+  "device": {
+    "arch": "arm64",
+    "platform": "win32",
+    "cpu": "Snapdragon Compute Platform",
+    "cores": 8,
+    "node": "v26.12.1",
+    "features": {
+      "simd": true,
+      "shaInstructions": true,
+      "threads": true
+    }
+  },
+  "date": "2026-10-31T01:51:38.024Z",
+  "results": [
+    {
+      "group": "sha256 · 1 KiB",
+      "name": "node:crypto createHash (OpenSSL)",
+      "ms": 389.93169999999964,
+      "mbps": 164.13130812396133
+    },
+    {
+      "group": "sha256 · 1 KiB",
+      "name": "WebCrypto subtle.digest",
+      "ms": 2206.3925,
+      "mbps": 29.00662506784265
+    },
+    {
+      "group": "sha256 · 1 KiB",
+      "name": "@noble/hashes (TypeScript backend)",
+      "ms": 450.6856000000007,
+      "mbps": 142.0058683925111
+    },
+    {
+      "group": "sha256 · 1 KiB",
+      "name": "cappz-native wasm",
+      "ms": 349.1612000000023,
+      "mbps": 183.2964258342553
+    },
+    {
+      "group": "sha256 · 1 KiB",
+      "name": "cappz-native native",
+      "ms": 101.75089999999909,
+      "mbps": 628.9870654706796
+    },
+    {
+      "group": "sha256 · 64 KiB",
+      "name": "node:crypto createHash (OpenSSL)",
+      "ms": 203.4994000000006,
+      "mbps": 314.4972417609084
+    },
+    {
+      "group": "sha256 · 64 KiB",
+      "name": "WebCrypto subtle.digest",
+      "ms": 240.70330000000104,
+      "mbps": 265.8875054891218
+    },
+    {
+      "group": "sha256 · 64 KiB",
+      "name": "@noble/hashes (TypeScript backend)",
+      "ms": 360.3150999999998,
+      "mbps": 177.62230891794442
+    },
+    {
+      "group": "sha256 · 64 KiB",
+      "name": "cappz-native wasm",
+      "ms": 312.2251000000033,
+      "mbps": 204.98031708533145
+    },
+    {
+      "group": "sha256 · 64 KiB",
+      "name": "cappz-native native",
+      "ms": 46.787600000003295,
+      "mbps": 1367.8837982712405
+    },
+    {
+      "group": "sha256 · 64 MiB",
+      "name": "node:crypto createHash (OpenSSL)",
+      "ms": 200.4551999999967,
+      "mbps": 319.27333389206694
+    },
+    {
+      "group": "sha256 · 64 MiB",
+      "name": "WebCrypto subtle.digest",
+      "ms": 221.61619999999675,
+      "mbps": 288.78755253452107
+    },
+    {
+      "group": "sha256 · 64 MiB",
+      "name": "@noble/hashes (TypeScript backend)",
+      "ms": 354.04939999999624,
+      "mbps": 180.76573495111327
+    },
+    {
+      "group": "sha256 · 64 MiB",
+      "name": "cappz-native wasm",
+      "ms": 313.8492000000042,
+      "mbps": 203.919589407904
+    },
+    {
+      "group": "sha256 · 64 MiB",
+      "name": "cappz-native native",
+      "ms": 45.820599999999104,
+      "mbps": 1396.7516793756795
+    },
+    {
+      "group": "content-address 256 MiB (whole + 4 MiB chunks)",
+      "name": "WebCrypto (SDK today)",
+      "ms": 1814.6984999999986,
+      "mbps": 141.0702659422489
+    },
+    {
+      "group": "content-address 256 MiB (whole + 4 MiB chunks)",
+      "name": "cappz-native, all cores",
+      "ms": 213.69060000000172,
+      "mbps": 1197.99373486713
+    },
+    {
+      "group": "RS encode 10+4 · 64 MiB",
+      "name": "XOR parity (current cappz, not RS)",
+      "ms": 95.15869999999995,
+      "mbps": 672.5606802110583
+    },
+    {
+      "group": "RS encode 10+4 · 64 MiB",
+      "name": "rsEncode · typescript",
+      "ms": 897.5001000000047,
+      "mbps": 71.30918425524371
+    },
+    {
+      "group": "RS rebuild 10+4 · 64 MiB, 4 data shards lost",
+      "name": "rsDecode · typescript",
+      "ms": 770.306500000006,
+      "mbps": 83.08381144388565
+    },
+    {
+      "group": "RS encode 10+4 · 64 MiB",
+      "name": "rsEncode · wasm",
+      "ms": 508.1615999999922,
+      "mbps": 125.94418783316367
+    },
+    {
+      "group": "RS rebuild 10+4 · 64 MiB, 4 data shards lost",
+      "name": "rsDecode · wasm",
+      "ms": 410.89800000000105,
+      "mbps": 155.7564164342485
+    },
+    {
+      "group": "RS encode 10+4 · 64 MiB",
+      "name": "rsEncode · native",
+      "ms": 45.782399999996414,
+      "mbps": 1397.917103515871
+    },
+    {
+      "group": "RS rebuild 10+4 · 64 MiB, 4 data shards lost",
+      "name": "rsDecode · native",
+      "ms": 71.82200000000012,
+      "mbps": 891.0918660020592
+    },
+    {
+      "group": "RS encode 4+2 · 16 MiB",
+      "name": "XOR parity (current cappz, not RS)",
+      "ms": 143.3417000000045,
+      "mbps": 111.62139140249836
+    },
+    {
+      "group": "RS encode 4+2 · 16 MiB",
+      "name": "rsEncode · typescript",
+      "ms": 186.30190000000584,
+      "mbps": 85.88210855605604
+    },
+    {
+      "group": "RS rebuild 4+2 · 16 MiB, 2 data shards lost",
+      "name": "rsDecode · typescript",
+      "ms": 147.97780000000785,
+      "mbps": 108.12432675711594
+    },
+    {
+      "group": "RS encode 4+2 · 16 MiB",
+      "name": "rsEncode · wasm",
+      "ms": 134.26859999999579,
+      "mbps": 119.16412325741462
+    },
+    {
+      "group": "RS rebuild 4+2 · 16 MiB, 2 data shards lost",
+      "name": "rsDecode · wasm",
+      "ms": 101.29460000000836,
+      "mbps": 157.95511310572016
+    },
+    {
+      "group": "RS encode 4+2 · 16 MiB",
+      "name": "rsEncode · native",
+      "ms": 12.766300000002957,
+      "mbps": 1253.2997031243426
+    },
+    {
+      "group": "RS rebuild 4+2 · 16 MiB, 2 data shards lost",
+      "name": "rsDecode · native",
+      "ms": 20.03629999999248,
+      "mbps": 798.5506306057509
+    }
+  ]
+}

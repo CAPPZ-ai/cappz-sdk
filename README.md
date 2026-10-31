@@ -1,6 +1,6 @@
 # CAPPZ SDK
 
-The public part of [CAPPZ](https://cappz.ai), version 15.13.0. Apache-2.0.
+The public part of [CAPPZ](https://cappz.ai), version 15.14.0. Apache-2.0.
 
 - **`@cappz/sdk/port`**: move a PHP app off php-fpm one route at a time. Inventory the app, run each new handler beside PHP and compare every response, cut over on the evidence, roll back in about a second.
 - **`@cappz/sdk/identity`**: KeyZ, wallet-keyed trust. Keys are trusted through declarations the wallet signs, with revocations replayed offline and short delegations; SD-JWT identity claims; X.509 as a projection of a declaration.
@@ -10,6 +10,7 @@ The public part of [CAPPZ](https://cappz.ai), version 15.13.0. Apache-2.0.
 - **`@cappz/sdk/skills`, `/sync`, `/governance`, `/repoz`**: the wallet layer. Local-first storage (OPFS `cappz-store`, memory elsewhere), the Replicator's sync primitives, hash-verified principles, and RepoZ versioning. A hosted mirror is optional: register one with `registerHostedClient`, or run with none.
 - **`@cappz/sdk/mesh`**: a resilience mesh for when the internet is down. Phones, laptops and small boards pass signed, delay-tolerant bundles device to device (hotspot, Wi-Fi Direct, WebRTC, BLE/LoRa fragments, USB sticks). KeyZ declarations and a KeyZ Gate check every bundle at every hop, offline. It includes text and voice messaging with names, messages to everyone, and blocking; LoRa via RNode boards; and native iPhone/Android shells. `packages/cappz-mesh-node` runs it on Linux, macOS, Windows and Android, serves a browser app for iPhone, and builds a signed go-kit: a one-file program with Node.js runtimes that a device that was never set up can copy and run with no internet. Field guide: [docs/MESH_FIELD_GUIDE.md](docs/MESH_FIELD_GUIDE.md).
 - **`packages/cappz-edge-node`**: the CAPPZ edge node (relay, KeyZ Gate, route host, legacy faces) and its tools.
+- **`packages/cappz-native`**: Rust kernels for SHA-256 and Reed-Solomon erasure coding (`src/lib/native`, `src/lib/erasure`). NEON and the ARMv8 SHA-256 instructions natively, SIMD128 WebAssembly in browsers, TypeScript everywhere else. On a Snapdragon 8cx Gen 3: content addressing 8.5× faster, Reed-Solomon 10+4 at 1.4 GB/s with per-shard integrity. [docs/NATIVE_KERNELS.md](docs/NATIVE_KERNELS.md).
 
 Tutorials: [Move off PHP](https://cappz.ai/tutorials/move-off-php) · [Identity and trust](https://cappz.ai/tutorials/identity-and-trust) · [Replicate through firewalls](https://cappz.ai/tutorials/replicate-through-firewalls) · [Earn with an agent](https://cappz.ai/tutorials/earn-with-your-agent)
 

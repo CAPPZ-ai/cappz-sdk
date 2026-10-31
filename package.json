@@ -1,6 +1,6 @@
 {
   "name": "@cappz/sdk",
-  "version": "15.13.2",
+  "version": "15.14.0",
   "description": "CAPPZ SDK: local-first wallet storage, sync, skills, governance and RepoZ; move a PHP app off php-fpm route by route; KeyZ trust and KeyZ Gate; edge transports through firewalls; paid agents; the CAPPZ edge node; a resilience mesh (phones and laptops carrying each other's traffic when the internet is down).",
   "type": "module",
   "license": "Apache-2.0",
@@ -25,7 +25,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "mesh": "vite-node packages/cappz-mesh-node/main.ts --",
-    "mesh:kit": "vite-node packages/cappz-mesh-node/main.ts -- kit-build"
+    "mesh:kit": "vite-node packages/cappz-mesh-node/main.ts -- kit-build",
+    "native:bench": "vite-node packages/cappz-native/bench/sdk-bench.ts"
   },
   "dependencies": {
     "@noble/curves": "^1.9.6",
