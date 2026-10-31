@@ -73,7 +73,37 @@ A single native SHA-256 stream runs at 1.39 GB/s. With both digests it reached 6
 
 For scale: XOR parity of the same 64 MiB ran at 673 MB/s, so real Reed-Solomon with integrity hashes on the native backend costs less time than the scheme it replaces.
 
-The `wasm` backend runs Reed-Solomon 1.5–2× faster than TypeScript (126 vs 71 MB/s encode, 156 vs 83 MB/s rebuild). Its SHA-256 (about 205 MB/s) is portable code, because WebAssembly has no SHA instructions, and it dominates the shard hashing. These WASM figures were measured in Node's V8, not yet in a browser.
+### In the browser (15.17.0)
+
+Measured in Edge 156 and Chrome 156, both native ARM64 builds, on the same machine. Rerun with `packages/cappz-native/bench/browser/run-browser-bench.mjs`; results are in `bench/browser/results-*.json`. Edge and Chrome agree within a few percent; Edge is shown.
+
+| Work | WebCrypto | WASM | TypeScript |
+|---|---:|---:|---:|
+| SHA-256, 64 MiB | **1,040 MB/s** | 194 MB/s | 77 MB/s |
+| GF kernel only, 10+4 over 16 MiB | | 1,509 MB/s | 154 MB/s |
+| Reed-Solomon encode 10+4, 16 MiB: WASM kernel with WebCrypto shard hashes (`rsEncodeAsync`) | | **417 MB/s** | 40 MB/s |
+| Reed-Solomon rebuild, 4 lost: same (`rsDecodeAsync`) | | **435 MB/s** | 49 MB/s |
+| Reed-Solomon encode with WASM shard hashes (`rsEncode`) | | 121 MB/s | |
+| Notarization digest, 64 MiB (`digestContent`) | 361 MB/s (one buffer) | 91 MB/s (streamed) | 36 MB/s |
+| secp256k1 verify | | 2,344/s | 1,257/s |
+| Ed25519 verify | **13,061/s** | 8,889/s | 1,896/s |
+| argon2id 64 MiB (wallet unlock) | | 193 ms | |
+
+What this means:
+
+- **In a browser, WebCrypto hashes about five times faster than WASM.** Browsers' WebCrypto uses the CPU's SHA instructions (Node's OpenSSL does not, on this machine), and WebAssembly cannot reach them. So shard hashes go through WebCrypto (`rsEncodeAsync`, `rsDecodeAsync`, `sha256Chunked`), and the WASM kernel does only the GF math, where it is 10× TypeScript.
+- **Concurrent WebCrypto digests do not use more cores.** Sixteen digests at once ran at the same 1.1 GB/s as one after another.
+- **Above 64 MiB, `digestContent` streams on WASM at about 90 MB/s** to keep memory flat. A larger `webCryptoMaxBytes` trades memory for about 4× speed.
+- **Signatures:** in a browser the WASM module verifies secp256k1 only 1.8× faster than @noble (Node's V8 had suggested ~10×), and WebCrypto's Ed25519 beats it. That is why it is a separate, optional module.
+- **Multi-threaded WASM** (`src/lib/native/kernelPool.ts`): a pool of Web Workers, each running the verified core module. Reed-Solomon's GF math is split by byte range, chunk hashing by chunk, and each worker hashes with its own WebCrypto. It needs neither nightly Rust nor cross-origin isolation headers, and its output is byte-identical to the single-threaded codec. Measured on 64 MiB (Edge; Chrome within 2%):
+
+  | | one thread | 2 workers | 4 workers | 8 workers |
+  |---|---:|---:|---:|---:|
+  | chunk hashing, 1 MiB chunks | 1,061 MB/s | 1,164 | 1,485 | **1,768** |
+  | Reed-Solomon encode 10+4 | 436 MB/s | 399 | 440 | **505** |
+  | Reed-Solomon rebuild, 4 lost | 437 MB/s | 354 | 382 | 413 |
+
+  Hashing scales to 1.7×. Reed-Solomon gains only 16% at 8 workers and loses below 4, because every slice is copied twice: into the worker, then into its WASM memory. On this chip that copying and the memory bandwidth absorb most of the extra cores. Use the pool for chunk hashing and for encoding large files on 8+ cores (cappz does both); keep rebuilds on one thread. True WASM threads with shared memory would remove the copies, but they need nightly Rust and cross-origin isolation.
 
 ### Kernels, Rust against C++ (in one process, no bindings)
 
@@ -102,24 +132,30 @@ All 8 cores: Reed-Solomon 7.7–8.4 GB/s (10+4) and 10.2–11.2 GB/s (4+2); chun
 
 secp256k1 has no WebCrypto implementation, so every wallet signature, KeyZ declaration and revocation was checked in pure JavaScript (@noble/secp256k1) at about 3.6 ms each. `secp256k1VerifyMany` and `ed25519VerifyMany` verify batches on the loaded kernels, and the SDK uses them automatically:
 
-- `verifySignature` (wallet sessions, KeyZ) on WASM or native kernels;
+- `verifySignature` (wallet sessions, KeyZ) on native kernels, or WASM ones carrying the signature module;
 - hello signatures on native kernels (browsers keep WebCrypto Ed25519).
 
 The answers are identical by test: the same valid, tampered and high-S cases on every backend. The SDK's wallet signatures are ECDSA over SHA-256(SHA-256(message)), low-S, and the high-S twin is refused everywhere.
 
-| 256 signatures | @noble (before) | WASM | native, one core | native, all cores |
+| 256 signatures, in Node | @noble (before) | WASM | native, one core | native, all cores |
 |---|---:|---:|---:|---:|
-| secp256k1 verify | 272/s | 2,642/s (9.7×) | 13,563/s (50×) | 70,378/s (258×) |
+| secp256k1 verify | 272/s | 2,642/s (9.7×; 1.8× in browsers, see below) | 13,563/s (50×) | 70,378/s (258×) |
 
-| 256 signatures | WebCrypto (before) | WASM | native, one core | native, all cores |
+| 256 signatures, in Node | WebCrypto (before) | WASM | native, one core | native, all cores |
 |---|---:|---:|---:|---:|
 | Ed25519 verify | 6,535/s | 9,485/s (1.5×) | 17,019/s (2.6×) | 82,514/s (12.6×) |
 
 **Rust against C:** `k256` took 72 µs per signature and libsecp256k1 (the C library behind Bitcoin) 67 µs. That is 7% apart, so Rust ships (`--features c-secp256k1` keeps the comparison runnable). Ed25519 uses `ed25519-dalek`'s `verify_strict`, which refuses non-canonical encodings and small-order keys. OpenSSL via WebCrypto is the C baseline in the table above.
 
-The two crates grow the WASM from 37 KB to 213 KB. In a browser that buys secp256k1 verification about 10× faster than @noble. WASM builds use getrandom's `unsupported` backend: nothing here needs randomness, and the module imports nothing from JavaScript.
+**Two WASM modules (15.17.0).** Signature verification lives in its own module, `cappz_native_sig.wasm` (199 KB). `cappz_native.wasm` (37.5 KB) holds the GF kernel and SHA-256, so a page that only hashes or erasure-codes does not download the signature code. Without the signature module, verification uses the TypeScript code. Add the module with `loadWasmKernels(core, { signatures })` or `withWasmSignatures(kernels, bytes)`; each module is checked against its own pinned hash. In a browser it buys secp256k1 verification about 1.8× over @noble; natively the gain is 50×. WASM builds use getrandom's `unsupported` backend: nothing here needs randomness, and the modules import nothing from JavaScript.
 
 The WASM manifest is a TypeScript module, `cappz-native.manifest.ts`. Deno refuses JSON imports without an import attribute, and the edge node reaches the kernels through `chunkedBodies`.
+
+## Bulk AES (15.17.0)
+
+`src/lib/crypto/aesCompat.ts` encrypts on WebCrypto, which uses hardware AES (the ARMv8 AES instructions on Snapdragon). It writes `cz1.` + base64(salt ‖ IV ‖ AES-256-GCM), with the key from PBKDF2-SHA-256 (100,000 rounds). It still opens everything `crypto-js` wrote in passphrase mode (`Salted__`, EVP_BytesToKey MD5, AES-256-CBC), also through WebCrypto. GCM authenticates, so a wrong key or a changed byte yields null.
+
+Encrypting a 16 MiB file in Edge and Chrome took 3.2 s and stored 43 MB with `crypto-js` as cappz used it (hex text of the file, then AES). WebCrypto took 23 ms and stores 21 MB of base64. The module makes encryption fast and authenticated. It cannot make a key derived from public values private.
 
 ## Safety
 
@@ -136,13 +172,12 @@ The WASM manifest is a TypeScript module, `cappz-native.manifest.ts`. Deno refus
 cd packages/cappz-native
 cargo test --release                    # kernel tests (FIPS vectors, kernel agreement)
 cargo build --release --lib             # target/release/cappz_native.dll | libcappz_native.so | .dylib
-cd ../.. && packages/cappz-native/build-wasm.sh   # wasm32 + SIMD128, updates the manifest
+cd ../.. && packages/cappz-native/build-wasm.sh   # both wasm32 + SIMD128 modules, updates the manifest (run where cargo can link build.rs, e.g. an MSVC prompt on Windows)
 ```
 
 On Windows ARM64 you need the Visual Studio 2022 Build Tools with the ARM64 C++ tools and a Windows SDK. If `vcvarsall.bat arm64` reports errors from its `msbuild`/`cmake` extensions, MSYS or Git tools are on `PATH` ahead of Windows' own `find`. Either run from a plain Developer prompt, or set `PATH`, `INCLUDE` and `LIB` to the `Hostarm64\arm64` compiler and the SDK's `arm64` libraries directly.
 
 ## Not yet
 
-- **Deno and Bun loaders are written but untested**; neither runtime was installed on the benchmark machine. `node:ffi` (experimental in Node 26) is tested. Node 22, which the SDK's tests target, has no FFI and uses WASM or TypeScript.
-- **Browser numbers.** The WASM build has not yet been measured in Edge or Chrome on ARM.
-- **A threaded WASM build** (shared memory and workers) would bring multi-core shard math to browsers.
+- **The Bun loader is written but untested.** Bun's binary does not start on this Windows build (22H2). Deno 2.9 (native ARM64) is tested: the FFI loader, Reed-Solomon, streaming SHA-256, batch Ed25519 verification and `chunkedBodies` all run on the native library. `node:ffi` (experimental in Node 26) is tested too. Node 22, which the SDK's tests target, has no FFI and uses WASM or TypeScript.
+- **Shared-memory WASM threads** (nightly Rust plus cross-origin isolation) to remove the pool's copies; see the browser section.

@@ -19,18 +19,19 @@
 import { sha256 as nobleSha256 } from '@noble/hashes/sha2.js';
 import * as secp from '@noble/secp256k1';
 import { ed25519 } from '@noble/curves/ed25519';
-import { CAPPZ_NATIVE_WASM_MANIFEST_DATA } from './wasm/cappz-native.manifest';
+import { CAPPZ_NATIVE_WASM_MANIFEST_DATA, CAPPZ_NATIVE_SIG_WASM_MANIFEST_DATA } from './wasm/cappz-native.manifest';
 import { GF_EXP, GF_LOG } from './gf256';
 
 export type NativeBackend = 'native' | 'wasm' | 'typescript';
 
 export interface NativeManifest { artifact: string; crate: string; version: string; target: string; sha256: string; build: string }
 export const CAPPZ_NATIVE_WASM_MANIFEST: NativeManifest = CAPPZ_NATIVE_WASM_MANIFEST_DATA;
+export const CAPPZ_NATIVE_SIG_WASM_MANIFEST: NativeManifest = CAPPZ_NATIVE_SIG_WASM_MANIFEST_DATA;
 
 export interface NativeKernels {
   backend: NativeBackend;
-  /** simd: NEON / SIMD128 GF kernel; shaInstructions: ARMv8 SHA-256; threads: multicore kernels. */
-  features: { simd: boolean; shaInstructions: boolean; threads: boolean };
+  /** simd: NEON / SIMD128 GF kernel; shaInstructions: ARMv8 SHA-256; threads: multicore kernels; signatures: compiled signature verification (else TypeScript). */
+  features: { simd: boolean; shaInstructions: boolean; threads: boolean; signatures: boolean };
   /**
    * Reed-Solomon kernel: `out[r] = XOR_j coeffs[r*k + j] * in[j]` in GF(2^8).
    * `inputs` holds `k` shards of `len` bytes back to back; returns `rows` shards
@@ -97,7 +98,7 @@ function check(status: number, op: string): void {
   if (status !== 0) throw new Error(`cappz-native ${op}: ${ERRORS[status] ?? `status ${status}`}`);
 }
 function decodeFeatures(f: number): NativeKernels['features'] {
-  return { simd: (f & 1) !== 0, shaInstructions: (f & 2) !== 0, threads: (f & 4) !== 0 };
+  return { simd: (f & 1) !== 0, shaInstructions: (f & 2) !== 0, threads: (f & 4) !== 0, signatures: (f & 8) !== 0 };
 }
 function outputFor(coeffs: Uint8Array, rows: number, k: number, inputs: Uint8Array, len: number, out?: Uint8Array): Uint8Array {
   if (!(rows > 0 && rows < 256 && k > 0 && k < 256) || coeffs.length !== rows * k || inputs.length !== k * len) {
@@ -127,7 +128,7 @@ function productRow(c: number): Uint8Array {
 
 export const typescriptKernels: NativeKernels = {
   backend: 'typescript',
-  features: { simd: false, shaInstructions: false, threads: false },
+  features: { simd: false, shaInstructions: false, threads: false, signatures: false },
   gfMatmul(coeffs, rows, k, inputs, len, _threads, into) {
     const out = outputFor(coeffs, rows, k, inputs, len, into);
     out.fill(0);
@@ -366,13 +367,18 @@ export async function loadNativeLibrary(path: string): Promise<NativeKernels> {
 }
 
 // ─── WebAssembly ────────────────────────────────────────────────────────
+// Two modules: cappz_native.wasm (GF kernel + SHA-256, ~37 KB) and
+// cappz_native_sig.wasm (signature verification, ~200 KB), so a page that
+// only hashes or erasure-codes does not download the signature code.
 
-interface WasmExports {
+interface WasmBase {
   memory: WebAssembly.Memory;
   cappz_native_abi(): number;
   cappz_native_features(): number;
   cappz_alloc(len: number): number;
   cappz_free(ptr: number, len: number): void;
+}
+interface WasmCore extends WasmBase {
   cappz_gf_matmul(coeffs: number, rows: number, k: number, inputs: number, outputs: number, len: number, threads: number): number;
   cappz_sha256(data: number, len: number, out: number): number;
   cappz_sha256_chunks(data: number, len: number, chunk: number, out: number, threads: number): number;
@@ -380,6 +386,8 @@ interface WasmExports {
   cappz_sha256_begin(state: number): number;
   cappz_sha256_update(state: number, data: number, len: number): number;
   cappz_sha256_finish(state: number, out: number): number;
+}
+interface WasmSig extends WasmBase {
   cappz_secp256k1_verify_batch(n: number, keys: number, keyLen: number, sigs: number, digests: number, out: number, threads: number): number;
   cappz_ed25519_verify_batch(n: number, keys: number, sigs: number, msgs: number, msgsLen: number, offsets: number, out: number, threads: number): number;
 }
@@ -390,14 +398,15 @@ async function sha256HexOf(bytes: Uint8Array): Promise<string> {
   return Array.from(new Uint8Array(d), (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** Instantiate the WASM build after verifying its bytes against the manifest. */
-export async function loadWasmKernels(bytes: Uint8Array, expected = CAPPZ_NATIVE_WASM_MANIFEST.sha256): Promise<NativeKernels> {
+/** Verify `bytes` against the pinned hash, instantiate, check the ABI and the exports this module must have. */
+async function instantiateVerified<T extends WasmBase>(bytes: Uint8Array, expected: string, label: string, required: readonly string[]) {
   const actual = await sha256HexOf(bytes);
-  if (actual !== expected) throw new Error(`cappz-native wasm integrity check failed: expected ${expected.slice(0, 12)}…, got ${actual.slice(0, 12)}…`);
+  if (actual !== expected) throw new Error(`cappz-native ${label} integrity check failed: expected ${expected.slice(0, 12)}…, got ${actual.slice(0, 12)}…`);
   const { instance } = (await WebAssembly.instantiate(bytes as BufferSource, {})) as unknown as WebAssembly.WebAssemblyInstantiatedSource;
-  const x = instance.exports as unknown as WasmExports;
-  if (x.cappz_native_abi() !== ABI) throw new Error('cappz-native wasm ABI mismatch');
-
+  const x = instance.exports as unknown as T;
+  if (x.cappz_native_abi() !== ABI) throw new Error(`cappz-native ${label} ABI mismatch`);
+  const missing = required.filter((name) => typeof (x as unknown as Record<string, unknown>)[name] !== 'function');
+  if (missing.length) throw new Error(`cappz-native ${label} lacks ${missing.join(', ')}`);
   /** Copy `inputs` in, run `fn` with their pointers plus `outLen` bytes of output, copy the output out, free all. */
   const call = (inputs: Uint8Array[], outLen: number, fn: (ptrs: number[], out: number) => number, op: string): Uint8Array => {
     const ptrs = inputs.map((b) => x.cappz_alloc(b.length));
@@ -413,8 +422,46 @@ export async function loadWasmKernels(bytes: Uint8Array, expected = CAPPZ_NATIVE
       x.cappz_free(out, outLen);
     }
   };
+  return { x, call };
+}
 
+/**
+ * Add the signature module to WASM (or TypeScript) kernels: secp256k1 and
+ * Ed25519 verification move into it; everything else is unchanged.
+ */
+export async function withWasmSignatures(kernels: NativeKernels, sigBytes: Uint8Array, expected = CAPPZ_NATIVE_SIG_WASM_MANIFEST.sha256): Promise<NativeKernels> {
+  const { x, call } = await instantiateVerified<WasmSig>(sigBytes, expected, 'signature wasm', ['cappz_secp256k1_verify_batch', 'cappz_ed25519_verify_batch']);
   return {
+    ...kernels,
+    features: { ...kernels.features, signatures: true },
+    secp256k1VerifyMany(items) {
+      return verifyGrouped(items, secpShapeOk, (i) => i.publicKey.length, (batch) => {
+        const kl = batch[0].publicKey.length;
+        const out = call([concat(batch.map((b) => b.publicKey)), concat(batch.map((b) => b.signature)), concat(batch.map((b) => b.digest))], batch.length,
+          ([k, sg, dg], o) => x.cappz_secp256k1_verify_batch(batch.length, k, kl, sg, dg, o, 1), 'secp256k1VerifyMany');
+        return Array.from(out, (v) => v === 1);
+      });
+    },
+    ed25519VerifyMany(items) {
+      return verifyGrouped(items, edShapeOk, () => 0, (batch) => {
+        const pk = edPack(batch);
+        const out = call([pk.keys, pk.sigs, pk.msgs, pk.offsets], batch.length,
+          ([k, sg, m, off], o) => x.cappz_ed25519_verify_batch(batch.length, k, sg, m, pk.msgs.length, off, o, 1), 'ed25519VerifyMany');
+        return Array.from(out, (v) => v === 1);
+      });
+    },
+  };
+}
+
+/**
+ * Instantiate the core WASM module (GF kernel + SHA-256) after verifying its
+ * bytes against the manifest. Signature verification uses the TypeScript code
+ * unless `signatures` (the bytes of cappz_native_sig.wasm) is given.
+ */
+export async function loadWasmKernels(bytes: Uint8Array, o: { expected?: string; signatures?: Uint8Array } | string = {}): Promise<NativeKernels> {
+  const opts = typeof o === 'string' ? { expected: o } : o;
+  const { x, call } = await instantiateVerified<WasmCore>(bytes, opts.expected ?? CAPPZ_NATIVE_WASM_MANIFEST.sha256, 'wasm', ['cappz_gf_matmul', 'cappz_sha256', 'cappz_sha256_chunks', 'cappz_sha256_begin']);
+  const core: NativeKernels = {
     backend: 'wasm',
     features: decodeFeatures(x.cappz_native_features()),
     gfMatmul(coeffs, rows, k, inputs, len, _threads, into) {
@@ -455,23 +502,10 @@ export async function loadWasmKernels(bytes: Uint8Array, expected = CAPPZ_NATIVE
         },
       };
     },
-    secp256k1VerifyMany(items) {
-      return verifyGrouped(items, secpShapeOk, (i) => i.publicKey.length, (batch) => {
-        const kl = batch[0].publicKey.length;
-        const out = call([concat(batch.map((b) => b.publicKey)), concat(batch.map((b) => b.signature)), concat(batch.map((b) => b.digest))], batch.length,
-          ([k, sg, dg], o) => x.cappz_secp256k1_verify_batch(batch.length, k, kl, sg, dg, o, 1), 'secp256k1VerifyMany');
-        return Array.from(out, (v) => v === 1);
-      });
-    },
-    ed25519VerifyMany(items) {
-      return verifyGrouped(items, edShapeOk, () => 0, (batch) => {
-        const pk = edPack(batch);
-        const out = call([pk.keys, pk.sigs, pk.msgs, pk.offsets], batch.length,
-          ([k, sg, m, off], o) => x.cappz_ed25519_verify_batch(batch.length, k, sg, m, pk.msgs.length, off, o, 1), 'ed25519VerifyMany');
-        return Array.from(out, (v) => v === 1);
-      });
-    },
+    secp256k1VerifyMany: typescriptKernels.secp256k1VerifyMany,
+    ed25519VerifyMany: typescriptKernels.ed25519VerifyMany,
   };
+  return opts.signatures ? withWasmSignatures(core, opts.signatures) : core;
 }
 
 // ─── Selection ──────────────────────────────────────────────────────────
@@ -492,8 +526,10 @@ export function useKernels(kernels: NativeKernels): NativeKernels {
 export interface LoadKernelsOptions {
   /** Path to the native library; tried first where an FFI exists. */
   libraryPath?: string;
-  /** The WASM build's bytes (e.g. fetched from a bundled URL); tried next. */
+  /** The core WASM module's bytes (e.g. fetched from a bundled URL); tried next. */
   wasmBytes?: Uint8Array;
+  /** The signature WASM module's bytes; optional, for pages that verify many signatures. */
+  wasmSignatureBytes?: Uint8Array;
 }
 
 /**
@@ -507,7 +543,7 @@ export async function loadKernels(o: LoadKernelsOptions = {}): Promise<NativeKer
     catch (err) { skipped.push(`native: ${err instanceof Error ? err.message : String(err)}`); }
   }
   if (o.wasmBytes) {
-    try { return { ...useKernels(await loadWasmKernels(o.wasmBytes)), skipped }; }
+    try { return { ...useKernels(await loadWasmKernels(o.wasmBytes, { signatures: o.wasmSignatureBytes })), skipped }; }
     catch (err) { skipped.push(`wasm: ${err instanceof Error ? err.message : String(err)}`); }
   }
   return { ...useKernels(typescriptKernels), skipped };

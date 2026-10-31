@@ -8,11 +8,12 @@ import { generateRecoveryPhrase, keyPairFromPhrase, signMessage, verifySignature
 import { generateSigningKey, signCanonical, verifyCanonical } from '../lib/sync/helloSignature';
 
 const wasmPath = path.resolve(__dirname, '../lib/native/wasm/cappz_native.wasm');
+const sigPath = path.resolve(__dirname, '../lib/native/wasm/cappz_native_sig.wasm');
 const libPath = process.env.CAPPZ_NATIVE_LIB ?? path.resolve(__dirname, '../../packages/cappz-native/target/release', nativeLibraryName());
 const hasNative = existsSync(libPath) && nodeFfi() !== null;
 
 async function backends(): Promise<NativeKernels[]> {
-  const list = [typescriptKernels, await loadWasmKernels(new Uint8Array(readFileSync(wasmPath)))];
+  const list = [typescriptKernels, await loadWasmKernels(new Uint8Array(readFileSync(wasmPath)), { signatures: new Uint8Array(readFileSync(sigPath)) })];
   if (hasNative) list.push(await loadNativeLibrary(libPath));
   return list;
 }
@@ -57,6 +58,7 @@ describe('v15-16-00 batch signature verification', () => {
       { ...good[7], digest: new Uint8Array(31) },
     ];
     for (const k of await backends()) {
+      expect(k.features.signatures, k.backend).toBe(k.backend !== 'typescript');
       expect(k.secp256k1VerifyMany(good).every(Boolean), k.backend).toBe(true);
       expect(k.secp256k1VerifyMany(bad), k.backend).toEqual(bad.map(() => false));
       // mixed order keeps positions

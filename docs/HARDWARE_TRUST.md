@@ -94,6 +94,17 @@ Every capture is also checked against a different challenge, origin, flipped sig
 
 Deno's WebCrypto does not verify ECDSA P-384 with SHA-256, which Apple's intermediate certificate uses. Apple chains therefore anchor in browsers and Node but not on Deno.
 
+## 5. Data keys wrapped by a wallet (15.17.0)
+
+`src/lib/crypto/walletEnvelope.ts` encrypts records so that only a wallet opens them:
+
+- **Per-record data key.** `sealForWallet(bytes, walletPrivateKey, context)` gives each record a fresh random 256-bit data key, encrypts the record with it (AES-256-GCM), and wraps that key (AES-256-GCM) under a key derived from the wallet's private key with HKDF-SHA-256.
+- **Format.** `cw1.` + base64(kekIv ‖ wrapped data key ‖ dataIv ‖ ciphertext).
+- **Context binding.** `context` (purpose, wallet, scope) is both the HKDF info and the associated data of both encryptions, so a record cannot be opened as another purpose's record or under another wallet.
+- **Nothing else to store.** The wrapped key travels with the record, and the recovery phrase recovers every record on any device. Wrapping per record also leaves room to grant one record to another wallet by wrapping its data key again.
+
+This replaces keys derived from public values: an address, an address and an HD path string, an address and a file hash. Anyone could compute those. Tests confirm that a key derived from the address, another wallet, another purpose or scope, and any changed byte all fail to open a record.
+
 ## Building blocks
 
 - `cbor.ts`: a strict CBOR decoder. It refuses indefinite lengths, tags, floats, duplicate keys, non-shortest encodings, nesting deeper than 16, and truncated or trailing input.

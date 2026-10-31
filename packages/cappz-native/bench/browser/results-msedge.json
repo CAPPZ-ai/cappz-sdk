@@ -1,0 +1,293 @@
+{
+  "date": "2026-10-31T13:51:45.996Z",
+  "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+  "rows": [
+    {
+      "group": "sha256 · 64 MiB",
+      "name": "WebCrypto subtle.digest",
+      "ms": 62,
+      "rate": 1032.258064516129,
+      "unit": "MB/s"
+    },
+    {
+      "group": "sha256 · 64 MiB",
+      "name": "@noble/hashes (TypeScript)",
+      "ms": 834.5,
+      "rate": 76.69263031755543,
+      "unit": "MB/s"
+    },
+    {
+      "group": "sha256 · 64 MiB",
+      "name": "cappz-native wasm",
+      "ms": 329.6000000014901,
+      "rate": 194.17475728067555,
+      "unit": "MB/s"
+    },
+    {
+      "group": "notarize 64 MiB (file hash + salted leaf)",
+      "name": "digestContent · WebCrypto, one buffer",
+      "ms": 185.70000000298023,
+      "rate": 344.6418955248944,
+      "unit": "MB/s"
+    },
+    {
+      "group": "notarize 64 MiB (file hash + salted leaf)",
+      "name": "digestContent · streamed, wasm",
+      "ms": 713,
+      "rate": 89.76157082748948,
+      "unit": "MB/s"
+    },
+    {
+      "group": "notarize 64 MiB (file hash + salted leaf)",
+      "name": "digestContent · streamed, typescript",
+      "ms": 1748.8999999985099,
+      "rate": 36.59443078509607,
+      "unit": "MB/s"
+    },
+    {
+      "group": "RS encode 10+4 · 16 MiB",
+      "name": "typescript",
+      "ms": 405.19999999925494,
+      "rate": 39.48667324785148,
+      "unit": "MB/s"
+    },
+    {
+      "group": "RS rebuild 10+4 · 16 MiB, 4 lost",
+      "name": "typescript",
+      "ms": 325.70000000298023,
+      "rate": 49.12496162067423,
+      "unit": "MB/s"
+    },
+    {
+      "group": "RS encode 10+4 · 16 MiB",
+      "name": "typescript, shard hashes on WebCrypto (rsEncodeAsync)",
+      "ms": 133.5,
+      "rate": 119.8501872659176,
+      "unit": "MB/s"
+    },
+    {
+      "group": "RS rebuild 10+4 · 16 MiB, 4 lost",
+      "name": "typescript, shard hashes on WebCrypto (rsDecodeAsync)",
+      "ms": 133.60000000149012,
+      "rate": 119.76047904058042,
+      "unit": "MB/s"
+    },
+    {
+      "group": "RS encode 10+4 · 16 MiB",
+      "name": "wasm",
+      "ms": 132.09999999776483,
+      "rate": 121.12036336313946,
+      "unit": "MB/s"
+    },
+    {
+      "group": "RS rebuild 10+4 · 16 MiB, 4 lost",
+      "name": "wasm",
+      "ms": 107.30000000074506,
+      "rate": 149.11463187221716,
+      "unit": "MB/s"
+    },
+    {
+      "group": "RS encode 10+4 · 16 MiB",
+      "name": "wasm, shard hashes on WebCrypto (rsEncodeAsync)",
+      "ms": 37.5,
+      "rate": 426.6666666666667,
+      "unit": "MB/s"
+    },
+    {
+      "group": "RS rebuild 10+4 · 16 MiB, 4 lost",
+      "name": "wasm, shard hashes on WebCrypto (rsDecodeAsync)",
+      "ms": 37.400000002235174,
+      "rate": 427.80748660544856,
+      "unit": "MB/s"
+    },
+    {
+      "group": "secp256k1 verify · 128",
+      "name": "@noble (TypeScript)",
+      "ms": 101.19999999925494,
+      "rate": 1264.8221343966636,
+      "unit": "/s"
+    },
+    {
+      "group": "secp256k1 verify · 128",
+      "name": "wasm",
+      "ms": 53.600000001490116,
+      "rate": 2388.0597014261475,
+      "unit": "/s"
+    },
+    {
+      "group": "Ed25519 verify · 128",
+      "name": "WebCrypto, import per verify",
+      "ms": 9.800000000745058,
+      "rate": 13061.224488802922,
+      "unit": "/s"
+    },
+    {
+      "group": "Ed25519 verify · 128",
+      "name": "@noble (TypeScript)",
+      "ms": 67.89999999850988,
+      "rate": 1885.1251841356266,
+      "unit": "/s"
+    },
+    {
+      "group": "Ed25519 verify · 128",
+      "name": "wasm",
+      "ms": 14.400000002235174,
+      "rate": 8888.888887509152,
+      "unit": "/s"
+    },
+    {
+      "group": "sha256 · 16 chunks of 4 MiB",
+      "name": "WebCrypto, one after another",
+      "ms": 60.80000000074506,
+      "rate": 1052.6315789344692,
+      "unit": "MB/s"
+    },
+    {
+      "group": "sha256 · 16 chunks of 4 MiB",
+      "name": "WebCrypto, all at once (Promise.all)",
+      "ms": 58.100000001490116,
+      "rate": 1101.5490533280304,
+      "unit": "MB/s"
+    },
+    {
+      "group": "sha256 · 16 chunks of 4 MiB",
+      "name": "wasm sha256Chunks",
+      "ms": 329.0999999977648,
+      "rate": 194.46976602988352,
+      "unit": "MB/s"
+    },
+    {
+      "group": "GF kernel only · 10+4 over 16 MiB",
+      "name": "typescript",
+      "ms": 104.89999999850988,
+      "rate": 152.52621544544598,
+      "unit": "MB/s"
+    },
+    {
+      "group": "GF kernel only · 10+4 over 16 MiB",
+      "name": "wasm",
+      "ms": 10.5,
+      "rate": 1523.8095238095236,
+      "unit": "MB/s"
+    },
+    {
+      "group": "RS encode 10+4 · 64 MiB",
+      "name": "one thread (rsEncodeAsync)",
+      "ms": 146.69999999925494,
+      "rate": 436.2644853464556,
+      "unit": "MB/s"
+    },
+    {
+      "group": "RS rebuild 10+4 · 64 MiB, 4 lost",
+      "name": "one thread (rsDecodeAsync)",
+      "ms": 146.29999999701977,
+      "rate": 437.4572795714541,
+      "unit": "MB/s"
+    },
+    {
+      "group": "sha256 · 64 MiB in 1 MiB chunks",
+      "name": "one thread (WebCrypto)",
+      "ms": 60.29999999701977,
+      "rate": 1061.3598673824727,
+      "unit": "MB/s"
+    },
+    {
+      "group": "RS encode 10+4 · 64 MiB",
+      "name": "pool of 1 workers",
+      "ms": 222.5,
+      "rate": 287.64044943820227,
+      "unit": "MB/s"
+    },
+    {
+      "group": "RS rebuild 10+4 · 64 MiB, 4 lost",
+      "name": "pool of 1 workers",
+      "ms": 229.10000000149012,
+      "rate": 279.3539938873144,
+      "unit": "MB/s"
+    },
+    {
+      "group": "sha256 · 64 MiB in 1 MiB chunks",
+      "name": "pool of 1 workers",
+      "ms": 86.30000000074506,
+      "rate": 741.5990729947563,
+      "unit": "MB/s"
+    },
+    {
+      "group": "RS encode 10+4 · 64 MiB",
+      "name": "pool of 2 workers",
+      "ms": 160.40000000223517,
+      "rate": 399.0024937600259,
+      "unit": "MB/s"
+    },
+    {
+      "group": "RS rebuild 10+4 · 64 MiB, 4 lost",
+      "name": "pool of 2 workers",
+      "ms": 180.59999999776483,
+      "rate": 354.37430786706585,
+      "unit": "MB/s"
+    },
+    {
+      "group": "sha256 · 64 MiB in 1 MiB chunks",
+      "name": "pool of 2 workers",
+      "ms": 55,
+      "rate": 1163.6363636363637,
+      "unit": "MB/s"
+    },
+    {
+      "group": "RS encode 10+4 · 64 MiB",
+      "name": "pool of 4 workers",
+      "ms": 145.5,
+      "rate": 439.8625429553265,
+      "unit": "MB/s"
+    },
+    {
+      "group": "RS rebuild 10+4 · 64 MiB, 4 lost",
+      "name": "pool of 4 workers",
+      "ms": 167.40000000223517,
+      "rate": 382.31780166753555,
+      "unit": "MB/s"
+    },
+    {
+      "group": "sha256 · 64 MiB in 1 MiB chunks",
+      "name": "pool of 4 workers",
+      "ms": 43.099999997764826,
+      "rate": 1484.9187935804882,
+      "unit": "MB/s"
+    },
+    {
+      "group": "RS encode 10+4 · 64 MiB",
+      "name": "pool of 8 workers",
+      "ms": 126.80000000074506,
+      "rate": 504.7318611957724,
+      "unit": "MB/s"
+    },
+    {
+      "group": "RS rebuild 10+4 · 64 MiB, 4 lost",
+      "name": "pool of 8 workers",
+      "ms": 154.89999999850988,
+      "rate": 413.1697869633032,
+      "unit": "MB/s"
+    },
+    {
+      "group": "sha256 · 64 MiB in 1 MiB chunks",
+      "name": "pool of 8 workers",
+      "ms": 36.19999999925494,
+      "rate": 1767.95580114136,
+      "unit": "MB/s"
+    },
+    {
+      "group": "argon2id 64 MiB t=3 p=1 (keyVault unlock)",
+      "name": "hash-wasm on the calling thread",
+      "ms": 191.19999999925494,
+      "rate": 5.230125523032933,
+      "unit": "/s"
+    },
+    {
+      "group": "environment",
+      "name": "hardwareConcurrency 8; crossOriginIsolated false",
+      "ms": 0,
+      "rate": 0,
+      "unit": ""
+    }
+  ]
+}

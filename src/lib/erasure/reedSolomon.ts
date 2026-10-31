@@ -17,6 +17,7 @@
  * NEON + all cores natively, SIMD128 in browsers, TypeScript otherwise.
  */
 import { activeKernels, type NativeKernels } from '../native/cappzNative';
+import { sha256Chunked } from '../crypto/contentDigest';
 import { gfInvert, gfMatMul, gfPow, type GfMatrix } from '../native/gf256';
 
 export const RS_SCHEME = 'rs-vandermonde-systematic-gf256-0x11d' as const;
@@ -56,11 +57,10 @@ function checkParams(k: number, m: number): void {
   }
 }
 
-/** Split `data` into `k` data shards and compute `m` parity shards. */
-export function rsEncode(data: Uint8Array, k: number, m: number, kernels: NativeKernels = activeKernels()): RsEncoded {
+/** One contiguous stripe: k data shards then m parity shards. */
+function encodeStripe(data: Uint8Array, k: number, m: number, kernels: NativeKernels): { stripe: Uint8Array; shardSize: number } {
   checkParams(k, m);
   const shardSize = Math.max(1, Math.ceil(data.length / k));
-  // One contiguous stripe: k data shards then m parity shards.
   const stripe = new Uint8Array((k + m) * shardSize);
   stripe.set(data);
   if (m > 0) {
@@ -68,9 +68,28 @@ export function rsEncode(data: Uint8Array, k: number, m: number, kernels: Native
     encodingMatrix(k, m).slice(k).forEach((row, r) => coeffs.set(row, r * k));
     kernels.gfMatmul(coeffs, m, k, stripe.subarray(0, k * shardSize), shardSize, 0, stripe.subarray(k * shardSize));
   }
+  return { stripe, shardSize };
+}
+
+function encoded(data: Uint8Array, k: number, m: number, stripe: Uint8Array, shardSize: number, digests: Uint8Array[]): RsEncoded {
   const shards = Array.from({ length: k + m }, (_, i) => stripe.subarray(i * shardSize, (i + 1) * shardSize));
-  const shardHashes = kernels.sha256Chunks(stripe, shardSize).map(hex);
-  return { descriptor: { scheme: RS_SCHEME, v: 1, k, m, size: data.length, shardSize, shardHashes }, shards };
+  return { descriptor: { scheme: RS_SCHEME, v: 1, k, m, size: data.length, shardSize, shardHashes: digests.map(hex) }, shards };
+}
+
+/** Split `data` into `k` data shards and compute `m` parity shards. */
+export function rsEncode(data: Uint8Array, k: number, m: number, kernels: NativeKernels = activeKernels()): RsEncoded {
+  const { stripe, shardSize } = encodeStripe(data, k, m, kernels);
+  return encoded(data, k, m, stripe, shardSize, kernels.sha256Chunks(stripe, shardSize));
+}
+
+/**
+ * rsEncode with the shard hashes on the fastest path (sha256Chunked): in a
+ * browser that is WebCrypto, about 5x the WASM SHA-256 engine, and shard
+ * hashing is most of the encode time there. Same shards and descriptor.
+ */
+export async function rsEncodeAsync(data: Uint8Array, k: number, m: number, kernels: NativeKernels = activeKernels()): Promise<RsEncoded> {
+  const { stripe, shardSize } = encodeStripe(data, k, m, kernels);
+  return encoded(data, k, m, stripe, shardSize, await sha256Chunked(stripe, shardSize, kernels));
 }
 
 export interface RsDecodeResult {
@@ -79,21 +98,19 @@ export interface RsDecodeResult {
   lost: number[];
 }
 
-/**
- * Rebuild the original bytes from any `k` intact shards (`null` = lost).
- * Throws when fewer than `k` shards survive verification.
- */
-export function rsDecode(shards: (Uint8Array | null | undefined)[], d: RsDescriptor, kernels: NativeKernels = activeKernels()): RsDecodeResult {
+/** The right-sized shards gathered into one buffer: one chunk-hash call verifies them all, then it feeds the kernel. */
+function gatherShards(shards: (Uint8Array | null | undefined)[], d: RsDescriptor): { present: number[]; pool: Uint8Array } {
   if (d.scheme !== RS_SCHEME || d.v !== 1) throw new Error(`reed-solomon: unknown scheme ${d.scheme} v${d.v}`);
   checkParams(d.k, d.m);
-  const { k, m, shardSize } = d;
-  // Gather the right-sized shards into one buffer so a single (parallel)
-  // chunk-hash call verifies them all; the buffer then feeds the kernel.
   const present: number[] = [];
-  for (let i = 0; i < k + m; i++) if (shards[i]?.length === shardSize) present.push(i);
-  const pool = new Uint8Array(present.length * shardSize);
-  present.forEach((i, j) => pool.set(shards[i] as Uint8Array, j * shardSize));
-  const digests = kernels.sha256Chunks(pool, shardSize);
+  for (let i = 0; i < d.k + d.m; i++) if (shards[i]?.length === d.shardSize) present.push(i);
+  const pool = new Uint8Array(present.length * d.shardSize);
+  present.forEach((i, j) => pool.set(shards[i] as Uint8Array, j * d.shardSize));
+  return { present, pool };
+}
+
+function rebuild(present: number[], pool: Uint8Array, digests: Uint8Array[], d: RsDescriptor, kernels: NativeKernels): RsDecodeResult {
+  const { k, m, shardSize } = d;
   const slot = new Map<number, number>(); // shard index → position in pool
   present.forEach((i, j) => { if (hex(digests[j]) === d.shardHashes[i]) slot.set(i, j); });
   const lost = [...Array(k + m).keys()].filter((i) => !slot.has(i));
@@ -119,4 +136,19 @@ export function rsDecode(shards: (Uint8Array | null | undefined)[], d: RsDescrip
     missingData.forEach((i, r) => out.set(rebuilt.subarray(r * shardSize, (r + 1) * shardSize), i * shardSize));
   }
   return { data: out.subarray(0, d.size), lost };
+}
+
+/**
+ * Rebuild the original bytes from any `k` intact shards (`null` = lost).
+ * Throws when fewer than `k` shards survive verification.
+ */
+export function rsDecode(shards: (Uint8Array | null | undefined)[], d: RsDescriptor, kernels: NativeKernels = activeKernels()): RsDecodeResult {
+  const { present, pool } = gatherShards(shards, d);
+  return rebuild(present, pool, kernels.sha256Chunks(pool, d.shardSize), d, kernels);
+}
+
+/** rsDecode with shard verification on the fastest hashing path (see rsEncodeAsync). */
+export async function rsDecodeAsync(shards: (Uint8Array | null | undefined)[], d: RsDescriptor, kernels: NativeKernels = activeKernels()): Promise<RsDecodeResult> {
+  const { present, pool } = gatherShards(shards, d);
+  return rebuild(present, pool, await sha256Chunked(pool, d.shardSize, kernels), d, kernels);
 }

@@ -78,8 +78,9 @@ export async function signMessage(privateKey: Uint8Array, message: string): Prom
 export async function verifySignature(message: string, signatureHex: string, publicKeyHex: string): Promise<boolean> {
   try {
     const msgHash = sha256(new TextEncoder().encode(message));
-    // Loaded kernels (k256, low-S) check the same thing — ECDSA over the hash
-    // noble verifies by default, sha256(msgHash) — ~10x faster as WASM, ~50x natively.
+    // Loaded kernels check the same thing — ECDSA over the hash noble verifies
+    // by default, sha256(msgHash), low-S — natively ~50x faster; the WASM
+    // signature module ~1.8x in browsers (without it, this is noble anyway).
     const kernels = activeKernels();
     if (kernels.backend !== 'typescript') {
       return kernels.secp256k1VerifyMany([{ digest: sha256(msgHash), signature: secp.etc.hexToBytes(signatureHex), publicKey: secp.etc.hexToBytes(publicKeyHex) }])[0];

@@ -1,6 +1,6 @@
 [package]
 name = "cappz-native"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "CAPPZ native kernels: GF(2^8) Reed-Solomon matrix multiply, SHA-256 (NEON/ARMv8 Crypto, WASM SIMD, portable) and batch signature verification (secp256k1, Ed25519) on audited crates."
@@ -10,7 +10,13 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = []
+# The native library carries everything; WebAssembly builds pick one half so
+# a page that only hashes does not download the signature code.
+default = ["core", "sig"]
+# GF(2^8) Reed-Solomon kernel and SHA-256.
+core = []
+# Batch secp256k1 / Ed25519 verification (k256, ed25519-dalek).
+sig = ["dep:k256", "dep:ed25519-dalek"]
 # Compile the C++ twins of the kernels (cpp/) so `bench` can compare Rust and C++ in one process.
 cpp = ["dep:cc"]
 # Compare against the RustCrypto sha2 crate in `bench`.
@@ -22,8 +28,8 @@ c-secp256k1 = ["dep:secp256k1"]
 sha2 = { version = "0.10", optional = true }
 secp256k1 = { version = "0.33", optional = true, default-features = false, features = ["std"] }
 # Signature verification on audited RustCrypto / dalek crates (no hand-written curve code).
-k256 = { version = "0.14", default-features = false, features = ["ecdsa", "std"] }
-ed25519-dalek = { version = "3", default-features = false, features = ["fast"] }
+k256 = { version = "0.14", optional = true, default-features = false, features = ["ecdsa", "std"] }
+ed25519-dalek = { version = "3", optional = true, default-features = false, features = ["fast"] }
 
 [build-dependencies]
 cc = { version = "1", optional = true }
@@ -31,6 +37,7 @@ cc = { version = "1", optional = true }
 [[bin]]
 name = "bench"
 path = "src/bin/bench.rs"
+required-features = ["core", "sig"]
 
 [profile.release]
 opt-level = 3

@@ -6,8 +6,11 @@
 //! Every export checks its pointers and lengths and returns a status code
 //! instead of panicking across the boundary.
 
+#[cfg(feature = "core")]
 pub mod gf;
+#[cfg(feature = "core")]
 pub mod sha;
+#[cfg(feature = "sig")]
 pub mod sig;
 
 use core::slice;
@@ -32,16 +35,24 @@ pub extern "C" fn cappz_native_abi() -> u32 {
     3
 }
 
-/// Bit set of the paths this build will take: 1 = NEON / SIMD128 GF kernel,
-/// 2 = ARMv8 SHA-256 instructions, 4 = threads available.
+/// Bit set of what this build contains and the paths it will take:
+/// 1 = NEON / SIMD128 GF kernel, 2 = ARMv8 SHA-256 instructions, 4 = threads
+/// available, 8 = signature verification, 16 = GF + SHA-256 kernels.
 #[no_mangle]
 pub extern "C" fn cappz_native_features() -> u32 {
     let mut f = 0;
-    if gf::Kernel::best() != gf::Kernel::Scalar {
-        f |= 1;
+    #[cfg(feature = "core")]
+    {
+        f |= 16;
+        if gf::Kernel::best() != gf::Kernel::Scalar {
+            f |= 1;
+        }
+        if sha::Engine::best() != sha::Engine::Portable {
+            f |= 2;
+        }
     }
-    if sha::Engine::best() != sha::Engine::Portable {
-        f |= 2;
+    if cfg!(feature = "sig") {
+        f |= 8;
     }
     if cfg!(not(target_arch = "wasm32")) {
         f |= 4;
@@ -57,6 +68,7 @@ pub extern "C" fn cappz_native_features() -> u32 {
 /// # Safety
 /// The pointers must be valid for the stated sizes and `outputs` must not
 /// overlap `inputs` or `coeffs`.
+#[cfg(feature = "core")]
 #[no_mangle]
 pub unsafe extern "C" fn cappz_gf_matmul(
     coeffs: *const u8,
@@ -100,6 +112,7 @@ pub unsafe extern "C" fn cappz_gf_matmul(
 ///
 /// # Safety
 /// `data` must be valid for `len` bytes (or null when `len` is 0) and `out` for 32.
+#[cfg(feature = "core")]
 #[no_mangle]
 pub unsafe extern "C" fn cappz_sha256(data: *const u8, len: usize, out: *mut u8) -> i32 {
     if out.is_null() || (data.is_null() && len != 0) {
@@ -117,6 +130,7 @@ pub unsafe extern "C" fn cappz_sha256(data: *const u8, len: usize, out: *mut u8)
 ///
 /// # Safety
 /// `data` must be valid for `len` bytes and `out` for the digest count above.
+#[cfg(feature = "core")]
 #[no_mangle]
 pub unsafe extern "C" fn cappz_sha256_chunks(data: *const u8, len: usize, chunk: usize, out: *mut u8, threads: u32) -> i32 {
     if data.is_null() || out.is_null() {
@@ -143,6 +157,7 @@ pub unsafe extern "C" fn cappz_sha256_chunks(data: *const u8, len: usize, chunk:
 }
 
 /// Bytes the caller allocates for one streaming SHA-256 state.
+#[cfg(feature = "core")]
 #[no_mangle]
 pub extern "C" fn cappz_sha256_state_bytes() -> u32 {
     sha::Sha256::SAVED_BYTES as u32
@@ -152,6 +167,7 @@ pub extern "C" fn cappz_sha256_state_bytes() -> u32 {
 ///
 /// # Safety
 /// `state` must be valid for `cappz_sha256_state_bytes()` bytes.
+#[cfg(feature = "core")]
 #[no_mangle]
 pub unsafe extern "C" fn cappz_sha256_begin(state: *mut u8) -> i32 {
     let Some(saved) = state_mut(state) else { return ERR_NULL };
@@ -163,6 +179,7 @@ pub unsafe extern "C" fn cappz_sha256_begin(state: *mut u8) -> i32 {
 ///
 /// # Safety
 /// `state` as for `cappz_sha256_begin`; `data` valid for `len` bytes (or null when `len` is 0).
+#[cfg(feature = "core")]
 #[no_mangle]
 pub unsafe extern "C" fn cappz_sha256_update(state: *mut u8, data: *const u8, len: usize) -> i32 {
     let Some(saved) = state_mut(state) else { return ERR_NULL };
@@ -182,6 +199,7 @@ pub unsafe extern "C" fn cappz_sha256_update(state: *mut u8, data: *const u8, le
 ///
 /// # Safety
 /// `a` and `b` as for `cappz_sha256_begin` and not overlapping; `data` as for `cappz_sha256_update`.
+#[cfg(feature = "core")]
 #[no_mangle]
 pub unsafe extern "C" fn cappz_sha256_update_pair(a: *mut u8, b: *mut u8, data: *const u8, len: usize) -> i32 {
     if a.is_null() || b.is_null() || (data.is_null() && len != 0) {
@@ -220,6 +238,7 @@ pub unsafe extern "C" fn cappz_sha256_update_pair(a: *mut u8, b: *mut u8, data: 
 ///
 /// # Safety
 /// `state` as for `cappz_sha256_begin`; `out` valid for 32 bytes.
+#[cfg(feature = "core")]
 #[no_mangle]
 pub unsafe extern "C" fn cappz_sha256_finish(state: *mut u8, out: *mut u8) -> i32 {
     let Some(saved) = state_mut(state) else { return ERR_NULL };
@@ -239,6 +258,7 @@ pub unsafe extern "C" fn cappz_sha256_finish(state: *mut u8, out: *mut u8) -> i3
 ///
 /// # Safety
 /// `keys`, `sigs`, `digests` and `out` must be valid for n*key_len, n*64, n*32 and n bytes.
+#[cfg(feature = "sig")]
 #[no_mangle]
 pub unsafe extern "C" fn cappz_secp256k1_verify_batch(
     n: u32,
@@ -285,6 +305,7 @@ pub unsafe extern "C" fn cappz_secp256k1_verify_batch(
 ///
 /// # Safety
 /// Each pointer must be valid for the sizes above.
+#[cfg(feature = "sig")]
 #[no_mangle]
 pub unsafe extern "C" fn cappz_ed25519_verify_batch(
     n: u32,
@@ -328,6 +349,7 @@ pub unsafe extern "C" fn cappz_ed25519_verify_batch(
     OK
 }
 
+#[cfg(feature = "core")]
 unsafe fn state_mut<'a>(state: *mut u8) -> Option<&'a mut [u8; sha::Sha256::SAVED_BYTES]> {
     (!state.is_null()).then(|| &mut *(state as *mut [u8; sha::Sha256::SAVED_BYTES]))
 }

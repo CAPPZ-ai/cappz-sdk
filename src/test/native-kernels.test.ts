@@ -2,10 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { typescriptKernels, loadWasmKernels, loadNativeLibrary, nativeLibraryName, nodeFfi, useKernels, CAPPZ_NATIVE_WASM_MANIFEST, type NativeKernels } from '../lib/native/cappzNative';
+import { typescriptKernels, loadWasmKernels, loadNativeLibrary, nativeLibraryName, nodeFfi, useKernels, CAPPZ_NATIVE_WASM_MANIFEST, CAPPZ_NATIVE_SIG_WASM_MANIFEST, type NativeKernels } from '../lib/native/cappzNative';
 import { putBody, readBody } from '../lib/sync/chunkedBodies';
 import { MAX_BODY_BYTES, type BodyStore } from '../lib/sync/edgeBodyPull';
-import { rsEncode, rsDecode, encodingMatrix } from '../lib/erasure/reedSolomon';
+import { rsEncode, rsDecode, rsEncodeAsync, rsDecodeAsync, encodingMatrix } from '../lib/erasure/reedSolomon';
 import { gfInvert } from '../lib/native/gf256';
 
 const wasmPath = path.resolve(__dirname, '../lib/native/wasm/cappz_native.wasm');
@@ -38,11 +38,18 @@ describe('v15-14-00 cappz-native kernels', () => {
     expect((await backends()).map((b) => b.backend)).toEqual(['typescript', 'wasm', 'native']);
   }, 30_000); // the first load of a freshly built DLL can wait on an antivirus scan
 
-  it('wasm artifact matches its provenance manifest and refuses tampered bytes', async () => {
+  it('both wasm modules match their provenance manifests and refuse tampered bytes', async () => {
     const wasm = new Uint8Array(readFileSync(wasmPath));
+    const sig = new Uint8Array(readFileSync(path.resolve(__dirname, '../lib/native/wasm/cappz_native_sig.wasm')));
     expect(createHash('sha256').update(wasm).digest('hex')).toBe(CAPPZ_NATIVE_WASM_MANIFEST.sha256);
+    expect(createHash('sha256').update(sig).digest('hex')).toBe(CAPPZ_NATIVE_SIG_WASM_MANIFEST.sha256);
     const tampered = wasm.slice(); tampered[tampered.length - 1] ^= 1;
     await expect(loadWasmKernels(tampered)).rejects.toThrow(/integrity/);
+    const tamperedSig = sig.slice(); tamperedSig[tamperedSig.length - 1] ^= 1;
+    await expect(loadWasmKernels(wasm, { signatures: tamperedSig })).rejects.toThrow(/signature wasm integrity/);
+    // The core module alone has no signature code; the modules cannot stand in for each other.
+    expect((await loadWasmKernels(wasm)).features).toMatchObject({ signatures: false, simd: true });
+    await expect(loadWasmKernels(sig, { expected: CAPPZ_NATIVE_SIG_WASM_MANIFEST.sha256 })).rejects.toThrow(/lacks/);
   });
 
   it('sha256 agrees with node:crypto on every backend, around every block boundary', async () => {
@@ -147,6 +154,21 @@ describe('v15-14-00 Reed-Solomon erasure coding', () => {
       expect(got.shards, b.backend).toEqual(want.shards);
     }
   });
+
+  it('rsEncodeAsync / rsDecodeAsync (WebCrypto shard hashes) match the sync codec on every backend', async () => {
+    const data = bytes(1_000_003, 21);
+    for (const k of await backends()) {
+      const sync = rsEncode(data, 6, 3, k);
+      const asyncEnc = await rsEncodeAsync(data, 6, 3, k);
+      expect(asyncEnc.descriptor, k.backend).toEqual(sync.descriptor);
+      expect(asyncEnc.shards.every((x, i) => Buffer.from(x).equals(Buffer.from(sync.shards[i]))), k.backend).toBe(true);
+      const damaged = asyncEnc.shards.map((x, i) => (i === 1 || i === 4 ? null : x));
+      const bad = damaged.map((x) => x?.slice() ?? null); bad[0]![9] ^= 1;
+      const back = await rsDecodeAsync(bad, asyncEnc.descriptor, k);
+      expect(Buffer.from(back.data).equals(Buffer.from(data)), k.backend).toBe(true);
+      expect(back.lost, k.backend).toEqual([0, 1, 4]);
+    }
+  }, 30_000);
 
   it('a corrupted shard is detected by its hash and treated as lost', () => {
     const data = bytes(5000, 8);

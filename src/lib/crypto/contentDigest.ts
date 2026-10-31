@@ -116,3 +116,19 @@ export async function digestContent(input: DigestSource, o: DigestOptions = {}):
   if (!size) o.onProgress?.(0, 0);
   return { ...(hs ? { sha256: hex(hs.digest()) } : {}), ...(ls ? { leaf: hex(ls.digest()).toUpperCase() } : {}), size, via: kernels.backend };
 }
+
+/**
+ * SHA-256 of each `chunk`-byte piece on the fastest path available: kernels
+ * with the CPU's SHA instructions (native), else WebCrypto — in a browser
+ * about 1 GB/s on ARM, five times the WASM engine — else the kernels.
+ * Concurrent WebCrypto digests do not spread over cores, so pieces go one
+ * after another.
+ */
+export async function sha256Chunked(bytes: Uint8Array, chunk: number, kernels: NativeKernels = activeKernels()): Promise<Uint8Array[]> {
+  if (!(chunk > 0)) throw new Error('sha256Chunked: chunk must be positive');
+  const subtle = (globalThis as { crypto?: Crypto }).crypto?.subtle;
+  if (kernels.features.shaInstructions || !subtle) return kernels.sha256Chunks(bytes, chunk);
+  const out: Uint8Array[] = [];
+  for (let at = 0; at < bytes.length; at += chunk) out.push(new Uint8Array(await subtle.digest('SHA-256', bytes.subarray(at, at + chunk) as BufferSource)));
+  return out;
+}
