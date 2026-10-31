@@ -1,4 +1,7 @@
+// @vitest-environment node
+// (Hosts that run these tests under jsdom get a Blob without arrayBuffer().)
 import { describe, it, expect } from 'vitest';
+import vm from 'node:vm';
 import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -76,6 +79,16 @@ describe('v15-15-00 notarization leaves are unchanged', () => {
     // The two-core paired update refuses one stream given twice (it would race).
     const s = kernels.sha256Stream();
     expect(() => kernels.sha256UpdatePair!(s, s, data)).toThrow(/two different streams/);
+  });
+
+  it('bytes from another realm hash as themselves; anything else is refused, never hashed as empty', async () => {
+    const foreign = vm.runInNewContext('new Uint8Array(bytes)', { bytes: Array.from(CONTENT) }) as Uint8Array;
+    expect(foreign instanceof Uint8Array).toBe(false);
+    expect(await computeSaltedHash(foreign, SALT)).toBe(LEAF_SALT_TEXT);
+    const view = new DataView(new Uint8Array([0, ...CONTENT, 0]).buffer, 1, CONTENT.length);
+    expect((await digestContent(view as unknown as Uint8Array, { leafPrefix: enc(SALT) })).leaf).toBe(LEAF_SALT_TEXT);
+    await expect(digestContent({ size: 3 } as unknown as Blob)).rejects.toThrow(/must be bytes or a Blob/);
+    await expect(digestContent('abc' as unknown as Blob)).rejects.toThrow(/must be bytes or a Blob/);
   });
 
   it('a stream cannot be reused after digest', async () => {

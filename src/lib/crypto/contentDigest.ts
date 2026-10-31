@@ -51,8 +51,23 @@ export const DIGEST_SLICE_BYTES = 4 * 1024 * 1024;
 
 const hex = (d: ArrayBuffer | Uint8Array) => Array.from(d instanceof Uint8Array ? d : new Uint8Array(d), (b) => b.toString(16).padStart(2, '0')).join('');
 
+type Readable = { size: number; slice(start: number, end: number): Readable; arrayBuffer(): Promise<ArrayBuffer> };
+
+/**
+ * Bytes or a Blob, recognised by shape rather than `instanceof`: a typed array
+ * or Blob from another realm (an iframe, a test DOM) must hash as itself, and
+ * anything else is refused rather than hashed as if it were empty.
+ */
+function asSource(source: unknown): Uint8Array | Readable {
+  if (ArrayBuffer.isView(source)) return new Uint8Array(source.buffer, source.byteOffset, source.byteLength);
+  const b = source as Partial<Readable> | null;
+  if (b && typeof b.size === 'number' && typeof b.slice === 'function' && typeof b.arrayBuffer === 'function') return b as Readable;
+  throw new TypeError('digestContent: source must be bytes or a Blob that supports slice() and arrayBuffer()');
+}
+
 /** Hash `source` once for its SHA-256 and/or salted leaf. */
-export async function digestContent(source: DigestSource, o: DigestOptions = {}): Promise<ContentDigests> {
+export async function digestContent(input: DigestSource, o: DigestOptions = {}): Promise<ContentDigests> {
+  const source = asSource(input);
   const size = source instanceof Uint8Array ? source.length : source.size;
   const wantHash = o.contentHash !== false;
   const prefix = o.leafPrefix;
