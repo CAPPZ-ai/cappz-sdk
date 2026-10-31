@@ -8,6 +8,7 @@
 
 pub mod gf;
 pub mod sha;
+pub mod sig;
 
 use core::slice;
 
@@ -24,10 +25,11 @@ fn thread_count(requested: u32) -> usize {
     }
 }
 
-/// ABI version; bump on any signature change. 2 added streaming SHA-256 (single and paired).
+/// ABI version; bump on any signature change. 2 added streaming SHA-256
+/// (single and paired); 3 added batch signature verification.
 #[no_mangle]
 pub extern "C" fn cappz_native_abi() -> u32 {
-    2
+    3
 }
 
 /// Bit set of the paths this build will take: 1 = NEON / SIMD128 GF kernel,
@@ -227,6 +229,102 @@ pub unsafe extern "C" fn cappz_sha256_finish(state: *mut u8, out: *mut u8) -> i3
     let Some(h) = sha::Sha256::load(sha::Engine::best(), saved) else { return ERR_STATE };
     slice::from_raw_parts_mut(out, 32).copy_from_slice(&h.finalize());
     saved.fill(0);
+    OK
+}
+
+/// Verify `n` secp256k1 ECDSA signatures (low-S, compact r||s) over 32-byte
+/// digests. Public keys are SEC1 points of `key_len` bytes (33 or 65) back to
+/// back; `out[i]` becomes 1 for a valid signature, 0 otherwise. `threads` as
+/// for `cappz_gf_matmul`.
+///
+/// # Safety
+/// `keys`, `sigs`, `digests` and `out` must be valid for n*key_len, n*64, n*32 and n bytes.
+#[no_mangle]
+pub unsafe extern "C" fn cappz_secp256k1_verify_batch(
+    n: u32,
+    keys: *const u8,
+    key_len: u32,
+    sigs: *const u8,
+    digests: *const u8,
+    out: *mut u8,
+    threads: u32,
+) -> i32 {
+    let (n, kl) = (n as usize, key_len as usize);
+    if n == 0 {
+        return OK;
+    }
+    if keys.is_null() || sigs.is_null() || digests.is_null() || out.is_null() {
+        return ERR_NULL;
+    }
+    if kl != 33 && kl != 65 {
+        return ERR_SHAPE;
+    }
+    let keys = slice::from_raw_parts(keys, n * kl);
+    let sigs = slice::from_raw_parts(sigs, n * 64);
+    let digests = slice::from_raw_parts(digests, n * 32);
+    let check = |i: usize| {
+        let d: &[u8; 32] = digests[i * 32..i * 32 + 32].try_into().unwrap();
+        let s: &[u8; 64] = sigs[i * 64..i * 64 + 64].try_into().unwrap();
+        sig::secp256k1_verify(d, s, &keys[i * kl..(i + 1) * kl])
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let results = sig::verify_many(n, thread_count(threads), check);
+    #[cfg(target_arch = "wasm32")]
+    let results = { let _ = threads; sig::verify_many(n, 1, check) };
+    for (o, r) in slice::from_raw_parts_mut(out, n).iter_mut().zip(results) {
+        *o = r as u8;
+    }
+    OK
+}
+
+/// Verify `n` Ed25519 signatures (strict). Messages are concatenated in
+/// `msgs` (`msgs_len` bytes) and delimited by `offsets`: n + 1 non-decreasing
+/// little-endian u32 as 4(n + 1) bytes (bytes, so the caller's buffer needs no
+/// alignment), the last no greater than `msgs_len`; keys are 32 bytes and
+/// signatures 64 bytes each, back to back. `out` as for the secp256k1 batch.
+///
+/// # Safety
+/// Each pointer must be valid for the sizes above.
+#[no_mangle]
+pub unsafe extern "C" fn cappz_ed25519_verify_batch(
+    n: u32,
+    keys: *const u8,
+    sigs: *const u8,
+    msgs: *const u8,
+    msgs_len: usize,
+    offsets: *const u8,
+    out: *mut u8,
+    threads: u32,
+) -> i32 {
+    let n = n as usize;
+    if n == 0 {
+        return OK;
+    }
+    if keys.is_null() || sigs.is_null() || offsets.is_null() || out.is_null() || (msgs.is_null() && msgs_len != 0) {
+        return ERR_NULL;
+    }
+    let offsets: Vec<u32> = slice::from_raw_parts(offsets, 4 * (n + 1))
+        .chunks_exact(4)
+        .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect();
+    if offsets.windows(2).any(|w| w[0] > w[1]) || offsets[n] as usize > msgs_len {
+        return ERR_SHAPE;
+    }
+    let keys = slice::from_raw_parts(keys, n * 32);
+    let sigs = slice::from_raw_parts(sigs, n * 64);
+    let msgs: &[u8] = if msgs_len == 0 { &[] } else { slice::from_raw_parts(msgs, msgs_len) };
+    let check = |i: usize| {
+        let k: &[u8; 32] = keys[i * 32..i * 32 + 32].try_into().unwrap();
+        let s: &[u8; 64] = sigs[i * 64..i * 64 + 64].try_into().unwrap();
+        sig::ed25519_verify(k, s, &msgs[offsets[i] as usize..offsets[i + 1] as usize])
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let results = sig::verify_many(n, thread_count(threads), check);
+    #[cfg(target_arch = "wasm32")]
+    let results = { let _ = threads; sig::verify_many(n, 1, check) };
+    for (o, r) in slice::from_raw_parts_mut(out, n).iter_mut().zip(results) {
+        *o = r as u8;
+    }
     OK
 }
 

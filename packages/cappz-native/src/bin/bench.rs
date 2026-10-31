@@ -5,7 +5,7 @@
 //!
 //!   cargo run --release --bin bench --features cpp,sha2-crate
 
-use cappz_native::{gf, sha};
+use cappz_native::{gf, sha, sig};
 use std::hint::black_box;
 use std::time::Instant;
 
@@ -152,9 +152,60 @@ fn human(n: usize) -> String {
     if n >= 1 << 20 { format!("{}MiB", n >> 20) } else if n >= 1024 { format!("{}KiB", n >> 10) } else { format!("{n}B") }
 }
 
+/// Signature verification: µs per signature, single core and all cores.
+fn sig_case(rows_out: &mut Vec<Row>, threads: usize) {
+    use ed25519_dalek::{Signer, SigningKey as EdSigningKey};
+    use k256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey};
+    const N: usize = 512;
+    let mut ec = Vec::with_capacity(N);
+    let mut ed = Vec::with_capacity(N);
+    for i in 0..N {
+        let mut seed = [0u8; 32];
+        seed[..8].copy_from_slice(&(i as u64 + 1).to_le_bytes());
+        seed[31] = 1;
+        let sk = SigningKey::from_slice(&seed).unwrap();
+        let digest = sha::sha256(sha::Engine::best(), &seed);
+        let s: Signature = sk.sign_prehash(&digest).unwrap();
+        let compact: [u8; 64] = s.normalize_s().to_bytes().into();
+        let pk = sk.verifying_key().to_sec1_point(true).as_bytes().to_vec();
+        ec.push((digest, compact, pk));
+        let esk = EdSigningKey::from_bytes(&seed);
+        let msg = format!("{{\"kind\":\"hello\",\"n\":{i}}}").into_bytes();
+        let esig = esk.sign(&msg).to_bytes();
+        ed.push((esk.verifying_key().to_bytes(), esig, msg));
+    }
+    assert!(ec.iter().all(|(d, s, k)| sig::secp256k1_verify(d, s, k)));
+    assert!(ed.iter().all(|(k, s, m)| sig::ed25519_verify(k, s, m)));
+    let us_per = |ms: f64| ms * 1e3 / N as f64;
+    let mut push = |group: &'static str, name: String, ms: f64| rows_out.push(Row { group, name, mb_s: N as f64 / (ms / 1e3), median_ms: us_per(ms) / 1e3 });
+
+    let g_ec = "secp256k1 ECDSA verify (low-S), 512 signatures";
+    let ms = time(|| { black_box(sig::verify_many(N, 1, |i| sig::secp256k1_verify(&ec[i].0, &ec[i].1, &ec[i].2))); });
+    push(g_ec, "rust k256".into(), ms);
+    let ms = time(|| { black_box(sig::verify_many(N, threads, |i| sig::secp256k1_verify(&ec[i].0, &ec[i].1, &ec[i].2))); });
+    push(g_ec, format!("rust k256 x{threads} threads"), ms);
+    #[cfg(feature = "c-secp256k1")]
+    #[allow(deprecated)] // verify_ecdsa: the stable spelling across secp256k1 releases
+    {
+        use secp256k1::{ecdsa::Signature as CSig, Message, PublicKey, Secp256k1};
+        let ctx = Secp256k1::verification_only();
+        let prepared: Vec<(Message, CSig, PublicKey)> = ec.iter().map(|(d, s, k)| (Message::from_digest(*d), CSig::from_compact(s).unwrap(), PublicKey::from_slice(k).unwrap())).collect();
+        assert!(prepared.iter().all(|(m, s, k)| ctx.verify_ecdsa(*m, s, k).is_ok()));
+        let ms = time(|| { for (d, s, k) in &ec { let m = Message::from_digest(*d); let s = CSig::from_compact(s).unwrap(); let k = PublicKey::from_slice(k).unwrap(); black_box(ctx.verify_ecdsa(m, &s, &k).is_ok()); } });
+        push(g_ec, "c libsecp256k1".into(), ms);
+    }
+
+    let g_ed = "Ed25519 verify (strict), 512 signatures";
+    let ms = time(|| { black_box(sig::verify_many(N, 1, |i| sig::ed25519_verify(&ed[i].0, &ed[i].1, &ed[i].2))); });
+    push(g_ed, "rust ed25519-dalek".into(), ms);
+    let ms = time(|| { black_box(sig::verify_many(N, threads, |i| sig::ed25519_verify(&ed[i].0, &ed[i].1, &ed[i].2))); });
+    push(g_ed, format!("rust ed25519-dalek x{threads} threads"), ms);
+}
+
 fn main() {
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
     let mut rows = Vec::new();
+    sig_case(&mut rows, threads);
     gf_case(&mut rows, 10, 4, 1 << 20, threads);
     gf_case(&mut rows, 10, 4, 64 << 10, threads);
     gf_case(&mut rows, 4, 2, 4 << 20, threads);
@@ -168,6 +219,10 @@ fn main() {
         if r.group != last {
             println!("\n{}", r.group);
             last = r.group;
+        }
+        if r.group.contains("verify") {
+            println!("  {:<34} {:>9.0} /s     {:>9.1} µs", r.name, r.mb_s, r.median_ms * 1e3);
+            continue;
         }
         let lat = if r.median_ms < 0.01 { format!("{:.0} ns", r.median_ms * 1e6) } else { format!("{:.3} ms", r.median_ms) };
         println!("  {:<34} {:>9.0} MB/s   {:>12}", r.name, r.mb_s, lat);

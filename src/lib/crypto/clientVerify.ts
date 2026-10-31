@@ -8,6 +8,7 @@
 
 import { findNotaryReceiptByHash } from './clientNotarize';
 import { digestContent, type DigestSource } from './contentDigest';
+import { NOTARY_BATCH_MEMO_TYPE, verifyNotaryInclusion, type NotaryInclusionProof } from './notaryBatch';
 import type { NativeKernels } from '../native/cappzNative';
 
 // ─── Types ─────────────────────────────────────────────────────
@@ -23,6 +24,8 @@ export interface VerificationRequest {
   fileBase64?: string;
   salt?: string;
   expectedLeaf?: string;
+  /** For a leaf notarized in a batch: its position and path to the anchored root (from the receipt). */
+  inclusion?: NotaryInclusionProof;
   network?: 'mainnet' | 'testnet' | 'devnet';
   /** Hashing progress for large files. */
   onProgress?: (done: number, total: number) => void;
@@ -41,6 +44,11 @@ export interface VerificationResult {
   ledgerIndex?: number;
   timestamp?: string;
   onChainLeaf?: string;
+  /** Batch anchors: the Merkle root and leaf count on the ledger. */
+  onChainRoot?: string;
+  onChainCount?: number;
+  /** Batch anchors: whether expectedLeaf's inclusion proof leads to onChainRoot. */
+  inclusionVerified?: boolean;
   anchorAccount?: string;
   notarizationRecord?: {
     id: string;
@@ -103,9 +111,9 @@ async function fetchXRPLTransaction(txId: string, network: string): Promise<any>
   }
 }
 
-function parseNotarizationFromTx(txData: any): { leaf?: string; salt?: string; fileName?: string } {
-  const result: { leaf?: string; salt?: string; fileName?: string } = {};
-  if (txData.InvoiceID) result.leaf = txData.InvoiceID;
+function parseNotarizationFromTx(txData: any): { leaf?: string; salt?: string; fileName?: string; root?: string; count?: number } {
+  const result: { leaf?: string; salt?: string; fileName?: string; root?: string; count?: number } = {};
+  let batch = false;
   if (txData.Memos) {
     for (const memoWrapper of txData.Memos) {
       const memo = memoWrapper.Memo;
@@ -117,10 +125,20 @@ function parseNotarizationFromTx(txData: any): { leaf?: string; salt?: string; f
             result.leaf = payload.leaf || result.leaf;
             result.salt = payload.salt_b64u || payload.salt;
             result.fileName = payload.file_name;
+          } else if (memoType === NOTARY_BATCH_MEMO_TYPE && memo.MemoData) {
+            const payload = JSON.parse(hexToString(memo.MemoData));
+            batch = true;
+            if (typeof payload.root === 'string') result.root = payload.root.toUpperCase();
+            if (Number.isSafeInteger(payload.count)) result.count = payload.count;
           }
         } catch { /* skip malformed memo */ }
       }
     }
+  }
+  // InvoiceID mirrors the leaf of a single anchor, or the root of a batch.
+  if (txData.InvoiceID) {
+    if (batch) result.root ??= String(txData.InvoiceID).toUpperCase();
+    else result.leaf ??= txData.InvoiceID;
   }
   return result;
 }
@@ -146,10 +164,22 @@ export async function verifyClient(request: VerificationRequest): Promise<Verifi
         const rippleEpoch = 946684800;
         result.timestamp = new Date((txData.date + rippleEpoch) * 1000).toISOString();
       }
-      result.verified = result.validated === true && !!parsed.leaf;
-      if (request.expectedLeaf && parsed.leaf) {
-        result.matchesExpected = parsed.leaf.toUpperCase() === request.expectedLeaf.toUpperCase();
-        result.verified = result.verified && result.matchesExpected;
+      if (parsed.root) {
+        // A batch anchor proves a leaf only together with that leaf's inclusion path.
+        result.onChainRoot = parsed.root;
+        result.onChainCount = parsed.count;
+        const proof = request.inclusion;
+        result.inclusionVerified = !!(request.expectedLeaf && proof && parsed.count !== undefined
+          && verifyNotaryInclusion(request.expectedLeaf, proof, { root: parsed.root, count: parsed.count }));
+        result.matchesExpected = result.inclusionVerified;
+        result.verified = result.validated === true && result.inclusionVerified;
+        if (!request.expectedLeaf || !proof) result.error = 'Batch anchor: provide expectedLeaf and its inclusion proof from the receipt';
+      } else {
+        result.verified = result.validated === true && !!parsed.leaf;
+        if (request.expectedLeaf && parsed.leaf) {
+          result.matchesExpected = parsed.leaf.toUpperCase() === request.expectedLeaf.toUpperCase();
+          result.verified = result.verified && result.matchesExpected;
+        }
       }
     } else {
       result.error = 'Transaction not found on XRPL';

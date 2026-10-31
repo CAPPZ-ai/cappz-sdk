@@ -17,13 +17,15 @@
  * runs the TypeScript kernels.
  */
 import { sha256 as nobleSha256 } from '@noble/hashes/sha2.js';
-import manifest from './wasm/cappz-native.manifest.json';
+import * as secp from '@noble/secp256k1';
+import { ed25519 } from '@noble/curves/ed25519';
+import { CAPPZ_NATIVE_WASM_MANIFEST_DATA } from './wasm/cappz-native.manifest';
 import { GF_EXP, GF_LOG } from './gf256';
 
 export type NativeBackend = 'native' | 'wasm' | 'typescript';
 
 export interface NativeManifest { artifact: string; crate: string; version: string; target: string; sha256: string; build: string }
-export const CAPPZ_NATIVE_WASM_MANIFEST = manifest as NativeManifest;
+export const CAPPZ_NATIVE_WASM_MANIFEST: NativeManifest = CAPPZ_NATIVE_WASM_MANIFEST_DATA;
 
 export interface NativeKernels {
   backend: NativeBackend;
@@ -47,6 +49,40 @@ export interface NativeKernels {
    * two cores). Absent where it would not be faster; call `update` on each then.
    */
   sha256UpdatePair?(a: Sha256Stream, b: Sha256Stream, bytes: Uint8Array): void;
+  /** secp256k1 ECDSA over 32-byte digests, compact r||s, low-S only. One result per item, in order. */
+  secp256k1VerifyMany(items: readonly Secp256k1Item[], threads?: number): boolean[];
+  /** Ed25519, strict (RFC 8032; non-canonical encodings and small-order keys refused). */
+  ed25519VerifyMany(items: readonly Ed25519Item[], threads?: number): boolean[];
+}
+
+export interface Secp256k1Item { digest: Uint8Array; signature: Uint8Array; publicKey: Uint8Array }
+export interface Ed25519Item { message: Uint8Array; signature: Uint8Array; publicKey: Uint8Array }
+
+/** Items whose sizes are wrong can never verify; they are answered false without reaching the kernel. */
+const secpShapeOk = (i: Secp256k1Item) => i.digest.length === 32 && i.signature.length === 64 && (i.publicKey.length === 33 || i.publicKey.length === 65);
+const edShapeOk = (i: Ed25519Item) => i.signature.length === 64 && i.publicKey.length === 32;
+
+/** Run `verify` on the well-formed items (grouped by `group`), false for the rest, results in input order. */
+function verifyGrouped<T>(items: readonly T[], ok: (i: T) => boolean, group: (i: T) => number, verify: (batch: T[]) => boolean[]): boolean[] {
+  const out = new Array<boolean>(items.length).fill(false);
+  const groups = new Map<number, number[]>();
+  items.forEach((it, i) => { if (ok(it)) { const g = group(it); (groups.get(g) ?? groups.set(g, []).get(g)!).push(i); } });
+  for (const idx of groups.values()) verify(idx.map((i) => items[i])).forEach((r, j) => { out[idx[j]] = r; });
+  return out;
+}
+function concat(parts: readonly Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.length; }
+  return out;
+}
+/** Keys, signatures and messages back to back; offsets as little-endian u32 bytes (n + 1 of them). */
+function edPack(batch: readonly Ed25519Item[]): { keys: Uint8Array; sigs: Uint8Array; msgs: Uint8Array; offsets: Uint8Array } {
+  const offsets = new Uint8Array(4 * (batch.length + 1));
+  const view = new DataView(offsets.buffer);
+  let at = 0;
+  batch.forEach((b, i) => { at += b.message.length; view.setUint32(4 * (i + 1), at, true); });
+  return { keys: concat(batch.map((b) => b.publicKey)), sigs: concat(batch.map((b) => b.signature)), msgs: concat(batch.map((b) => b.message)), offsets };
 }
 
 /** Feed pieces in order with `update`, then call `digest` once. */
@@ -55,7 +91,7 @@ export interface Sha256Stream {
   digest(): Uint8Array;
 }
 
-const ABI = 2;
+const ABI = 3;
 const ERRORS: Record<number, string> = { [-1]: 'null pointer', [-2]: 'bad shape', [-3]: 'not a live sha256 state' };
 function check(status: number, op: string): void {
   if (status !== 0) throw new Error(`cappz-native ${op}: ${ERRORS[status] ?? `status ${status}`}`);
@@ -118,6 +154,14 @@ export const typescriptKernels: NativeKernels = {
     const h = nobleSha256.create();
     return { update: (b) => { h.update(b); }, digest: () => h.digest() };
   },
+  secp256k1VerifyMany: (items) => items.map((i) => {
+    if (!secpShapeOk(i)) return false;
+    try { return secp.verify(i.signature, i.digest, i.publicKey, { prehash: false, lowS: true }); } catch { return false; }
+  }),
+  ed25519VerifyMany: (items) => items.map((i) => {
+    if (!edShapeOk(i)) return false;
+    try { return ed25519.verify(i.signature, i.message, i.publicKey, { zip215: false }); } catch { return false; }
+  }),
 };
 
 // ─── Native library (C ABI) ─────────────────────────────────────────────
@@ -140,6 +184,8 @@ interface CFunctions {
   sha256Update(state: Uint8Array, data: Uint8Array, len: number): number;
   sha256Finish(state: Uint8Array, out: Uint8Array): number;
   sha256UpdatePair(a: Uint8Array, b: Uint8Array, data: Uint8Array, len: number): number;
+  secp256k1VerifyBatch(n: number, keys: Uint8Array, keyLen: number, sigs: Uint8Array, digests: Uint8Array, out: Uint8Array, threads: number): number;
+  ed25519VerifyBatch(n: number, keys: Uint8Array, sigs: Uint8Array, msgs: Uint8Array, msgsLen: number, offsets: Uint8Array, out: Uint8Array, threads: number): number;
 }
 
 function kernelsFromC(c: CFunctions): NativeKernels {
@@ -182,6 +228,22 @@ function kernelsFromC(c: CFunctions): NativeKernels {
       if (!sa || !sb || sa === sb) throw new Error('cappz-native sha256UpdatePair: needs two different streams from these kernels');
       if (bytes.length) check(c.sha256UpdatePair(sa, sb, bytes, bytes.length), 'sha256UpdatePair');
     },
+    secp256k1VerifyMany(items, threads = 0) {
+      return verifyGrouped(items, secpShapeOk, (i) => i.publicKey.length, (batch) => {
+        const out = new Uint8Array(batch.length);
+        check(c.secp256k1VerifyBatch(batch.length, concat(batch.map((b) => b.publicKey)), batch[0].publicKey.length, concat(batch.map((b) => b.signature)), concat(batch.map((b) => b.digest)), out, threads), 'secp256k1VerifyMany');
+        return Array.from(out, (v) => v === 1);
+      });
+    },
+    ed25519VerifyMany(items, threads = 0) {
+      return verifyGrouped(items, edShapeOk, () => 0, (batch) => {
+        const p = edPack(batch);
+        const out = new Uint8Array(batch.length);
+        // A zero-length typed array may not have a backing pointer.
+        check(c.ed25519VerifyBatch(batch.length, p.keys, p.sigs, p.msgs.length ? p.msgs : new Uint8Array(1), p.msgs.length, p.offsets, out, threads), 'ed25519VerifyMany');
+        return Array.from(out, (v) => v === 1);
+      });
+    },
   };
 }
 
@@ -209,6 +271,8 @@ function openNode(path: string): CFunctions {
     cappz_sha256_update: { arguments: [P, P, U64], return: I32 },
     cappz_sha256_finish: { arguments: [P, P], return: I32 },
     cappz_sha256_update_pair: { arguments: [P, P, P, U64], return: I32 },
+    cappz_secp256k1_verify_batch: { arguments: [U32, P, U32, P, P, P, U32], return: I32 },
+    cappz_ed25519_verify_batch: { arguments: [U32, P, P, P, U64, P, P, U32], return: I32 },
   });
   const n = (v: number) => BigInt(v);
   return {
@@ -222,6 +286,8 @@ function openNode(path: string): CFunctions {
     sha256Update: (st, d, len) => Number(f.cappz_sha256_update(st, d, n(len))),
     sha256Finish: (st, o) => Number(f.cappz_sha256_finish(st, o)),
     sha256UpdatePair: (a, b, d, len) => Number(f.cappz_sha256_update_pair(a, b, d, n(len))),
+    secp256k1VerifyBatch: (cnt, k, kl, sg, dg, o, t) => Number(f.cappz_secp256k1_verify_batch(cnt, k, kl, sg, dg, o, t)),
+    ed25519VerifyBatch: (cnt, k, sg, m, ml, off, o, t) => Number(f.cappz_ed25519_verify_batch(cnt, k, sg, m, n(ml), off, o, t)),
   };
 }
 
@@ -237,6 +303,8 @@ function openDeno(deno: DenoFfi, path: string): CFunctions {
     cappz_sha256_update: { parameters: ['buffer', 'buffer', 'usize'], result: 'i32' },
     cappz_sha256_finish: { parameters: ['buffer', 'buffer'], result: 'i32' },
     cappz_sha256_update_pair: { parameters: ['buffer', 'buffer', 'buffer', 'usize'], result: 'i32' },
+    cappz_secp256k1_verify_batch: { parameters: ['u32', 'buffer', 'u32', 'buffer', 'buffer', 'buffer', 'u32'], result: 'i32' },
+    cappz_ed25519_verify_batch: { parameters: ['u32', 'buffer', 'buffer', 'buffer', 'usize', 'buffer', 'buffer', 'u32'], result: 'i32' },
   });
   const n = (v: number) => BigInt(v);
   return {
@@ -250,6 +318,8 @@ function openDeno(deno: DenoFfi, path: string): CFunctions {
     sha256Update: (st, d, len) => Number(s.cappz_sha256_update(st, d, n(len))),
     sha256Finish: (st, o) => Number(s.cappz_sha256_finish(st, o)),
     sha256UpdatePair: (a, b, d, len) => Number(s.cappz_sha256_update_pair(a, b, d, n(len))),
+    secp256k1VerifyBatch: (cnt, k, kl, sg, dg, o, t) => Number(s.cappz_secp256k1_verify_batch(cnt, k, kl, sg, dg, o, t)),
+    ed25519VerifyBatch: (cnt, k, sg, m, ml, off, o, t) => Number(s.cappz_ed25519_verify_batch(cnt, k, sg, m, n(ml), off, o, t)),
   };
 }
 
@@ -267,6 +337,8 @@ async function openBun(path: string): Promise<CFunctions> {
     cappz_sha256_update: { args: ['ptr', 'ptr', 'usize'], returns: 'i32' },
     cappz_sha256_finish: { args: ['ptr', 'ptr'], returns: 'i32' },
     cappz_sha256_update_pair: { args: ['ptr', 'ptr', 'ptr', 'usize'], returns: 'i32' },
+    cappz_secp256k1_verify_batch: { args: ['u32', 'ptr', 'u32', 'ptr', 'ptr', 'ptr', 'u32'], returns: 'i32' },
+    cappz_ed25519_verify_batch: { args: ['u32', 'ptr', 'ptr', 'ptr', 'usize', 'ptr', 'ptr', 'u32'], returns: 'i32' },
   });
   const p = ffi.ptr;
   return {
@@ -280,6 +352,8 @@ async function openBun(path: string): Promise<CFunctions> {
     sha256Update: (st, d, len) => s.cappz_sha256_update(p(st), p(d), len),
     sha256Finish: (st, o) => s.cappz_sha256_finish(p(st), p(o)),
     sha256UpdatePair: (a, b, d, len) => s.cappz_sha256_update_pair(p(a), p(b), p(d), len),
+    secp256k1VerifyBatch: (cnt, k, kl, sg, dg, o, t) => s.cappz_secp256k1_verify_batch(cnt, p(k), kl, p(sg), p(dg), p(o), t),
+    ed25519VerifyBatch: (cnt, k, sg, m, ml, off, o, t) => s.cappz_ed25519_verify_batch(cnt, p(k), p(sg), p(m), ml, p(off), p(o), t),
   };
 }
 
@@ -306,6 +380,8 @@ interface WasmExports {
   cappz_sha256_begin(state: number): number;
   cappz_sha256_update(state: number, data: number, len: number): number;
   cappz_sha256_finish(state: number, out: number): number;
+  cappz_secp256k1_verify_batch(n: number, keys: number, keyLen: number, sigs: number, digests: number, out: number, threads: number): number;
+  cappz_ed25519_verify_batch(n: number, keys: number, sigs: number, msgs: number, msgsLen: number, offsets: number, out: number, threads: number): number;
 }
 
 async function sha256HexOf(bytes: Uint8Array): Promise<string> {
@@ -378,6 +454,22 @@ export async function loadWasmKernels(bytes: Uint8Array, expected = CAPPZ_NATIVE
           finally { x.cappz_free(st, size); state = 0; }
         },
       };
+    },
+    secp256k1VerifyMany(items) {
+      return verifyGrouped(items, secpShapeOk, (i) => i.publicKey.length, (batch) => {
+        const kl = batch[0].publicKey.length;
+        const out = call([concat(batch.map((b) => b.publicKey)), concat(batch.map((b) => b.signature)), concat(batch.map((b) => b.digest))], batch.length,
+          ([k, sg, dg], o) => x.cappz_secp256k1_verify_batch(batch.length, k, kl, sg, dg, o, 1), 'secp256k1VerifyMany');
+        return Array.from(out, (v) => v === 1);
+      });
+    },
+    ed25519VerifyMany(items) {
+      return verifyGrouped(items, edShapeOk, () => 0, (batch) => {
+        const pk = edPack(batch);
+        const out = call([pk.keys, pk.sigs, pk.msgs, pk.offsets], batch.length,
+          ([k, sg, m, off], o) => x.cappz_ed25519_verify_batch(batch.length, k, sg, m, pk.msgs.length, off, o, 1), 'ed25519VerifyMany');
+        return Array.from(out, (v) => v === 1);
+      });
     },
   };
 }

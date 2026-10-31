@@ -1,9 +1,9 @@
 [package]
 name = "cappz-native"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "Apache-2.0"
-description = "CAPPZ native kernels: GF(2^8) Reed-Solomon matrix multiply and SHA-256, with NEON/ARMv8 Crypto, WASM SIMD and portable paths."
+description = "CAPPZ native kernels: GF(2^8) Reed-Solomon matrix multiply, SHA-256 (NEON/ARMv8 Crypto, WASM SIMD, portable) and batch signature verification (secp256k1, Ed25519) on audited crates."
 publish = false
 
 [lib]
@@ -15,9 +15,15 @@ default = []
 cpp = ["dep:cc"]
 # Compare against the RustCrypto sha2 crate in `bench`.
 sha2-crate = ["dep:sha2"]
+# Compare k256 against libsecp256k1 (C, via the secp256k1 crate) in `bench`.
+c-secp256k1 = ["dep:secp256k1"]
 
 [dependencies]
 sha2 = { version = "0.10", optional = true }
+secp256k1 = { version = "0.33", optional = true, default-features = false, features = ["std"] }
+# Signature verification on audited RustCrypto / dalek crates (no hand-written curve code).
+k256 = { version = "0.14", default-features = false, features = ["ecdsa", "std"] }
+ed25519-dalek = { version = "3", default-features = false, features = ["fast"] }
 
 [build-dependencies]
 cc = { version = "1", optional = true }

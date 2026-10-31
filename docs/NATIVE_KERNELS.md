@@ -4,6 +4,7 @@
 
 - **SHA-256** — every content address, chunk id, model-weight shard and notarization leaf in the SDK is one. One-shot, per-chunk on all cores, and streamed for input that arrives in pieces.
 - **GF(2^8) matrix × shards** — the one kernel Reed-Solomon erasure coding needs.
+- **Signature verification** (15.16.0) — secp256k1 ECDSA (wallet, KeyZ and session signatures) and Ed25519 (hellos, edge requests), in batches across cores, on the audited `k256` and `ed25519-dalek` crates.
 
 It is loaded three ways behind one TypeScript interface (`src/lib/native/cappzNative.ts`), and every backend produces byte-identical output:
 
@@ -97,10 +98,33 @@ All 8 cores: Reed-Solomon 7.7–8.4 GB/s (10+4) and 10.2–11.2 GB/s (4+2); chun
 - **The RustCrypto `sha2` crate (0.10) does not use the SHA instructions on Windows ARM64**: 367 MB/s, the speed of portable code. Its CPU-feature detection does not report them on this target, which is why the crate has its own SHA-256 engine that checks with `is_aarch64_feature_detected!("sha2")`.
 - **Fresh buffers cost page faults on Windows.** Writing parity straight into the stripe (an optional `out` argument to `gfMatmul`) instead of allocating it and copying it in took Reed-Solomon encode from 1.1 to 1.4 GB/s.
 
+## Signature verification (15.16.0)
+
+secp256k1 has no WebCrypto implementation, so every wallet signature, KeyZ declaration and revocation was checked in pure JavaScript (@noble/secp256k1) at about 3.6 ms each. `secp256k1VerifyMany` and `ed25519VerifyMany` verify batches on the loaded kernels, and the SDK uses them automatically:
+
+- `verifySignature` (wallet sessions, KeyZ) on WASM or native kernels;
+- hello signatures on native kernels (browsers keep WebCrypto Ed25519).
+
+The answers are identical by test: the same valid, tampered and high-S cases on every backend. The SDK's wallet signatures are ECDSA over SHA-256(SHA-256(message)), low-S, and the high-S twin is refused everywhere.
+
+| 256 signatures | @noble (before) | WASM | native, one core | native, all cores |
+|---|---:|---:|---:|---:|
+| secp256k1 verify | 272/s | 2,642/s (9.7×) | 13,563/s (50×) | 70,378/s (258×) |
+
+| 256 signatures | WebCrypto (before) | WASM | native, one core | native, all cores |
+|---|---:|---:|---:|---:|
+| Ed25519 verify | 6,535/s | 9,485/s (1.5×) | 17,019/s (2.6×) | 82,514/s (12.6×) |
+
+**Rust against C:** `k256` took 72 µs per signature and libsecp256k1 (the C library behind Bitcoin) 67 µs. That is 7% apart, so Rust ships (`--features c-secp256k1` keeps the comparison runnable). Ed25519 uses `ed25519-dalek`'s `verify_strict`, which refuses non-canonical encodings and small-order keys. OpenSSL via WebCrypto is the C baseline in the table above.
+
+The two crates grow the WASM from 37 KB to 213 KB. In a browser that buys secp256k1 verification about 10× faster than @noble. WASM builds use getrandom's `unsupported` backend: nothing here needs randomness, and the module imports nothing from JavaScript.
+
+The WASM manifest is a TypeScript module, `cappz-native.manifest.ts`. Deno refuses JSON imports without an import attribute, and the edge node reaches the kernels through `chunkedBodies`.
+
 ## Safety
 
 - Every C ABI function checks its pointers and sizes and returns a status code; nothing panics across the boundary (`panic = "abort"` in release). The TypeScript wrapper checks shapes and output overlap before calling.
-- The vendored WASM is checked against `src/lib/native/wasm/cappz-native.manifest.json` (sha256) before it is instantiated; tampered bytes are refused (tested). The build is reproducible: rebuilding gives the same hash.
+- The vendored WASM is checked against `src/lib/native/wasm/cappz-native.manifest.ts` (sha256; a TS module because Deno refuses JSON imports without an import attribute) before it is instantiated; tampered bytes are refused (tested). The build is reproducible: rebuilding gives the same hash.
 - The native library is not committed. Build it from source; `loadKernels` reports why a backend was skipped.
 - SHA-256 here hashes public content, so it is not constant-time. Do not use it for secrets (MACs, KDFs).
 - The engines are checked against the FIPS 180-4 vectors, against `node:crypto` around every block boundary, and against each other for every length from 0 to 300 bytes.

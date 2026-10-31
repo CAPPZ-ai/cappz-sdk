@@ -24,6 +24,7 @@
 import { canonicalHelloJson, type TransportHello } from './transportContract.ts';
 import { buildBeaconPayload, type UdpBeacon } from './discovery/discoveryPlugins.ts';
 import { ed25519 } from '@noble/curves/ed25519';
+import { activeKernels } from '../native/cappzNative';
 
 export type SignatureCheck =
   | 'verified-bound'   // valid, and the key is one the wallet declared
@@ -84,6 +85,9 @@ async function signBytes(key: SigningKey, bytes: Uint8Array): Promise<string> {
 async function verifyBytes(publicKeyHex: string, signatureHex: string, bytes: Uint8Array): Promise<boolean> {
   try {
     const pub = unhex(publicKeyHex); const sig = unhex(signatureHex);
+    // Native kernels (ed25519-dalek, strict) where loaded; never accept more than WebCrypto would.
+    const kernels = activeKernels();
+    if (kernels.backend === 'native') return kernels.ed25519VerifyMany([{ message: bytes, signature: sig, publicKey: pub }])[0];
     if (!(await hasWebCryptoEd25519())) return ed25519.verify(sig, bytes, pub);
     const key = await crypto.subtle.importKey('raw', buf(pub), { name: 'Ed25519' }, false, ['verify']);
     return await crypto.subtle.verify({ name: 'Ed25519' }, key, buf(sig), buf(bytes));

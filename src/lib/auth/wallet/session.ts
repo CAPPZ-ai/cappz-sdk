@@ -22,6 +22,7 @@ import { hmac } from '@noble/hashes/hmac.js';
 import { mnemonicToSeedSync, generateMnemonic, validateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { sha256Hex } from '../../sync/a2aSecureChannel';
+import { activeKernels } from '../../native/cappzNative';
 
 export const WALLET_AUTH_EVENT_TYPES = [
   'UserCreated',
@@ -77,6 +78,12 @@ export async function signMessage(privateKey: Uint8Array, message: string): Prom
 export async function verifySignature(message: string, signatureHex: string, publicKeyHex: string): Promise<boolean> {
   try {
     const msgHash = sha256(new TextEncoder().encode(message));
+    // Loaded kernels (k256, low-S) check the same thing — ECDSA over the hash
+    // noble verifies by default, sha256(msgHash) — ~10x faster as WASM, ~50x natively.
+    const kernels = activeKernels();
+    if (kernels.backend !== 'typescript') {
+      return kernels.secp256k1VerifyMany([{ digest: sha256(msgHash), signature: secp.etc.hexToBytes(signatureHex), publicKey: secp.etc.hexToBytes(publicKeyHex) }])[0];
+    }
     return secp.verify(secp.etc.hexToBytes(signatureHex), msgHash, secp.etc.hexToBytes(publicKeyHex));
   } catch {
     return false;
