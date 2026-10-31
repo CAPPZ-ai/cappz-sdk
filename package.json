@@ -41,7 +41,7 @@
   "devDependencies": {
     "vitest": "^3.2.7",
     "typescript": "^5.6.3",
-    "@types/node": "^22.7.9",
+    "@types/node": "^26.6.5",
     "@types/crypto-js": "^4.2.2"
   }
 }
