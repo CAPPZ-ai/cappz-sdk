@@ -12,6 +12,7 @@
  * sets their own (PriceAcknowledged / PriceSet, newest wins).
  */
 import type { FeeUnit } from '../fees/priceSheet.ts';
+import type { XrplNetwork } from '../../xrpl/ledgerCheck.ts';
 import { amountIn, CURRENCIES, isMinor, type Amounts, type Currency, type Rate } from './money.ts';
 import { usageInPeriod, type FundingEvent, type Period } from './events.ts';
 
@@ -55,6 +56,8 @@ export interface AppUsagePlan {
   subscription?: SubscriptionTerms;
   /** Platform baseline fee per charged transaction, minor units; paid to `to`. */
   baseFee?: { amount: Amounts; to: string };
+  /** Where XRP top-ups are paid: the app's receiving address on XRPL. */
+  xrpl?: { payTo: string; network: XrplNetwork };
 }
 
 /**

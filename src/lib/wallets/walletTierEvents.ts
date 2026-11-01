@@ -66,7 +66,10 @@ export type WalletTierEventType =
   | 'TaskDeferred'
   | 'TaskResumed'
   | 'PriceAcknowledged'
-  | 'PriceSet';
+  | 'PriceSet'
+  | 'FundingRuleSet'
+  | 'FundingRuleRemoved'
+  | 'UsagePlanPublished';
 
 export interface WalletTierTx extends CappzEventCacheEntry {
   eventType: WalletTierEventType;

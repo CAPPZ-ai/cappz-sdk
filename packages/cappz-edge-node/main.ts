@@ -56,6 +56,7 @@ import { projectDirectory } from '../../src/lib/sync/directoryView.ts';
 import { signEdgeTx } from '../../src/lib/functions/edgeJobs.ts';
 import { serveBrowserBridge } from './bridge.ts';
 import { serveJobs } from './jobs.ts';
+import { fundingJobFromEnv } from './funding.ts';
 import { serveRelay, webTransportPossible } from './relay.ts';
 import { nodeEndpointsFromEnv, registerNodeRecord } from './directory.ts';
 import type { EndpointRecord } from '../../src/lib/sync/endpointDirectory.ts';
@@ -196,5 +197,7 @@ await Promise.all([
     dataDir,
     // The app's process file (e.g. cappz/src/bpmn/substrate/functions/edge-node-jobs.bpmn); CAPPZ_JOBS_BPMN overrides.
     bpmnPath: Deno.env.get('CAPPZ_JOBS_BPMN') ?? new URL('../../src/bpmn/substrate/functions/edge-node-jobs.bpmn', import.meta.url).pathname,
+    // v15-23-01: subscription-watch, when CAPPZ_FUNDING_CONFIG is set (funding.ts).
+    timerJobs: await fundingJobFromEnv(dataDir).then((j) => (j ? { [j.functionName]: j } : {})),
   }),
 ]);

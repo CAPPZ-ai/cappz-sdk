@@ -9,3 +9,6 @@ export * from './contractSplit.ts';
 export * from './adapterTemplate.ts';
 export * from './subscriptionAgent.ts';
 export * from './watchJob.ts';
+export * from './xrpTopUp.ts';
+export * from './ledgerConfig.ts';
+export * from './treasuryWatch.ts';

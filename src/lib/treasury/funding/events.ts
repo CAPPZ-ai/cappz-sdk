@@ -89,6 +89,11 @@ export function balanceIn(events: readonly FundingEvent[], currency: Currency): 
 
 export type ProposalState = 'open' | 'approved' | 'declined' | 'expired' | 'funded';
 
+/** Was this proposal ever approved (whatever its state now)? */
+export function wasApproved(events: readonly FundingEvent[], proposalId: string): boolean {
+  return events.some((e) => e.type === 'TopUpApproved' && e.proposalId === proposalId);
+}
+
 /** Proposals with their replayed state. A funded proposal has an AppFunded carrying its id. */
 export function replayProposals(events: readonly FundingEvent[], now: Date): Array<TopUpProposed & { state: ProposalState }> {
   const decided = new Map<string, 'approved' | 'declined'>();
@@ -101,8 +106,14 @@ export function replayProposals(events: readonly FundingEvent[], now: Date): Arr
   return events
     .filter((e): e is TopUpProposed => e.type === 'TopUpProposed')
     .map((p) => {
+      // An approved proposal still waiting for its payment (an XRP top-up the person pays from
+      // their own wallet) also lapses at expiresAt, so the rule can propose again.
+      const expired = Date.parse(p.expiresAt) <= now.getTime();
+      const d = decided.get(p.proposalId);
       const state: ProposalState = funded.has(p.proposalId) ? 'funded'
-        : decided.get(p.proposalId) ?? (Date.parse(p.expiresAt) <= now.getTime() ? 'expired' : 'open');
+        : d === 'declined' ? 'declined'
+        : expired ? 'expired'
+        : d ?? 'open';
       return { ...p, state };
     });
 }

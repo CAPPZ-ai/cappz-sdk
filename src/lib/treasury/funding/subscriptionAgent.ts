@@ -20,7 +20,9 @@
  * The agent holds no key and never decides a price or a split itself.
  */
 import { postingsFor, splitCharge, type ContractSplit, type Posting, type SplitLine } from './contractSplit.ts';
-import { balanceIn, deferredTasks, replayProposals, replayWalletBalance, type FundingEvent } from './events.ts';
+import { balanceIn, deferredTasks, replayProposals, replayWalletBalance, wasApproved, type FundingEvent } from './events.ts';
+import { checkXrpTopUp, xrpTopUpRequest, type XrpTopUpRequest } from './xrpTopUp.ts';
+import type { LedgerTx, XrplNetwork } from '../../xrpl/ledgerCheck.ts';
 import { DEFAULT_PROPOSAL_TTL_MS, decideFunding, parseTopUpCommand, type FundingDecision, type FundingRule } from './fundingPolicy.ts';
 import type { Amounts, Currency, Rate } from './money.ts';
 import { estimateRunway, type RunwayEstimate } from './runway.ts';
@@ -44,11 +46,20 @@ export type FundingNotice =
   | { kind: 'propose'; wallet: string; ruleId: string; proposalId: string; currency: Currency; amount: number; message: string; command: string; mode: FundingRule['mode']; expiresAt: string }
   | { kind: 'funded'; wallet: string; ruleId: string; proposalId: string; currency: Currency; amount: number; message: string; auto: boolean }
   | { kind: 'warn'; wallet: string; ruleId: string; message: string }
-  | { kind: 'failed'; wallet: string; ruleId: string; proposalId: string; message: string };
+  | { kind: 'failed'; wallet: string; ruleId: string; proposalId: string; message: string }
+  /** Approved; the person pays it from their own XRPL wallet, then the app checks the ledger. */
+  | { kind: 'awaiting-payment'; wallet: string; ruleId: string; proposalId: string; currency: Currency; amount: number; payment: XrpTopUpRequest; message: string };
 
 export interface SubscriptionAgentPorts {
   store: FundingStore;
-  fund?: (r: FundRequest) => Promise<{ txHash?: string }>;
+  /**
+   * Move the money. Return `{ txHash }` when it moved, or `{ awaitingPayment }` when the person
+   * pays it themselves (an XRP top-up from their own wallet): the top-up is then recorded by
+   * settleXrpTopUp once the ledger shows it. Throw when it cannot be paid.
+   */
+  fund?: (r: FundRequest) => Promise<{ txHash?: string; awaitingPayment?: XrpTopUpRequest }>;
+  /** Read one transaction from a validated ledger (settleXrpTopUp). */
+  ledgerTx?: (network: XrplNetwork, hash: string) => Promise<LedgerTx>;
   notify?: (n: FundingNotice) => void | Promise<void>;
   rate?: () => Promise<Rate | undefined>;
   now?: () => Date;
@@ -60,7 +71,7 @@ export interface RuleCheck {
   runway: RunwayEstimate;
   decision: FundingDecision;
   /** What the agent did about it. */
-  outcome: 'nothing' | 'proposed' | 'funded' | 'warned' | 'waiting' | 'fund-failed';
+  outcome: 'nothing' | 'proposed' | 'funded' | 'warned' | 'waiting' | 'fund-failed' | 'awaiting-payment';
   proposalId?: string;
 }
 
@@ -79,19 +90,23 @@ export function createSubscriptionAgent(ports: SubscriptionAgentPorts) {
   const now = () => ports.now?.() ?? new Date();
   const notify = async (n: FundingNotice) => { await ports.notify?.(n); };
 
-  async function fundProposal(wallet: string, rule: FundingRule, proposalId: string, currency: Currency, amount: number, auto: boolean): Promise<boolean> {
-    if (!ports.fund) return false;
+  async function fundProposal(wallet: string, rule: FundingRule, proposalId: string, currency: Currency, amount: number, auto: boolean): Promise<'funded' | 'failed' | XrpTopUpRequest> {
+    if (!ports.fund) return 'failed';
     try {
-      const { txHash } = await ports.fund({ wallet, rule, proposalId, currency, amount });
+      const { txHash, awaitingPayment } = await ports.fund({ wallet, rule, proposalId, currency, amount });
+      if (awaitingPayment) {
+        await notify({ kind: 'awaiting-payment', wallet, ruleId: rule.ruleId, proposalId, currency, amount, payment: awaitingPayment, message: `${awaitingPayment.instructions} Then check the payment.` });
+        return awaitingPayment;
+      }
       await ports.store.append(wallet, {
         type: 'AppFunded', at: now().toISOString(), currency, amount, source: rule.source, ruleId: rule.ruleId, proposalId, ...(txHash ? { txHash } : {}),
       });
       await notify({ kind: 'funded', wallet, ruleId: rule.ruleId, proposalId, currency, amount, auto, message: `${rule.appName} topped up.` });
-      return true;
+      return 'funded';
     } catch (err) {
       await ports.store.append(wallet, { type: 'TopUpDeclined', at: now().toISOString(), proposalId, by: 'system', reason: `payment failed: ${err instanceof Error ? err.message : String(err)}` });
-      await notify({ kind: 'failed', wallet, ruleId: rule.ruleId, proposalId, message: `${rule.appName} top-up failed; nothing was charged by the agent.` });
-      return false;
+      await notify({ kind: 'failed', wallet, ruleId: rule.ruleId, proposalId, message: `${rule.appName} top-up failed: ${err instanceof Error ? err.message : String(err)}` });
+      return 'failed';
     }
   }
 
@@ -133,8 +148,8 @@ export function createSubscriptionAgent(ports: SubscriptionAgentPorts) {
           const { proposalId, expiresAt } = await propose(wallet, rule, decision);
           if (decision.action === 'execute' && ports.fund) {
             await ports.store.append(wallet, { type: 'TopUpApproved', at: now().toISOString(), proposalId, by: `rule:${rule.ruleId}` });
-            const ok = await fundProposal(wallet, rule, proposalId, decision.currency, decision.amount, true);
-            out.push({ ...base, outcome: ok ? 'funded' : 'fund-failed', proposalId });
+            const r = await fundProposal(wallet, rule, proposalId, decision.currency, decision.amount, true);
+            out.push({ ...base, outcome: r === 'funded' ? 'funded' : r === 'failed' ? 'fund-failed' : 'awaiting-payment', proposalId });
           } else {
             await notify({ kind: 'propose', wallet, ruleId: rule.ruleId, proposalId, currency: decision.currency, amount: decision.amount, message: decision.message, command: decision.command, mode: rule.mode, expiresAt });
             out.push({ ...base, outcome: 'proposed', proposalId });
@@ -147,7 +162,7 @@ export function createSubscriptionAgent(ports: SubscriptionAgentPorts) {
   }
 
   /** Approve an open proposal (the toast's button) and fund it. */
-  async function approve(wallet: string, proposalId: string, by: string, rules: readonly FundingRule[]): Promise<{ ok: boolean; detail: string }> {
+  async function approve(wallet: string, proposalId: string, by: string, rules: readonly FundingRule[]): Promise<{ ok: boolean; detail: string; payment?: XrpTopUpRequest }> {
     const p = replayProposals(await ports.store.read(wallet), now()).find((x) => x.proposalId === proposalId);
     if (!p) return { ok: false, detail: 'No such proposal' };
     if (p.state !== 'open') return { ok: false, detail: `Proposal is ${p.state}` };
@@ -155,8 +170,43 @@ export function createSubscriptionAgent(ports: SubscriptionAgentPorts) {
     if (!rule) return { ok: false, detail: 'The rule behind this proposal no longer exists' };
     if (!ports.fund) return { ok: false, detail: 'No wallet is connected to pay with' };
     await ports.store.append(wallet, { type: 'TopUpApproved', at: now().toISOString(), proposalId, by });
-    const ok = await fundProposal(wallet, rule, proposalId, p.currency, p.amount, false);
-    return { ok, detail: ok ? 'Topped up' : 'Payment failed' };
+    const r = await fundProposal(wallet, rule, proposalId, p.currency, p.amount, false);
+    if (r === 'funded') return { ok: true, detail: 'Topped up' };
+    if (r === 'failed') return { ok: false, detail: 'Payment failed' };
+    return { ok: true, detail: 'Approved: pay it from your XRPL wallet, then check the payment', payment: r };
+  }
+
+  /** The payment request for an approved XRP top-up (to show it again after a reload). */
+  async function xrpPaymentFor(proposalId: string, amount: number, xrpl: { payTo: string; network: XrplNetwork }): Promise<XrpTopUpRequest> {
+    return xrpTopUpRequest({ proposalId, network: xrpl.network, payTo: xrpl.payTo, drops: amount });
+  }
+
+  /**
+   * Record an XRP top-up the person paid from their own wallet, once a validated
+   * ledger shows it delivered to the app's address with the proposal's tag. Only
+   * an approved proposal can be settled; a ledger payment is credited once.
+   */
+  async function settleXrpTopUp(wallet: string, proposalId: string, txHash: string, rules: readonly FundingRule[], xrpl: { payTo: string; network: XrplNetwork }): Promise<{ ok: boolean; detail: string }> {
+    if (!ports.ledgerTx) return { ok: false, detail: 'No ledger reader is connected' };
+    const events = await ports.store.read(wallet);
+    const hash = txHash.trim().toUpperCase();
+    if (events.some((e) => e.type === 'AppFunded' && e.txHash?.toUpperCase() === hash)) return { ok: false, detail: 'That payment is already recorded' };
+    const p = replayProposals(events, now()).find((x) => x.proposalId === proposalId);
+    if (!p) return { ok: false, detail: 'No such proposal' };
+    if (p.state === 'funded') return { ok: false, detail: 'Already topped up' };
+    if (p.currency !== 'XRP' || !wasApproved(events, proposalId) || p.state === 'declined') return { ok: false, detail: 'Only an approved XRP top-up can be settled' };
+    const rule = rules.find((r) => r.ruleId === p.ruleId);
+    if (!rule) return { ok: false, detail: 'The rule behind this proposal no longer exists' };
+    const req = await xrpTopUpRequest({ proposalId, network: xrpl.network, payTo: xrpl.payTo, drops: p.amount });
+    let lt: LedgerTx;
+    try { lt = await ports.ledgerTx(xrpl.network, hash); } catch (err) { return { ok: false, detail: `Could not read the ledger: ${err instanceof Error ? err.message : String(err)}` }; }
+    const c = checkXrpTopUp(req, lt);
+    if (!c.ok) return { ok: false, detail: (c as Extract<typeof c, { ok: false }>).detail };
+    const paid = c as Extract<typeof c, { ok: true }>;
+    // Credit what the ledger delivered (an overpayment is the person's money too).
+    await ports.store.append(wallet, { type: 'AppFunded', at: now().toISOString(), currency: 'XRP', amount: paid.deliveredDrops, source: 'user-wallet', ruleId: rule.ruleId, proposalId, txHash: paid.txHash });
+    await notify({ kind: 'funded', wallet, ruleId: rule.ruleId, proposalId, currency: 'XRP', amount: paid.deliveredDrops, auto: false, message: `${rule.appName} topped up.` });
+    return { ok: true, detail: 'Topped up' };
   }
 
   /** Approve by the typed command ("top up <app> $20.00"): it must match an open proposal exactly. */
@@ -221,7 +271,7 @@ export function createSubscriptionAgent(ports: SubscriptionAgentPorts) {
     return plan;
   }
 
-  return { check, approve, approveCommand, decline, charge, planTasks };
+  return { check, approve, approveCommand, decline, charge, planTasks, settleXrpTopUp, xrpPaymentFor };
 }
 
 export type SubscriptionAgent = ReturnType<typeof createSubscriptionAgent>;

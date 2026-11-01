@@ -63,6 +63,16 @@ and a browser speak the same bytes.
   checks it with `verifyTimerTrigger` (signature, an allowlisted node key, the
   function it names, at most 10 minutes old) and does the work against its own
   data. This gives a schedule to functions whose data has not moved.
+  - **`subscription-watch`** (15.23.1, `funding.ts`): with `CAPPZ_FUNDING_CONFIG`
+    set to a JSON file of XRPL accounts and top-up rules, the node keeps
+    those accounts funded, for example the app treasury hot wallet that
+    sponsored usage draws on.
+    - Balances are read from the ledger.
+    - Automatic rules with caps pay from `CAPPZ_FUNDING_SEED` (the owner's
+      own funding account; the seed stays in this process).
+    - Every other decision is logged.
+    - Caps count the node's own top-ups (`<CAPPZ_NODE_DATA>/funding/`).
+    - See `docs/USAGE_BILLING.md`.
 - **Read-only XRPL connector** (`src/lib/sync/connectors/xrplPeerConnector.ts`)
   watches validated ledger headers and verifies anchors. Never submits. It is
   shipped through `@cappz/sdk` (`src/sdk/transports.ts`); `main.ts` does not

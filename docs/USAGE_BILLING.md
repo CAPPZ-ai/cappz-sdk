@@ -123,9 +123,49 @@ A repeated `chargeId` never charges twice.
 - Normal and deferrable tasks run only from money above the reserve.
 - Whatever doesn't fit is deferred with a reason and an exact shortfall, never dropped.
 
+### XRP top-ups from the person's own wallet
+
+An XRP top-up is paid by the person, not by the app. For these, the app's `fund` port returns `{ awaitingPayment: await xrpTopUpRequest({ proposalId, network, payTo, drops }) }`. The request holds:
+- the app's receiving address (`plan.xrpl.payTo`);
+- a destination tag reproducible from the proposal id;
+- the amount in drops;
+- an unsigned `Payment` for the person's wallet to complete and sign.
+
+Once they have paid:
+
+```ts
+await agent.settleXrpTopUp(uaw, proposalId, txHash, [rule], plan.xrpl!); // needs the `ledgerTx` port
+```
+
+How settling works:
+- `checkXrpTopUp` reads the validated ledger. It checks the destination, the tag, and `delivered_amount` (never `Amount`).
+- The money is credited as `AppFunded` with the ledger hash, and a ledger payment is credited only once.
+- Only an approved proposal can be settled.
+- An approved proposal that is still unpaid lapses at its expiry, so the rule can propose again.
+
+### Rules and plans on the ledger
+
+These live in `ledgerConfig.ts`, and the newest event wins.
+- A person's top-up rules are `FundingRuleSet` / `FundingRuleRemoved` TXs at their account, so every device sees the same rules (`replayFundingRules`).
+- An app owner's plan is `UsagePlanPublished` at the app's root. The owner's later `PriceAcknowledged` / `PriceSet` decisions apply on top of it (`resolvePublishedPlan`).
+- `planFromPriceSheet` turns a published price sheet into an owner-set plan. Volume tiers are not carried over.
+
 ### Sponsored apps: the edge-node job
 
-`subscriptionWatchJob(agent, targets)` runs the agent as an edge-node timer job; bind it to a timer with `cappz:function="subscription-watch"`. Run it on the app owner's node, so its `fund` port pays from the app's POW treasury with the owner's key, within the caps.
+- **In-app agent:** `subscriptionWatchJob(agent, targets)` runs the in-app agent as an edge-node timer job.
+- **Treasury accounts:** for the app owner's own accounts, such as the POW treasury hot wallet that sponsored usage draws on, use `treasuryWatchJob`. It reads the balance from the ledger (`balanceOf`), not from a replayed log. It tops up with `pay` only for automatic rules with caps; any other decision is logged for the owner.
+- **The edge node binds it** when `CAPPZ_FUNDING_CONFIG` is set (`packages/cappz-edge-node/funding.ts`):
+
+```json
+{ "network": "testnet",
+  "targets": [{ "wallet": "r…treasury hot wallet",
+                "rules": [{ "ruleId": "hot-wallet", "appRoot": "…", "appName": "Treasury", "currency": "XRP",
+                            "belowBalance": 50000000, "target": 200000000, "source": "app-treasury",
+                            "mode": "auto", "caps": { "day": 300000000, "month": 2000000000 } }] }] }
+```
+
+- **Payments** are signed with `CAPPZ_FUNDING_SEED`: the owner's own funding account, on the owner's node.
+- **Schedule** the job with a timer start event, `cappz:function="subscription-watch"`.
 
 ## 4. Splits come from the contract
 
@@ -163,4 +203,4 @@ Templates are plain data, with no hosting provider assumed. Notices and scheduli
 
 All state is replayed from these transactions; no balance or flag is stored. They are registered in the MDM `fees` category:
 
-`AppFunded`, `FeeCharged`, `UsageRecorded`, `TopUpProposed`, `TopUpApproved`, `TopUpDeclined`, `RunwayLow`, `TaskDeferred`, `TaskResumed`, `PriceAcknowledged`, `PriceSet`.
+`AppFunded`, `FeeCharged`, `UsageRecorded`, `TopUpProposed`, `TopUpApproved`, `TopUpDeclined`, `RunwayLow`, `TaskDeferred`, `TaskResumed`, `PriceAcknowledged`, `PriceSet`, `FundingRuleSet`, `FundingRuleRemoved`, `UsagePlanPublished`.

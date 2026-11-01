@@ -22,6 +22,7 @@ import {
   signEdgeTx,
   timerFiredTx,
   webhookTx,
+  type EdgeTimerJob,
   type SignedEdgeTx,
 } from '../../src/lib/functions/edgeJobs.ts';
 
@@ -33,6 +34,8 @@ export interface JobRunnerOptions {
   dataDir: string;
   bpmnPath: string;
   tickMs?: number;
+  /** Timer jobs bound by this node's configuration (e.g. subscription-watch), on top of EDGE_TIMER_JOBS. */
+  timerJobs?: Record<string, EdgeTimerJob>;
 }
 
 export async function serveJobs(opts: JobRunnerOptions): Promise<void> {
@@ -56,10 +59,11 @@ export async function serveJobs(opts: JobRunnerOptions): Promise<void> {
   if (!key) console.log('[edge-node] jobs off: needs CAPPZ_NODE_KEY / CAPPZ_NODE_PUB (the node signs every TX it writes)');
   console.log(`[edge-node] jobs :${opts.port}  ${schedules.length} timer(s), ${Object.keys(EDGE_WEBHOOK_JOBS).length} webhook(s) bound`);
 
+  const bound: Record<string, EdgeTimerJob> = { ...EDGE_TIMER_JOBS, ...(opts.timerJobs ?? {}) };
   const lastRunAt: Record<string, number> = {};
   if (key) {
     setInterval(async () => {
-      const { due, unbound } = dueTimers(schedules, lastRunAt, Date.now());
+      const { due, unbound } = dueTimers(schedules, lastRunAt, Date.now(), bound);
       for (const name of unbound) console.log(`[edge-node] timer for ${name} has no bound job`);
       for (const s of due) {
         lastRunAt[s.eventId] = Date.now();
@@ -72,7 +76,7 @@ export async function serveJobs(opts: JobRunnerOptions): Promise<void> {
             console.log(`[edge-node] ${s.functionName}: trigger ${res.ok ? 'accepted' : `refused (${res.status})`}`);
             continue;
           }
-          const r = await EDGE_TIMER_JOBS[s.functionName].run(new Date());
+          const r = await bound[s.functionName].run(new Date());
           for (const tx of r.txs ?? []) await append(await signEdgeTx(tx, key));
           console.log(`[edge-node] ${s.functionName}: ${r.ok ? 'ok' : 'failed'}${r.detail ? ` — ${r.detail}` : ''}`);
         } catch (e) {

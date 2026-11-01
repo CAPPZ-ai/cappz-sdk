@@ -375,6 +375,8 @@ const SUBSTRATE_DOMAIN_EVENTS: Array<{
       // v15-21-00: usage billing and the subscription agent (lib/treasury/funding)
       'UsageRecorded', 'TopUpProposed', 'TopUpApproved', 'TopUpDeclined', 'RunwayLow', 'TaskDeferred', 'TaskResumed',
       'PriceAcknowledged', 'PriceSet',
+      // v15-23-01: top-up rules and app usage plans on the ledger (lib/treasury/funding/ledgerConfig.ts)
+      'FundingRuleSet', 'FundingRuleRemoved', 'UsagePlanPublished',
       // v14-05-00: wallet alias (name stored at the wallet's own alias address)
       'AliasCreated', 'AliasAmended',
       'ChannelOpened', 'ChannelClosed', 'SessionStarted', 'SessionRenamed', 'SessionClosed', 'SessionReopened', 'SessionParticipantJoined', 'SessionParticipantLeft',
