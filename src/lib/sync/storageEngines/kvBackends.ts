@@ -224,6 +224,9 @@ export function createOpfsBackend(): KvBackend {
     if (loaded.has(store) && (st.files.length >= COMPACT_SEGMENTS || st.bytes >= Math.max(COMPACT_SEGMENT_BYTES, st.base))) await compact(store, rows);
   }
 
+  // Background flushes (timer, pagehide, hidden tab) have no caller to report to: the failure is
+  // logged and the changes stay queued for the next flush, so their rejection is handled here.
+  const flushInBackground = () => { doFlush().catch(() => {}); };
   const doFlush = () => {
     const batch = [...dirty.entries()];
     dirty.clear();
@@ -245,10 +248,10 @@ export function createOpfsBackend(): KvBackend {
   };
 
   if (typeof window !== 'undefined') {
-    window.addEventListener('pagehide', () => { void doFlush(); });
+    window.addEventListener('pagehide', flushInBackground);
     // v15-03-00: phones often background a tab without pagehide; flush when it hides.
     if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && dirty.size) void doFlush(); });
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && dirty.size) flushInBackground(); });
     }
   }
 
@@ -283,7 +286,7 @@ export function createOpfsBackend(): KvBackend {
       const prev = dirty.get(store);
       const keys = changed === 'all' || prev?.keys === 'all' ? 'all' : new Set([...(prev?.keys as Set<string> ?? []), ...changed]);
       dirty.set(store, { rows, keys });
-      if (!timer) timer = setTimeout(() => { void doFlush(); }, 150);
+      if (!timer) timer = setTimeout(flushInBackground, 150);
     },
     async flush() {
       if (timer) { clearTimeout(timer); }
