@@ -190,12 +190,14 @@ export function createSubscriptionAgent(ports: SubscriptionAgentPorts) {
     const events = await ports.store.read(i.wallet);
     const t = now();
     const quote = quoteUsage(i.plan, i.fn, i.quantity, i.currency, { events, rate: await ports.rate?.(), now: t });
-    if (!quote.ok) return { ok: false, status: 400, reason: quote.reason, detail: quote.detail };
+    // Explicit narrowing: hosts compiling without strictNullChecks do not narrow on `ok`.
+    if (!quote.ok) { const q = quote as Extract<UsageQuote, { ok: false }>; return { ok: false, status: 400, reason: q.reason, detail: q.detail }; }
     const split = splitCharge(quote.usage, i.split, i.plan.baseFee && quote.baseFee > 0 ? { amount: quote.baseFee, to: i.plan.baseFee.to } : undefined);
-    if (!split.ok) return { ok: false, status: 409, reason: 'contract-split', detail: split.problem };
-    const postings = postingsFor(split.lines, i.payer, i.currency, i.chargeId, i.split.contractId);
+    if (!split.ok) return { ok: false, status: 409, reason: 'contract-split', detail: (split as Extract<typeof split, { ok: false }>).problem };
+    const lines = (split as Extract<typeof split, { ok: true }>).lines;
+    const postings = postingsFor(lines, i.payer, i.currency, i.chargeId, i.split.contractId);
     if (events.some((e) => e.type === 'FeeCharged' && e.chargeId === i.chargeId)) {
-      return { ok: true, chargeId: i.chargeId, quote, lines: split.lines, postings, duplicate: true };
+      return { ok: true, chargeId: i.chargeId, quote, lines, postings, duplicate: true };
     }
     const balance = balanceIn(events, i.currency);
     if (quote.total > balance) {
@@ -205,7 +207,7 @@ export function createSubscriptionAgent(ports: SubscriptionAgentPorts) {
     if (quote.total > 0) {
       await ports.store.append(i.wallet, { type: 'FeeCharged', at: t.toISOString(), currency: i.currency, amount: quote.total, function: i.fn, quantity: i.quantity, chargeId: i.chargeId });
     }
-    return { ok: true, chargeId: i.chargeId, quote, lines: split.lines, postings, duplicate: false };
+    return { ok: true, chargeId: i.chargeId, quote, lines, postings, duplicate: false };
   }
 
   /** Decide which queued tasks run now; record deferrals and resumptions. */
