@@ -1,6 +1,6 @@
 # CAPPZ SDK
 
-The public part of [CAPPZ](https://cappz.ai), version 15.20.1. Apache-2.0.
+The public part of [CAPPZ](https://cappz.ai), version 15.21.0. Apache-2.0.
 
 - **`@cappz/sdk/port`**: move a PHP app off php-fpm one route at a time. Inventory the app, run each new handler beside PHP and compare every response, cut over on the evidence, roll back in about a second.
 - **`@cappz/sdk/identity`**: KeyZ, wallet-keyed trust. Keys are trusted through declarations the wallet signs, with revocations replayed offline and short delegations; SD-JWT identity claims; X.509 as a projection of a declaration.
@@ -151,6 +151,7 @@ Moving your own app: [docs/MOVE_OFF_PHP.md](docs/MOVE_OFF_PHP.md). Identity, Key
   - **Platform adapter templates** (`PLATFORM_ADAPTER_TEMPLATES`,
     `endpointOrder`, `withFailover`): prioritised, weighted endpoints per
     service with back-off, and no hosting provider assumed.
+  - **Guide.** [docs/USAGE_BILLING.md](docs/USAGE_BILLING.md).
 
 ## Storage, and an optional hosted mirror
 

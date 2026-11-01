@@ -54,7 +54,19 @@ export type WalletTierEventType =
   | 'SubscriptionStarted'
   | 'SubscriptionCancelled'
   | 'SubscriptionCharged'
-  | 'FundsDeposited';
+  | 'FundsDeposited'
+  // v15-21-00 usage billing (lib/treasury/funding): one app wallet's FundingEvent TXs
+  | 'AppFunded'
+  | 'FeeCharged'
+  | 'UsageRecorded'
+  | 'TopUpProposed'
+  | 'TopUpApproved'
+  | 'TopUpDeclined'
+  | 'RunwayLow'
+  | 'TaskDeferred'
+  | 'TaskResumed'
+  | 'PriceAcknowledged'
+  | 'PriceSet';
 
 export interface WalletTierTx extends CappzEventCacheEntry {
   eventType: WalletTierEventType;
