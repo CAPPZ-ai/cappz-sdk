@@ -1,6 +1,6 @@
 # CAPPZ SDK
 
-The public part of [CAPPZ](https://cappz.ai), version 15.19.0. Apache-2.0.
+The public part of [CAPPZ](https://cappz.ai), version 15.20.1. Apache-2.0.
 
 - **`@cappz/sdk/port`**: move a PHP app off php-fpm one route at a time. Inventory the app, run each new handler beside PHP and compare every response, cut over on the evidence, roll back in about a second.
 - **`@cappz/sdk/identity`**: KeyZ, wallet-keyed trust. Keys are trusted through declarations the wallet signs, with revocations replayed offline and short delegations; SD-JWT identity claims; X.509 as a projection of a declaration.
@@ -125,6 +125,32 @@ Moving your own app: [docs/MOVE_OFF_PHP.md](docs/MOVE_OFF_PHP.md). Identity, Key
   address with the stage's destination tag; each result is held (HTTP 402 in
   the ready-made agent) until its stage is paid. Guided setup:
   https://cappz.ai/tutorials/earn-with-your-agent.
+- **Usage billing and the subscription agent** (also `@cappz/sdk/paidAgent`) —
+  for marketplace apps, services and agents billed by use.
+  - **Plans** (`AppUsagePlan`, `quoteUsage`): pay as you go, subscription,
+    subscription with overage, or sponsored (the app's treasury funds its
+    users' app wallets). Prices in USD, XRP or both; conversion only with a
+    fresh rate, never a guessed one.
+  - **Default prices are proposals** (`proposeDefaultPrices`): marked as not
+    validated by the app owner and never charged until the owner acknowledges
+    or changes them (`applyOwnerDecisions`).
+  - **Top-up rules** (`FundingRule`, `decideFunding`): low balance or short
+    runway → propose a one-click or typed-command top-up, or top up
+    automatically. Auto top-up needs caps (overall, per month, week, day,
+    hour; `capRoom`); a rule with none only proposes.
+  - **Splits from the contract** (`splitCharge`, `postingsFor`): platform,
+    app owner (ebb tenant) and talent shares in basis points, null or 0
+    allowed; unallocated shares need a named remainder party. Exact rounding;
+    each line is an AP/AR pair.
+  - **Short on money** (`planWithinBudget`): critical tasks first, the rest
+    deferred with exact shortfalls. `estimateRunway` and `projectedVsActual`
+    report spend.
+  - **The agent** (`createSubscriptionAgent`): storage, payment, notices and
+    rates are ports; it holds no key. `subscriptionWatchJob` runs it on an
+    edge node for sponsored top-ups from the app owner's treasury.
+  - **Platform adapter templates** (`PLATFORM_ADAPTER_TEMPLATES`,
+    `endpointOrder`, `withFailover`): prioritised, weighted endpoints per
+    service with back-off, and no hosting provider assumed.
 
 ## Storage, and an optional hosted mirror
 
