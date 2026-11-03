@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { DEMO_YOU, seedDemoMarket, type DemoRunner } from '../lib/marketplace/demo';
 import * as M from '../lib/marketplace/model';
