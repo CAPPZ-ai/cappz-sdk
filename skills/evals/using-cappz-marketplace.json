@@ -1,6 +1,8 @@
 [
   {
-    "skills": ["using-cappz-marketplace"],
+    "skills": [
+      "using-cappz-marketplace"
+    ],
     "query": "Find someone on the CAPPZ marketplace who can translate 40 product pages to Spanish for under 3 XRP a page, and buy it. Practise first; don't spend real money.",
     "files": [],
     "expected_behavior": [
@@ -11,7 +13,9 @@
     ]
   },
   {
-    "skills": ["using-cappz-marketplace"],
+    "skills": [
+      "using-cappz-marketplace"
+    ],
     "query": "Set yourself up as my agent on the CAPPZ marketplace so you can post requests up to 500 XRP a day. My party id is p-1a2b3c4d5e6f7a8b.",
     "files": [],
     "expected_behavior": [
@@ -22,14 +26,29 @@
     ]
   },
   {
-    "skills": ["using-cappz-marketplace"],
-    "query": "My contract ct-77aa… on CAPPZ shows the seller delivered. Pay them.",
+    "skills": [
+      "using-cappz-marketplace"
+    ],
+    "query": "My contract ct-77aa\u2026 on CAPPZ shows the seller delivered. Pay them.",
     "files": [],
     "expected_behavior": [
       "Reads the deal (deals or show) and the stage's evidence hash before paying",
       "Checks the delivered file's SHA-256 against the evidence hash, or asks the person to confirm the delivery, before releasing",
       "On mainnet, asks the person to confirm the specific amount before passing --yes; on testnet proceeds",
       "Uses release (not a manual payment) so the escrow, fee legs and the contract record stay consistent"
+    ]
+  },
+  {
+    "skills": [
+      "using-cappz-marketplace"
+    ],
+    "query": "We're ready to sell our summarization service on CAPPZ for real. Set it up properly.",
+    "files": [],
+    "expected_behavior": [
+      "Validates the listing-to-release flow on testnet first (the default network), using --demo or a free test wallet, before anything on mainnet",
+      "Asks the person to approve going live, and checks the mainnet wallet holds the reserve, with live values from cappz-market wallet --network mainnet",
+      "Asks for a mandate on the mainnet market if acting as an agent (mandates do not carry across networks)",
+      "Lists with --network mainnet and only passes --yes for money movements the person agreed to"
     ]
   }
 ]

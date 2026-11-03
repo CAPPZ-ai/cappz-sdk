@@ -20,6 +20,7 @@ import { VERSION } from './version';
 const GLOBAL = [
   ['--demo', 'practice market on this computer (nothing published, no real money)'],
   ['--as <party>', 'practice market only: act as another party'],
+  ['--network <n>', 'which market: devnet, testnet (default) or mainnet (real XRP); or CAPPZ_NETWORK'],
   ['--yes', 'confirm a mainnet money movement (fund, release, hire)'],
 ] as const;
 
@@ -30,12 +31,12 @@ function help(cmd?: Command): string {
     return `cappz-market ${cmd.name} ${pos}\n\n${cmd.summary}\n\n${flags}\n\nGlobal: ${GLOBAL.map(([f]) => f).join(' ')}\n`;
   }
   const width = Math.max(...COMMANDS.map((c) => c.name.length));
-  return `cappz-market ${VERSION} — the CAPPZ Marketplace for agents and their people.\n\nStart with: cappz-market setup   (or practise first: cappz-market demo)\n\n${COMMANDS.map((c) => `  ${c.name.padEnd(width)}  ${c.summary.split('. ')[0].replace(/\.$/, '')}.`).join('\n')}\n  ${'mcp'.padEnd(width)}  Run as an MCP server over stdio.\n\nGlobal options:\n${GLOBAL.map(([f, d]) => `  ${f.padEnd(14)} ${d}`).join('\n')}\n\nEnvironment: XRPL_SEED (use your own wallet), CAPPZ_EMAIL / CAPPZ_PASSWORD (sign in), CAPPZ_HOME (where keys are kept, default ~/.cappz/market).\nGuide for agents: https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/using-cappz-marketplace\n`;
+  return `cappz-market ${VERSION} — the CAPPZ Marketplace for agents and their people.\n\nStart with: cappz-market demo (practise) → setup (testnet: validate) → setup --network mainnet (go live)\n\n${COMMANDS.map((c) => `  ${c.name.padEnd(width)}  ${c.summary.split('. ')[0].replace(/\.$/, '')}.`).join('\n')}\n  ${'mcp'.padEnd(width)}  Run as an MCP server over stdio.\n\nGlobal options:\n${GLOBAL.map(([f, d]) => `  ${f.padEnd(14)} ${d}`).join('\n')}\n\nEnvironment: XRPL_SEED (use your own wallet), CAPPZ_EMAIL / CAPPZ_PASSWORD (sign in), CAPPZ_HOME (where keys are kept, default ~/.cappz/market).\nGuide for agents: https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/using-cappz-marketplace\n`;
 }
 
 /** --flag value / --flag=value / --bool; the rest are positionals in declared order. */
-export function parseArgs(cmd: Command, argv: string[]): { args: Record<string, unknown>; global: { demo: boolean; as?: string; yes: boolean }; help: boolean } {
-  const args: Record<string, unknown> = {}; const positionals: string[] = []; const global = { demo: false, as: undefined as string | undefined, yes: false }; let wantHelp = false;
+export function parseArgs(cmd: Command, argv: string[]): { args: Record<string, unknown>; global: { demo: boolean; as?: string; yes: boolean; network?: string }; help: boolean } {
+  const args: Record<string, unknown> = {}; const positionals: string[] = []; const global: { demo: boolean; as?: string; yes: boolean; network?: string } = { demo: false, yes: false }; let wantHelp = false;
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i];
     if (t === '--help' || t === '-h') { wantHelp = true; continue; }
@@ -45,6 +46,7 @@ export function parseArgs(cmd: Command, argv: string[]): { args: Record<string, 
     if (key === 'demo') { global.demo = true; continue; }
     if (key === 'yes') { global.yes = true; continue; }
     if (key === 'as') { global.as = inline ?? argv[++i]; continue; }
+    if (key === 'network') { global.network = inline ?? argv[++i]; continue; }
     const p = cmd.params.find((x) => x.name === key);
     if (!p) throw new ToolError(`Unknown option --${rawKey} for ${cmd.name}.`, `cappz-market ${cmd.name} --help`);
     if (p.type === 'boolean') { args[key] = inline === undefined ? true : inline !== 'false'; continue; }

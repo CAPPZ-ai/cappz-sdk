@@ -23,6 +23,15 @@ import type { MarketTx, MarketTxLike } from './ledger';
 import { MARKETPLACE_EVENT_LOG, MARKETPLACE_POW_ROOT, partyAddress } from './MarketplacePaths';
 
 export const PUBLIC_LOG_PARTITION = `pub:${MARKETPLACE_EVENT_LOG}`;
+
+/**
+ * v15-25-00 (SDK 15.25.0) — one market per XRPL network, all enabled: devnet, testnet and mainnet each have their own
+ * partition of the shared log, so test deals never mix with live ones. Testnet keeps the original partition.
+ * Participants choose the network; nothing has to be declared or approved to open one.
+ */
+export const MARKET_NETWORKS = ['mainnet', 'testnet', 'devnet'] as const;
+export type MarketNetwork = typeof MARKET_NETWORKS[number];
+export const marketPartition = (network: MarketNetwork): string => (network === 'testnet' ? PUBLIC_LOG_PARTITION : `${PUBLIC_LOG_PARTITION}#${network}`);
 const OPERATOR_PREFIX = `${MARKETPLACE_POW_ROOT}/operators/`;
 /** Entries the payments function writes for Stripe (service role; no signed-in account can write this author). */
 export const PROCESSOR_SOURCE = `${MARKETPLACE_POW_ROOT}/processors/stripe`;
@@ -42,13 +51,13 @@ export interface PublicLogPort {
 export const authorHashOf = (accountId: string) => sha256Hex(`cappz-marketplace-author|${accountId}`);
 
 /** Publish one command's TXs as one insert (all or nothing). */
-export async function publishToPublicLog(port: PublicLogPort, txs: readonly MarketTx[], author: string, actingParty: string | null): Promise<void> {
+export async function publishToPublicLog(port: PublicLogPort, txs: readonly MarketTx[], author: string, actingParty: string | null, partition: string = PUBLIC_LOG_PARTITION): Promise<void> {
   if (!txs.length) return;
   const rows = await Promise.all(txs.map(async (tx, i) => {
     const hash = await sha256Hex(JSON.stringify(tx));
     return {
       block_hash: hash, previous_hash: '', merkle_root: hash, block_number: i, transaction_count: 1,
-      timestamp: tx.timestamp, query_hash: PUBLIC_LOG_PARTITION, hd_address: tx.targetAddress,
+      timestamp: tx.timestamp, query_hash: partition, hd_address: tx.targetAddress,
       transactions: { type: 'public_market_tx', eventType: tx.eventType, txId: tx.txId },
       anchor_block: { publicLog: true }, metadata: { publicTx: { tx, author, actingParty } },
     };

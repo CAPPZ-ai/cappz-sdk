@@ -19,8 +19,8 @@ import { sha256Hex } from '../../src/lib/governance/PrinciplesChainlet';
 import { generateBoxKeyPair } from '../../src/lib/crypto/sealedBox';
 import { resolveMarket, type MarketState } from '../../src/lib/marketplace/replay';
 import { DEMO_YOU, DemoRunner, seedDemoMarket } from '../../src/lib/marketplace/demo';
-import { PUBLIC_LOG_PARTITION, attributePublicLog, authorHashOf, publishToPublicLog, pullPublicLog, type PublicLogPort } from '../../src/lib/marketplace/publicLog';
-import { resolveSettlementPolicy, type SettlementPolicy } from '../../src/lib/marketplace/settlement';
+import { MARKET_NETWORKS, PUBLIC_LOG_PARTITION, attributePublicLog, authorHashOf, marketPartition, publishToPublicLog, pullPublicLog, type MarketNetwork, type PublicLogPort } from '../../src/lib/marketplace/publicLog';
+import { resolveSettlementPolicy, settlementPolicyFor, type SettlementPolicy } from '../../src/lib/marketplace/settlement';
 import { MARKETPLACE_POW_ROOT } from '../../src/lib/marketplace/MarketplacePaths';
 import type { MarketTx, MarketTxLike } from '../../src/lib/marketplace/ledger';
 import type { Actor } from '../../src/lib/marketplace/model';
@@ -30,14 +30,22 @@ export class ToolError extends Error {
 }
 
 /** Global options every command accepts. */
-export interface GlobalOptions { demo?: boolean; as?: string; yes?: boolean }
+/** network: which market (devnet, testnet or mainnet; default CAPPZ_NETWORK or testnet). Each network is its own market. */
+export interface GlobalOptions { demo?: boolean; as?: string; yes?: boolean; network?: string }
+
+export function marketNetwork(o: GlobalOptions): MarketNetwork {
+  const n = (o.network ?? process.env.CAPPZ_NETWORK ?? 'testnet').toLowerCase();
+  if (!(MARKET_NETWORKS as readonly string[]).includes(n)) throw new ToolError(`Unknown network “${n}”.`, `Use one of: ${MARKET_NETWORKS.join(', ')}.`);
+  return n as MarketNetwork;
+}
 
 /** The marketplace's public discovery document. */
 export interface Discovery {
   name: string;
   web: string;
   mirror: { url: string; publishableKey: string; table: string };
-  publicLog: { partition: string };
+  /** partition: the testnet market (original); partitions: one per network (SDK 15.25.0+). */
+  publicLog: { partition: string; partitions?: Partial<Record<MarketNetwork, string>> };
   agentsPage: string;
   skills: string;
 }
@@ -61,14 +69,13 @@ let discovery: Discovery | null = null;
 export async function getDiscovery(): Promise<Discovery> {
   if (discovery) return discovery;
   if (process.env.CAPPZ_MIRROR_URL && process.env.CAPPZ_MIRROR_KEY) {
-    discovery = { name: 'custom', web: MARKET_URL(), mirror: { url: process.env.CAPPZ_MIRROR_URL, publishableKey: process.env.CAPPZ_MIRROR_KEY, table: 'chainlet_blocks' }, publicLog: { partition: PUBLIC_LOG_PARTITION }, agentsPage: `${MARKET_URL()}/marketplace?tab=agents`, skills: 'https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills' };
+    discovery = { name: 'custom', web: MARKET_URL(), mirror: { url: process.env.CAPPZ_MIRROR_URL, publishableKey: process.env.CAPPZ_MIRROR_KEY, table: 'chainlet_blocks' }, publicLog: { partition: PUBLIC_LOG_PARTITION, partitions: Object.fromEntries(MARKET_NETWORKS.map((n) => [n, marketPartition(n)])) }, agentsPage: `${MARKET_URL()}/marketplace?tab=agents`, skills: 'https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills' };
     return discovery;
   }
   const url = `${MARKET_URL()}/.well-known/cappz-market.json`;
   const res = await fetch(url).catch((e: Error) => { throw new ToolError(`Could not reach ${url}: ${e.message}`, 'Check your internet connection, or practise offline with --demo.'); });
   if (!res.ok) throw new ToolError(`${url} answered ${res.status}.`, 'Practise offline with --demo, or set CAPPZ_MIRROR_URL and CAPPZ_MIRROR_KEY.');
   discovery = (await res.json()) as Discovery;
-  if (discovery.publicLog.partition !== PUBLIC_LOG_PARTITION) throw new ToolError(`The marketplace publishes partition ${discovery.publicLog.partition}; this tool expects ${PUBLIC_LOG_PARTITION}.`, 'Update cappz-market.');
   return discovery;
 }
 
@@ -111,7 +118,7 @@ export async function session(required = true): Promise<Session | null> {
   return s;
 }
 
-function mirrorPort(token: string | null): PublicLogPort {
+function mirrorPort(token: string | null, partition: string): PublicLogPort {
   return {
     async insert(rows) {
       const d = await getDiscovery();
@@ -120,7 +127,7 @@ function mirrorPort(token: string | null): PublicLogPort {
     },
     async select(since, limit) {
       const d = await getDiscovery();
-      const q = new URLSearchParams({ select: 'metadata,created_at', query_hash: `eq.${d.publicLog.partition}`, chainlet_id: 'is.null', order: 'created_at.asc', limit: String(limit) });
+      const q = new URLSearchParams({ select: 'metadata,created_at', query_hash: `eq.${partition}`, chainlet_id: 'is.null', order: 'created_at.asc', limit: String(limit) });
       if (since) q.append('created_at', `gte.${since}`);
       const res = await fetch(`${d.mirror.url}/rest/v1/${d.mirror.table}?${q}`, { headers: { apikey: d.mirror.publishableKey, authorization: `Bearer ${token ?? d.mirror.publishableKey}` } });
       if (!res.ok) return { data: null, error: { message: `${res.status} ${await res.text()}` } };
@@ -133,6 +140,8 @@ function mirrorPort(token: string | null): PublicLogPort {
 
 export interface Market {
   mode: 'live' | 'demo';
+  /** The market's network (each network is its own market; the practice market is local). */
+  network: MarketNetwork;
   state: MarketState;
   txs: MarketTxLike[];
   policy: SettlementPolicy;
@@ -173,21 +182,25 @@ export async function loadMarket(o: GlobalOptions, needSession = false): Promise
     const r = await demoRunner();
     const partyId = o.as ?? DEMO_YOU;
     return {
-      mode: 'demo', get state() { return r.state; }, get txs() { return r.txs; }, policy: resolveSettlementPolicy(r.txs), partyId,
+      mode: 'demo', network: 'testnet', get state() { return r.state; }, get txs() { return r.txs; }, policy: resolveSettlementPolicy(r.txs), partyId,
       actor: (co) => r.as(partyId, 5, co),
       async commit(txs) { r.apply(txs); await saveDemo(r); },
       now: () => r.now(), aside: 0,
     } as Market;
   }
+  const network = marketNetwork(o);
+  const d = await getDiscovery();
+  const partition = d.publicLog.partitions?.[network] ?? (network === 'testnet' ? d.publicLog.partition : null);
+  if (partition !== marketPartition(network)) throw new ToolError(`The marketplace at ${marketUrl()} does not list a ${network} market this tool can use.`, 'Update cappz-market, or pick another --network.');
   const s = await session(needSession);
-  const port = mirrorPort(s?.accessToken ?? null);
+  const port = mirrorPort(s?.accessToken ?? null, partition);
   const entries = await pullPublicLog(port, null);
   const attribution = attributePublicLog(entries);
   const txs = attribution.accepted;
   const state = resolveMarket(txs);
   const partyId = s ? await partyIdForAccount(s.userId) : null;
   return {
-    mode: 'live', state, txs, policy: resolveSettlementPolicy(txs), partyId, aside: attribution.rejected.length,
+    mode: 'live', network, state, txs, policy: settlementPolicyFor(network), partyId, aside: attribution.rejected.length,
     actor(co) {
       if (!partyId) throw new ToolError('Sign in to act on the live market.', 'Run: cappz-market login');
       return { partyId, at: new Date().toISOString(), ...(co ? { coSignedBy: co } : {}) };
@@ -195,10 +208,10 @@ export async function loadMarket(o: GlobalOptions, needSession = false): Promise
     async commit(batch, opts = {}) {
       const live = await session(true);
       const operator = opts.operator ?? batch.every((t) => t.sourceAddress.startsWith(`${MARKETPLACE_POW_ROOT}/operators/`));
-      await publishToPublicLog(mirrorPort(live!.accessToken), batch, await authorHashOf(live!.userId), operator ? null : partyId);
+      await publishToPublicLog(mirrorPort(live!.accessToken, partition), batch, await authorHashOf(live!.userId), operator ? null : partyId, partition);
       // Each party's own copy: kept on this computer, so the tool can show what it published even before the mirror answers.
-      const own = (await readJson<MarketTxLike[]>('own-txs.json')) ?? [];
-      await writeJson('own-txs.json', [...own, ...batch.map(({ txId, eventType, sourceAddress, targetAddress, payload, timestamp }) => ({ txId, eventType, sourceAddress, targetAddress, payload, timestamp }))]);
+      const own = (await readJson<MarketTxLike[]>(`own-txs-${network}.json`)) ?? [];
+      await writeJson(`own-txs-${network}.json`, [...own, ...batch.map(({ txId, eventType, sourceAddress, targetAddress, payload, timestamp }) => ({ txId, eventType, sourceAddress, targetAddress, payload, timestamp }))]);
     },
     now: () => new Date().toISOString(),
   } as Market;

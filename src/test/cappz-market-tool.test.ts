@@ -5,6 +5,9 @@ import { join } from 'node:path';
 import { COMMANDS, commandOf } from '../../packages/cappz-market/commands';
 import { parseArgs } from '../../packages/cappz-market/main';
 import { callTool, toolList } from '../../packages/cappz-market/mcp';
+import { marketNetwork } from '../../packages/cappz-market/context';
+import { MARKET_NETWORKS, PUBLIC_LOG_PARTITION, marketPartition } from '../lib/marketplace/publicLog';
+import { settlementPolicyFor } from '../lib/marketplace/settlement';
 import { commandsMarkdown } from '../../packages/cappz-market/docs';
 import { readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
@@ -87,5 +90,18 @@ describe('cappz-market tool', () => {
       expect(md.split('\n').length).toBeLessThan(500);
       for (const link of md.matchAll(/\]\((reference\/[^)]+)\)/g)) expect(() => readFileSync(repo(`skills/${name}/${link[1]}`))).not.toThrow();
     }
+  });
+
+  it('one market per network: testnet is the default and keeps the original log; each network has its own partition and policy', () => {
+    delete process.env.CAPPZ_NETWORK;
+    expect(marketNetwork({})).toBe('testnet');
+    expect(marketNetwork({ network: 'Mainnet' })).toBe('mainnet');
+    expect(() => marketNetwork({ network: 'moon' })).toThrow(/Unknown network/);
+    expect(marketPartition('testnet')).toBe(PUBLIC_LOG_PARTITION);
+    expect(new Set(MARKET_NETWORKS.map(marketPartition)).size).toBe(3);
+    for (const n of MARKET_NETWORKS) expect(settlementPolicyFor(n).network).toBe(n);
+    const p = parseArgs(commandOf('find')!, ['tea', '--network', 'mainnet']);
+    expect(p.global.network).toBe('mainnet');
+    expect(Object.keys(toolList()[0].inputSchema.properties)).toContain('network');
   });
 });

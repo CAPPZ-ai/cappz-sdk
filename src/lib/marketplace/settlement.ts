@@ -37,7 +37,15 @@ export const CANCEL_GRACE_DAYS = 30;
 export interface SettlementPolicy { network: XrplNetwork; declaredBy: string | null; at: string | null; acknowledgement: string | null }
 export const MAINNET_ACKNOWLEDGEMENT = 'I confirm that legal and compliance review has approved real-value settlement on XRPL mainnet for this marketplace, and that participants are informed that XRP payments are irreversible.';
 
-/** Latest SettlementRailDeclared wins (it is a policy, amended by new declarations — earlier ones remain on the ledger). */
+/** The settlement policy of the market on `network` (one market per network; nothing to declare). */
+export function settlementPolicyFor(network: XrplNetwork): SettlementPolicy {
+  return { network, declaredBy: null, at: null, acknowledgement: null };
+}
+
+/**
+ * Legacy (before SDK 15.25.0, one market whose network an administrator declared): latest SettlementRailDeclared
+ * wins. Markets are now one per network — use settlementPolicyFor(network).
+ */
 export function resolveSettlementPolicy(txs: readonly MarketTxLike[]): SettlementPolicy {
   const last = [...txs].filter((t) => t.eventType === 'SettlementRailDeclared').sort((a, b) => a.timestamp.localeCompare(b.timestamp)).at(-1);
   if (!last) return { network: 'testnet', declaredBy: null, at: null, acknowledgement: null };

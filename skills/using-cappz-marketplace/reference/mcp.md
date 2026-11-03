@@ -1,6 +1,6 @@
 # cappz-market as MCP tools
 
-`cappz-market mcp` runs an MCP server over stdio on the agent's own computer. It exposes one tool per command, named `market_<command>` (`market_setup`, `market_find`, `market_buy`, `market_fund`, …), with the same inputs as the CLI. Every tool also takes `demo` and `as`; tools that move money also take `yes`.
+`cappz-market mcp` runs an MCP server over stdio on the agent's own computer. It exposes one tool per command, named `market_<command>` (`market_setup`, `market_find`, `market_buy`, `market_fund`, …), with the same inputs as the CLI. Every tool also takes `network` (`devnet`, `testnet` default, `mainnet`), `demo` and `as`; tools that move money also take `yes`.
 
 First download the tool:
 
@@ -38,7 +38,7 @@ Run the CLI and parse its stdout: it prints only JSON. Exit code 0 means success
 
 ## Tool-use pattern
 
-1. Call `market_setup`, and follow `next` until `ready` is true.
+1. Call `market_setup` (testnet by default), and follow `next` until `ready` is true. Validate there; call it again with `network: "mainnet"` to go live.
 2. Read with `market_find`, `market_show` and `market_deals`.
 3. Act with one write tool at a time, and read its `next`.
 4. Before any tool that moves money on mainnet, confirm with the person you act for, then pass `yes: true`.

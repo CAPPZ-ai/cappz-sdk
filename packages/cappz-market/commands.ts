@@ -6,7 +6,7 @@
  * Every write runs the marketplace's own builders (the same rules as the web
  * app, including mandates for agent parties) and is published to the shared
  * log as the signed-in account. Money moves only from the wallet on this
- * computer, on the network the marketplace declares, after a balance check;
+ * computer, on the network the caller chooses (one market per network), after a balance check;
  * on mainnet a command that moves money also needs `yes`.
  */
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
@@ -26,7 +26,7 @@ import { AGENT_OPERATIONS, executeAgentOperation, type AgentOperation } from '..
 import type { MarketplaceVerb } from '../../src/lib/marketplace/marketplaceVerbs';
 import type { ContractView, Currency, ListingContent, PartyKind, PartyProfile, PartyRole, SupplyOfferContent, SupplyRequestContent } from '../../src/lib/marketplace/types';
 import type { ListingView, MarketState, RequestView } from '../../src/lib/marketplace/replay';
-import { ToolError, boxKey, getDiscovery, homeDir, loadMarket, marketUrl, newWallet, recallSecret, rememberSecret, requireWallet, resetDemo, session, signIn, wallet, walletStatus, type GlobalOptions, type Market } from './context';
+import { ToolError, boxKey, getDiscovery, homeDir, loadMarket, marketNetwork, marketUrl, newWallet, recallSecret, rememberSecret, requireWallet, resetDemo, session, signIn, wallet, walletStatus, type GlobalOptions, type Market } from './context';
 
 export type ParamType = 'string' | 'number' | 'boolean' | 'json';
 export interface Param { name: string; type: ParamType; description: string; required?: boolean; positional?: boolean }
@@ -124,7 +124,7 @@ export const COMMANDS: Command[] = [
       const steps: Array<{ step: string; ok: boolean; detail: string; next?: string }> = [];
       const mk = await loadMarket(o).catch((e) => { throw e; });
       const net = mk.policy.network as XrplNetwork;
-      steps.push({ step: 'market', ok: true, detail: `${mk.mode === 'demo' ? 'practice market (local, nothing is published)' : `live market at ${marketUrl()}`}; settlement on XRPL ${net}` });
+      steps.push({ step: 'market', ok: true, detail: mk.mode === 'demo' ? 'practice market (local, nothing is published, no real money)' : `${net} market at ${marketUrl()}${net === 'mainnet' ? ' — real XRP' : ' — test XRP, no value'} (choose with --network devnet|testnet|mainnet)` });
       const w = await wallet();
       if (!w) steps.push({ step: 'wallet', ok: false, detail: 'no XRPL wallet', next: net === 'mainnet' ? 'cappz-market wallet --new, then fund it from an exchange (or set XRPL_SEED)' : 'cappz-market wallet --new (funded with free test XRP)' });
       else if (mk.mode === 'demo') steps.push({ step: 'wallet', ok: true, detail: `${w.wallet.classicAddress} (not used by the practice market)` });
@@ -143,21 +143,19 @@ export const COMMANDS: Command[] = [
         const d = await getDiscovery().catch(() => null);
         steps.push({ step: 'mandate', ok: ms.length > 0, detail: ms.length ? ms.map((m) => `${m.limits.verbs.map((v) => v.replace('marketplace.', '')).join(', ')} ≤ ${m.limits.maxPerContract.amount} ${m.limits.maxPerContract.currency}/contract until ${m.limits.expiresAt.slice(0, 10)}`).join('; ') : 'no active mandate — an agent party cannot list, bid, buy or pay', next: ms.length ? undefined : `ask the person you act for to grant one at ${d?.agentsPage ?? `${marketUrl()}/marketplace?tab=agents`} (agent party id ${me.partyId})` });
       }
-      const next = steps.find((x) => !x.ok)?.next ?? 'Ready. Try: cappz-market find "what you need"';
+      const next = steps.find((x) => !x.ok)?.next ?? (mk.mode === 'demo' ? 'Practised? Validate on testnet next: cappz-market setup --network testnet' : net === 'mainnet' ? 'Ready on mainnet (real XRP). Try: cappz-market find "what you need" --network mainnet' : `Ready on ${net}. Validate your whole flow here, then go live: cappz-market setup --network mainnet`);
       return { ready: steps.every((x) => x.ok), steps, next };
     },
   },
   {
     name: 'wallet',
-    summary: 'Show your XRPL wallet: address, balance, reserve and what is spendable. --new creates one (testnet: funded free); --fund tops up a testnet wallet from the faucet.',
+    summary: 'Show your XRPL wallet on the chosen network: address, balance, reserve and what is spendable. --new creates one (testnet/devnet: funded free); --fund tops up from the test faucet. One wallet works on every network; each network activates it separately.',
     params: [
       { name: 'new', type: 'boolean', description: 'Create a wallet (kept in CAPPZ_HOME, file mode 0600). Never overwrites.' },
       { name: 'fund', type: 'boolean', description: 'Testnet/devnet only: ask the public faucet for test XRP.' },
-      { name: 'network', type: 'string', description: 'testnet (default for --new), devnet or mainnet.' },
     ],
     async run(a, o) {
-      const mk = o.demo ? null : await loadMarket(o).catch(() => null);
-      const net = (a.network as XrplNetwork) ?? (mk?.policy.network as XrplNetwork) ?? 'testnet';
+      const net = marketNetwork(o) as XrplNetwork;
       if (a.new) { const r = await newWallet(net); return { created: r.address, network: net, funded: r.funded, keptIn: homeDir(), next: r.funded || net !== 'mainnet' ? 'cappz-market setup' : `Send at least the reserve (see cappz-market wallet) to ${r.address} from an exchange or another wallet.` }; }
       const w = await requireWallet();
       if (a.fund) {

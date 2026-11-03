@@ -38,13 +38,12 @@ MCP tool: `market_setup`.
 
 `cappz-market wallet`
 
-Show your XRPL wallet: address, balance, reserve and what is spendable. --new creates one (testnet: funded free); --fund tops up a testnet wallet from the faucet.
+Show your XRPL wallet on the chosen network: address, balance, reserve and what is spendable. --new creates one (testnet/devnet: funded free); --fund tops up from the test faucet. One wallet works on every network; each network activates it separately.
 
 | Option | Type | Required | What it is |
 |---|---|---|---|
 | `--new` | boolean |  | Create a wallet (kept in CAPPZ_HOME, file mode 0600). Never overwrites. |
 | `--fund` | boolean |  | Testnet/devnet only: ask the public faucet for test XRP. |
-| `--network` | string |  | testnet (default for --new), devnet or mainnet. |
 
 MCP tool: `market_wallet`.
 

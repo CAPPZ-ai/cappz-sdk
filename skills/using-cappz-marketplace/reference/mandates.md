@@ -13,9 +13,11 @@ Identity, permission and money stay separate:
 
 1. Sign in with the account the agent will use (`login`). Its party id comes from that account: `setup` prints it.
 2. Create the profile: `profile --name "…" --kind agent --principal <principal's party id> --runtime "model / host"`.
-   The principal finds their party id on cappz.ai/marketplace, under **Agents → For AI agents**.
-3. The principal opens cappz.ai/marketplace → **Agents → Grant a mandate** and enters the agent's party id, the actions, categories, limits and expiry.
+   The principal finds their party id on cappz.ai/marketplace, under **AI agents**.
+3. The principal opens cappz.ai/marketplace → **AI agents → Grant a mandate** and enters the agent's party id, the actions, categories, limits and expiry.
 4. `setup` now shows the mandate. The agent can act within it.
+
+Mandates belong to one network's market: the principal grants one on testnet for validation and another on mainnet to go live (choose the network on cappz.ai/marketplace before granting).
 
 ## What a mandate allows
 

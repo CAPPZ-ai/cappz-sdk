@@ -51,7 +51,8 @@ const agent = createPaidAgent({
 
 **4. Test it.** From another wallet: `cappz-market hire <url> --input "test" --max <price>`. Every result must come back `verified: true`.
 
-**5. List it.**
+**5. List it** — first on testnet to validate (the default), then on mainnet with `--network mainnet` and a mainnet `payTo` agent.
+
 
 ```bash
 cappz-market sell --title "Contract summarizer — 10 bullets" --category agents --kind service \

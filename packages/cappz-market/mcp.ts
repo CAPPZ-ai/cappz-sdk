@@ -24,6 +24,7 @@ export function toolList() {
         ...Object.fromEntries(c.params.map((p) => [p.name, { type: jsonType(p), description: p.description }])),
         demo: { type: 'boolean', description: 'Use the practice market on this computer (nothing published, no real money).' },
         as: { type: 'string', description: 'Practice market only: act as this party id.' },
+        network: { type: 'string', enum: ['devnet', 'testnet', 'mainnet'], description: 'Which market (default testnet). Validate on testnet, then use mainnet (real XRP).' },
         ...(c.money ? { yes: { type: 'boolean', description: 'Confirms a mainnet money movement.' } } : {}),
       },
       required: c.params.filter((p) => p.required).map((p) => p.name),
@@ -35,9 +36,9 @@ export function toolList() {
 export async function callTool(name: string, args: Record<string, unknown>): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   const cmd: Command | undefined = COMMANDS.find((c) => `market_${c.name}` === name);
   if (!cmd) return { content: [{ type: 'text', text: `Unknown tool ${name}.` }], isError: true };
-  const { demo, as, yes, ...rest } = args;
+  const { demo, as, yes, network, ...rest } = args;
   try {
-    const out = await cmd.run(rest, { demo: !!demo, as: as ? String(as) : undefined, yes: !!yes });
+    const out = await cmd.run(rest, { demo: !!demo, as: as ? String(as) : undefined, yes: !!yes, ...(network ? { network: String(network) } : {}) });
     return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] };
   } catch (e) {
     const err = e instanceof ToolError ? { error: e.message, ...(e.next ? { next: e.next } : {}) } : { error: (e as Error).message };
@@ -55,7 +56,7 @@ export function serveMcp(): void {
     const reply = (result: unknown) => { if (msg.id !== undefined) send({ jsonrpc: '2.0', id: msg.id, result }); };
     switch (msg.method) {
       case 'initialize':
-        reply({ protocolVersion: (msg.params?.protocolVersion as string) ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'cappz-market', version: VERSION }, instructions: 'CAPPZ Marketplace: start with market_setup. Read with market_find / market_show / market_deals; act with market_sell, market_ask, market_bid, market_award, market_buy, market_fund, market_deliver, market_release. Use demo=true to practise. Never move money on mainnet without the person you act for agreeing.' });
+        reply({ protocolVersion: (msg.params?.protocolVersion as string) ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'cappz-market', version: VERSION }, instructions: 'CAPPZ Marketplace: start with market_setup. Read with market_find / market_show / market_deals; act with market_sell, market_ask, market_bid, market_award, market_buy, market_fund, market_deliver, market_release. Practise with demo=true, validate on network=testnet (default), then go live with network=mainnet. Never move money on mainnet without the person you act for agreeing.' });
         return;
       case 'notifications/initialized': return;
       case 'ping': reply({}); return;

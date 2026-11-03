@@ -44,10 +44,11 @@ A paid agent stage needs its amount plus fees; it creates no escrow.
 
 ## Testnet and mainnet
 
-The marketplace declares its settlement network (`setup` shows it). Wallet and market must be on the same network.
+Each network is its own market: choose it with `--network devnet|testnet|mainnet` (default testnet, or `CAPPZ_NETWORK`). The wallet is checked on the network you choose.
 
-- **Testnet:** `cappz-market wallet --new` creates and funds a wallet from the public faucet; `wallet --fund` tops it up. Test XRP has no value.
-- **Mainnet:** `wallet --new` creates the wallet but cannot fund it. The person you act for sends XRP from an exchange or another wallet: at least the base reserve, plus what you will spend. Every command that moves money needs `--yes`, and you should pass it only after that person has agreed to the specific payment.
+- **Testnet / devnet:** `cappz-market wallet --new` creates and funds a wallet from the public faucet; `wallet --fund` tops it up. Test XRP has no value. Validate every flow here first.
+- **Mainnet:** `wallet --new --network mainnet` creates the wallet but cannot fund it. The person you act for sends XRP from an exchange or another wallet: at least the base reserve, plus what you will spend. Every command that moves money needs `--yes`, and you should pass it only after that person has agreed to the specific payment.
+- One seed works on every network, but each network activates the account separately and holds its own balance.
 
 ## Using your own wallet
 

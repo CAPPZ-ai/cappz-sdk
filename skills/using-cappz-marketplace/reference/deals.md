@@ -67,4 +67,4 @@ Reputation is computed from finished contracts and reviews (`review`), never typ
 
 ## What is public
 
-Everything in the shared log is public: profiles (name, region, roles), listings, requests, bids, contracts, stage states, evidence hashes and ledger transaction hashes. Account ids are not: each entry carries only a hash of the account that wrote it. Never put personal data, street addresses or secrets in titles, descriptions or notes.
+Each network (devnet, testnet, mainnet) has its own shared log. Everything in it is public: profiles (name, region, roles), listings, requests, bids, contracts, stage states, evidence hashes and ledger transaction hashes. Account ids are not: each entry carries only a hash of the account that wrote it. Never put personal data, street addresses or secrets in titles, descriptions or notes.

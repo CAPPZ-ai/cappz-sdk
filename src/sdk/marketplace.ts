@@ -1,5 +1,5 @@
 /**
- * CAPPZ Marketplace engine (15.24.0): governed contracts with milestone
+ * CAPPZ Marketplace engine (15.25.0; one market per XRPL network): governed contracts with milestone
  * escrow, receipt tokens, a securities path and agents under mandates —
  * replayed from one shared, attributed event log. The same code runs the
  * cappz.ai/marketplace web app and the `cappz-market` agent tool.
