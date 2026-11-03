@@ -9,25 +9,46 @@
  */
 import { normalizeTx, type LedgerTx, type XrplNetwork } from './ledgerCheck';
 
-/** Public JSON-RPC endpoints (the same ledgers as XRPL_ENDPOINTS, over HTTPS). */
-export const XRPL_RPC_ENDPOINTS: Record<XrplNetwork, string> = {
-  mainnet: 'https://xrplcluster.com/',
-  testnet: 'https://s.altnet.rippletest.net:51234/',
-  devnet: 'https://s.devnet.rippletest.net:51234/',
+/**
+ * Public JSON-RPC endpoints per network, tried in order. Edge workers share outbound IPs, so one public server can
+ * rate-limit a whole platform's traffic; a refused or rate-limited call moves on to the next server.
+ */
+export const XRPL_RPC_SERVERS: Record<XrplNetwork, readonly string[]> = {
+  mainnet: ['https://s1.ripple.com:51234/', 'https://s2.ripple.com:51234/', 'https://xrplcluster.com/'],
+  testnet: ['https://s.altnet.rippletest.net:51234/', 'https://testnet.xrpl-labs.com/'],
+  devnet: ['https://s.devnet.rippletest.net:51234/'],
 };
+/** The first server per network (kept for callers that want one URL). */
+export const XRPL_RPC_ENDPOINTS: Record<XrplNetwork, string> = { mainnet: XRPL_RPC_SERVERS.mainnet[0], testnet: XRPL_RPC_SERVERS.testnet[0], devnet: XRPL_RPC_SERVERS.devnet[0] };
+
+/** Errors that mean "this server, not now" (try the next one), as opposed to an answer about the ledger. */
+const RETRYABLE = /rate limit|slowDown|tooBusy|noNetwork|noCurrent|noClosed|amendmentBlocked|failedToForward/i;
 
 export class XrplRpcError extends Error {
   constructor(message: string, readonly code: string | null) { super(message); }
 }
 
-/** One JSON-RPC call; ledger errors (e.g. actNotFound) come back as XrplRpcError with their code. */
+/** One JSON-RPC call, trying each public server in turn; ledger answers (e.g. actNotFound, txnNotFound) come back as XrplRpcError with their code. */
 export async function xrplRpc<T = Record<string, unknown>>(network: XrplNetwork, method: string, params: Record<string, unknown>, fetcher: typeof fetch = fetch): Promise<T> {
-  const res = await fetcher(XRPL_RPC_ENDPOINTS[network], { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ method, params: [{ api_version: 2, ...params }] }) });
-  if (!res.ok) throw new XrplRpcError(`XRPL ${network} answered HTTP ${res.status}`, null);
-  const body = (await res.json()) as { result?: Record<string, unknown> & { error?: string; error_message?: string; status?: string } };
-  const r = body.result ?? {};
-  if (r.error) throw new XrplRpcError(`XRPL ${method}: ${r.error_message ?? r.error}`, r.error);
-  return r as T;
+  let last: Error | null = null;
+  for (const url of XRPL_RPC_SERVERS[network]) {
+    try {
+      const res = await fetcher(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ method, params: [{ api_version: 2, ...params }] }) });
+      if (!res.ok) { last = new XrplRpcError(`XRPL ${network} (${new URL(url).host}) answered HTTP ${res.status}`, null); continue; }
+      const body = (await res.json()) as { result?: Record<string, unknown> & { error?: string; error_message?: string } };
+      const r = body.result ?? {};
+      if (r.error) {
+        const err = new XrplRpcError(`XRPL ${method}: ${r.error_message ?? r.error}`, r.error);
+        if (RETRYABLE.test(`${r.error} ${r.error_message ?? ''}`)) { last = err; continue; }
+        throw err;
+      }
+      return r as T;
+    } catch (e) {
+      if (e instanceof XrplRpcError && e.code && !RETRYABLE.test(`${e.code} ${e.message}`)) throw e;
+      last = e as Error;
+    }
+  }
+  throw last ?? new XrplRpcError(`XRPL ${network}: no server answered`, null);
 }
 
 /** A validated (or not yet validated) transaction by hash, normalized. */

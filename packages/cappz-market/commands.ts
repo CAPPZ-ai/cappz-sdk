@@ -592,7 +592,7 @@ export const COMMANDS: Command[] = [
       if (card.network === 'mainnet' && !o.yes) throw new ToolError(`${card.name} is paid in real ${card.currency} on mainnet.`, 'Confirm with the person you act for, then repeat with --yes.');
       const w = await requireWallet();
       if (!a.job && (a.input === undefined || a.input === '')) throw new ToolError('Give --input (the work), or --job to resume one.');
-      const jobId = a.job ? String(a.job) : ((await http('/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ input: (() => { try { return JSON.parse(String(a.input)); } catch { return String(a.input); } })() }) })).body as { job: { jobId: string } }).job.jobId; let spent = 0; const results: Array<{ stage: number; file: string; sha256: string; verified: boolean }> = []; const paid: string[] = [];
+      const jobId = a.job ? String(a.job) : ((await http('/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ input: (() => { try { return JSON.parse(String(a.input)); } catch { return String(a.input); } })() }) })).body as { job: { jobId: string } }).job.jobId; let spent = 0; const results: Array<{ stage: number; file: string; sha256: string; verified: boolean }> = []; const paid: string[] = []; const paidStage = new Map<number, { hash: string; at: number }>();
       await mkdir(out, { recursive: true });
       const deadline = Date.now() + num(a, 'timeout', 15) * 60_000;
       for (;;) {
@@ -606,6 +606,14 @@ export const COMMANDS: Command[] = [
         }
         if (v.job.state === 'completed') return { job: jobId, agent: card.name, paid: `${spent} ${card.currency}`, payments: paid, results, allVerified: results.every((r) => r.verified) };
         if (v.job.state === 'failed') throw new ToolError(`The agent’s work failed on job ${jobId}.`, `Ask it to retry: POST ${base}/jobs/${jobId}/retry`);
+        if (v.pay && paidStage.has(v.pay.stage)) {
+          // Already paid on the ledger: never pay twice. Report the same transaction until the agent records it.
+          const p = paidStage.get(v.pay.stage)!;
+          if (Date.now() - p.at > 120_000) throw new ToolError(`Stage ${v.pay.stage} is paid on the ledger (${p.hash}) but ${card.name} has not recorded it yet.`, `Do not pay again. Report it later: POST ${base}/jobs/${jobId}/payments {"txHash":"${p.hash}"}, then cappz-market hire ${base} --job ${jobId} --max ${max - spent}`);
+          await http(`/jobs/${jobId}/payments`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ txHash: p.hash }) });
+          await new Promise((r) => setTimeout(r, 5_000));
+          continue;
+        }
         if (v.pay) {
           const amount = Number(v.pay.amount);
           if (spent + amount > max + 1e-9) throw new ToolError(`Stage ${v.pay.stage} asks ${amount}; paying it would pass your max of ${max} (spent ${spent}).`);
@@ -613,7 +621,7 @@ export const COMMANDS: Command[] = [
           if (card.currency === 'XRP' && st.spendableXrp < amount + 0.001) throw new ToolError(`Need ${amount} XRP spendable, have ${st.spendableXrp}.`, v.pay.network === 'mainnet' ? `Send XRP to ${w.classicAddress}.` : 'cappz-market wallet --fund');
           const lt = await signAndSubmit(seedSigner(w.seed!), { ...v.pay.preparedTx, Account: w.classicAddress }, v.pay.network);
           await http(`/jobs/${jobId}/payments`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ txHash: lt.hash }) });
-          spent += amount; paid.push(lt.hash);
+          spent += amount; paid.push(lt.hash); paidStage.set(v.pay.stage, { hash: lt.hash, at: Date.now() });
           continue;
         }
         if (Date.now() > deadline) return { job: jobId, agent: card.name, paid: `${spent} ${card.currency}`, payments: paid, results, state: v.job.state, next: `Still working. Resume later: cappz-market hire ${base} --job ${jobId} --max ${max - spent}` };

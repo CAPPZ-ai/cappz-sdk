@@ -96,7 +96,13 @@ function agentFor(env: Env, network: Net) {
     },
     store: d1JobStore(env.DB, network),
     ledger: rpcLedgerReader,
-    work: async ({ input }) => JSON.stringify(signCheck(await runCounterpartyCheck(checkInput(input, network), await marketState(env, network)), env.CHECK_SIGNING_SEED), null, 2),
+    work: async ({ input }) => {
+      const report = await runCounterpartyCheck(checkInput(input, network), await marketState(env, network));
+      // Never charge for a report that could not read the ledger: fail the stage (it is retried) instead of delivering it.
+      const unreadable = report.ledger?.error ?? report.payer?.error;
+      if (unreadable) throw new Error(`The ledger could not be read just now (${unreadable}); the check is retried, nothing is charged.`);
+      return JSON.stringify(signCheck(report, env.CHECK_SIGNING_SEED), null, 2);
+    },
   });
 }
 

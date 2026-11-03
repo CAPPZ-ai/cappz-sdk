@@ -63,4 +63,19 @@ describe('counterparty check rules', () => {
     expect(await store.paymentUsed!('ABC')).toBe(false);
     expect(calls.every((c) => c.endsWith('mainnet'))).toBe(true);
   });
+
+  it('reads move on to the next public server when one rate-limits (edge workers share IPs)', async () => {
+    const seen: string[] = [];
+    const fetcher = (async (url: string) => {
+      seen.push(new URL(url).host);
+      if (seen.length === 1) return new Response(JSON.stringify({ result: { error: 'slowDown', error_message: 'rate limit: units quota exhausted' } }), { status: 200 });
+      return new Response(JSON.stringify({ result: { account_data: { Balance: '5000000', OwnerCount: 0, Flags: 0 } } }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const { xrplRpc } = await import('../lib/xrpl/xrplRpc');
+    const r = await xrplRpc<{ account_data: { Balance: string } }>('mainnet', 'account_info', { account: 'rX' }, fetcher);
+    expect(r.account_data.Balance).toBe('5000000');
+    expect(seen).toEqual(['s1.ripple.com:51234', 's2.ripple.com:51234']);
+    const notFound = (async () => new Response(JSON.stringify({ result: { error: 'actNotFound', error_message: 'Account not found.' } }), { status: 200 })) as unknown as typeof fetch;
+    await expect(xrplRpc('mainnet', 'account_info', { account: 'rX' }, notFound)).rejects.toThrow(/Account not found/); // a ledger answer is not retried
+  });
 });
