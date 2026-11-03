@@ -21,7 +21,8 @@ import { milestoneAmounts, defaultMilestones } from '../../src/lib/marketplace/r
 import { searchMarket } from '../../src/lib/marketplace/search';
 import { matchDemand } from '../../src/lib/marketplace/matching';
 import { newEscrowSecret, prepareEscrowFinish, prepareStageEscrows } from '../../src/lib/marketplace/settlement';
-import { seedSigner, signAndSubmit, signAndSubmitAll } from '../../src/lib/marketplace/ledgerSigning';
+import { liveSigningDeps, seedSigner, signAndSubmit, signAndSubmitAll, type SigningDeps } from '../../src/lib/marketplace/ledgerSigning';
+import { verifyApproval, type SignedApproval, type ApprovalReason } from '../../src/lib/marketplace/signingApproval';
 import { xrpNeededForStage } from '../../src/lib/marketplace/onRamp';
 import { AGENT_OPERATIONS, executeAgentOperation, type AgentOperation } from '../../src/lib/marketplace/agentApi';
 import { verifyCheck, type SignedCheck } from '../../src/lib/marketplace/counterpartyCheck';
@@ -29,6 +30,33 @@ import type { MarketplaceVerb } from '../../src/lib/marketplace/marketplaceVerbs
 import type { ContractView, Currency, ListingContent, PartyKind, PartyProfile, PartyRole, SupplyOfferContent, SupplyRequestContent } from '../../src/lib/marketplace/types';
 import type { ListingView, MarketState, RequestView } from '../../src/lib/marketplace/replay';
 import { ToolError, boxKey, getDiscovery, homeDir, loadMarket, marketNetwork, marketUrl, newWallet, recallSecret, rememberSecret, requireWallet, resetDemo, session, signIn, wallet, walletStatus, type GlobalOptions, type Market } from './context';
+
+
+/**
+ * Signing deps that ask the marketplace's approval service to approve each exact escrow transaction before it is
+ * signed, and verify the signed approval against the published key and those bytes. Fails closed: no approval, no
+ * signature. Networks the service does not cover (devnet) sign without one, and say so.
+ */
+async function approvedSigning(net: string, contractId: string, milestone: number, approvals: string[]): Promise<SigningDeps> {
+  const d = await getDiscovery(); const svc = d.services?.counterpartyCheck;
+  if (!svc?.url || !svc.publicKey) {
+    if (net === 'mainnet') throw new ToolError(`${marketUrl()} publishes no signing-approval service, so mainnet escrow is not signed.`);
+    approvals.push(`none (no approval service published for ${net})`); return liveSigningDeps;
+  }
+  if (!svc.networks.includes(net)) { approvals.push(`none (the approval service covers ${svc.networks.join(' and ')}, not ${net})`); return liveSigningDeps; }
+  return {
+    ...liveSigningDeps,
+    async approve(prepared) {
+      const res = await fetch(`${svc.url}/${net}/authorize`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ contractId, milestone, tx: prepared }) })
+        .catch((e: Error) => { throw new ToolError(`The signing-approval service could not be reached (${e.message}); nothing was signed.`, 'Retry shortly.'); });
+      const body = (await res.json().catch(() => ({}))) as { approved?: boolean; reasons?: ApprovalReason[]; error?: string } & Partial<SignedApproval>;
+      if (!body.approved) throw new ToolError(`Not approved for signing: ${(body.reasons ?? []).map((r) => r.message).join(' ') || body.error || `HTTP ${res.status}`}`, 'Nothing was signed. Check the deal with: cappz-market show ' + contractId);
+      const problems = await verifyApproval(body as SignedApproval, prepared, svc.publicKey);
+      if (problems.length) throw new ToolError(`The approval does not cover this transaction: ${problems.join(' ')}`, 'Nothing was signed.');
+      approvals.push((body as SignedApproval).approval.txHash);
+    },
+  };
+}
 
 export type ParamType = 'string' | 'number' | 'boolean' | 'json';
 export interface Param { name: string; type: ParamType; description: string; required?: boolean; positional?: boolean }
@@ -461,12 +489,13 @@ export const COMMANDS: Command[] = [
       await rememberSecret(c.contractId, stage.index, secret);
       const box = await boxKey();
       const sealedSecret = (await sealTo(box.publicKey, { contractId: c.contractId, milestone: stage.index, secret })) as unknown as Record<string, unknown>;
-      const signed: string[] = [];
+      const signed: string[] = []; const approvals: string[] = [];
+      const deps = await approvedSigning(net, c.contractId, stage.index, approvals);
       try {
-        const lts = await signAndSubmitAll(seedSigner(w.seed!), legs.map((l) => l.tx), net, (_n, lt) => signed.push(lt.hash));
+        const lts = await signAndSubmitAll(seedSigner(w.seed!), legs.map((l) => l.tx), net, (_n, lt) => signed.push(lt.hash), deps);
         const checks = legs.map((p, i) => ({ milestone: p.milestone, condition: p.condition, sealedSecret, lt: lts[i] }));
         const txs = await M.buildFundOnLedger(mk.state, mk.actor(), c.contractId, mk.policy, checks);
-        return commitAndReport(mk, txs, { stage: c.milestones[stage.index].label, escrowed: `${stage.amount} XRP`, ledgerTxs: lts.map((x) => x.hash), returnsToYouAfter: '30 days if not released', next: 'The seller delivers evidence; then: cappz-market release ' + c.contractId });
+        return commitAndReport(mk, txs, { stage: c.milestones[stage.index].label, escrowed: `${stage.amount} XRP`, ledgerTxs: lts.map((x) => x.hash), approvedIntents: approvals, returnsToYouAfter: '30 days if not released', next: 'The seller delivers evidence; then: cappz-market release ' + c.contractId });
       } catch (e) {
         throw new ToolError(`${(e as Error).message}${signed.length ? ` Escrows already on the ledger: ${signed.join(', ')}.` : ''}`, signed.length ? `Record them with: cappz-market call marketplace.escrow.fund --input '{"contractId":"${c.contractId}","escrows":[…]}' (secret kept in ${homeDir()}).` : undefined);
       }
@@ -510,9 +539,10 @@ export const COMMANDS: Command[] = [
       if (!secret) throw new ToolError('The escrow secret for this stage is not on this computer.', 'Release it where it was funded (the web app or the computer that ran fund).');
       const { w, net } = await signingWallet(mk);
       const finishes = [e.sequence, ...e.feeEscrows.map((f) => f.sequence)].map((q) => prepareEscrowFinish(w.classicAddress, w.classicAddress, q, e.condition, secret));
-      const lts = await signAndSubmitAll(seedSigner(w.seed!), finishes, net);
+      const approvals: string[] = [];
+      const lts = await signAndSubmitAll(seedSigner(w.seed!), finishes, net, undefined, await approvedSigning(net, c.contractId, stage.index, approvals));
       const txs = await M.buildSettleOnLedger(mk.state, mk.actor(), c.contractId, stage.index, lts[0], mk.policy, lts.slice(1));
-      return commitAndReport(mk, txs, { accepted: done, stage: c.milestones[stage.index].label, ledgerTxs: lts.map((x) => x.hash), next: stage.index + 1 < c.milestones.length ? `Fund the next stage: cappz-market fund ${c.contractId}` : `Done. Review the seller: cappz-market review ${c.contractId} --rating 5 --text "…"` });
+      return commitAndReport(mk, txs, { accepted: done, stage: c.milestones[stage.index].label, ledgerTxs: lts.map((x) => x.hash), approvedIntents: approvals, next: stage.index + 1 < c.milestones.length ? `Fund the next stage: cappz-market fund ${c.contractId}` : `Done. Review the seller: cappz-market review ${c.contractId} --rating 5 --text "…"` });
     },
   },
   {

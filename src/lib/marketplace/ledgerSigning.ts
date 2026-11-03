@@ -22,6 +22,11 @@ export interface LedgerSigner {
 
 export interface SigningDeps {
   autofill(tx: Record<string, unknown>, network: XrplNetwork): Promise<Record<string, unknown>>;
+  /**
+   * Called with the exact transaction about to be signed (autofilled). Throw to stop before anything is signed —
+   * e.g. a deal-bound signing approval (signingApproval.ts) that does not cover these bytes.
+   */
+  approve?(prepared: Record<string, unknown>): Promise<void>;
   submit(blob: string, network: XrplNetwork): Promise<void>;
   read(network: XrplNetwork, hash: string): Promise<LedgerTx>;
   wait(ms: number): Promise<void>;
@@ -55,6 +60,7 @@ export function seedSigner(seed: string): LedgerSigner {
 export async function signAndSubmit(signer: LedgerSigner, tx: Record<string, unknown>, network: XrplNetwork, deps: SigningDeps = liveSigningDeps, timeoutMs = 60_000): Promise<LedgerTx> {
   if (signer.address !== tx.Account) throw new Error(`The connected wallet is ${signer.address}, but this transaction is from ${String(tx.Account)}. Connect that account, or update the XRPL account on your profile.`);
   const prepared = await deps.autofill(tx, network);
+  if (deps.approve) await deps.approve(prepared);
   const signed = await signer.signTransaction(prepared as unknown as Transaction);
   if (!signer.submitsOnSign) await deps.submit(signed.tx_blob, network);
   const deadline = Date.now() + timeoutMs;

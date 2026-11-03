@@ -19,6 +19,7 @@ export * from '../lib/marketplace/rules';
 export * from '../lib/marketplace/replay';
 export * from '../lib/marketplace/publicLog';
 export * from '../lib/marketplace/settlement';
+export * from '../lib/marketplace/signingApproval';
 export * from '../lib/marketplace/ledgerSigning';
 export * from '../lib/marketplace/agentApi';
 export * from '../lib/marketplace/matching';

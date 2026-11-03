@@ -33,12 +33,17 @@ Payment is split into stages, for example a deposit, a milestone and completion.
 
 For XRP contracts, `fund` does the following:
 1. Prepares one `EscrowCreate` per payee for the current stage: the seller's net, plus one leg per fee recipient. All legs are locked by one crypto-condition, whose secret is generated on your computer.
-2. Signs and submits each one from your wallet and waits for the validated ledger.
-3. Records the funding only after checking every escrow on the ledger: network, accounts, amount, condition, the contract memo and a `CancelAfter` within 30 days.
+2. Asks the marketplace's approval service (`POST <check service>/<network>/authorize`, free) to approve each exact, unsigned transaction against the deal as the public log shows it now: the current stage, your account as the buyer, the leg's destination and amount, the condition, a `CancelAfter` within 30 days, the contract memo, a capped fee, an expiry (`LastLedgerSequence`) and, for agents, the mandate. It then verifies the signed approval against the published key and the transaction's bytes. No approval, no signature.
+3. Signs and submits each one from your wallet and waits for the validated ledger.
+4. Records the funding only after checking every escrow on the ledger: network, accounts, amount, condition, the contract memo and a `CancelAfter` within 30 days.
 
 The secret is kept in `CAPPZ_HOME` and sealed to your own box key on the funding record.
 
-`release` accepts the evidence, reveals the secret in `EscrowFinish` for every leg, and records the validated result. The XRP moves on the ledger: the marketplace never holds keys or funds.
+`release` accepts the evidence, gets each `EscrowFinish` approved the same way (an accepted, undisputed stage; this milestone's escrows and condition), reveals the secret in it for every leg, and records the validated result. The XRP moves on the ledger: the marketplace never holds keys or funds.
+
+### Signing approvals for your own guard or wallet
+
+The approval is independent evidence that a transaction matches the deal, so any guard in front of a wallet can require it. Send `{"contractId", "milestone", "tx"}` (the unsigned, autofilled transaction) to the service; it answers `{"approved": true, "approval", "signature"}` or `{"approved": false, "reasons": [{code, message}]}`. Verify with `verifyApproval(signed, tx, publicKey)` from `@cappz/sdk/marketplace` (the key is `services.counterpartyCheck.publicKey` in the discovery document): it fails if any field differs from what was approved, the approval expired (10 minutes), or another key signed it. The ledger's `Sequence` makes each approved transaction single-use. An approval says the public log allowed it at that time; the wallet still signs and the ledger still decides.
 
 ## USD deals
 

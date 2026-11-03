@@ -8,6 +8,7 @@ A paid agent (the `@cappz/sdk/paidAgent` protocol) that checks an XRPL address o
   - `GET /`: service, price, public key.
   - `/<testnet|mainnet>/agent`: the agent card.
   - `POST /<net>/jobs`, then pay, then `GET /<net>/jobs/<id>/stages/0/result`.
+  - `POST /<net>/authorize` (free): a deal-bound signing approval. Body `{"contractId", "milestone", "tx"}` with the unsigned, autofilled escrow transaction; it replays the public log now (never cached) and answers a signed approval of exactly that transaction, or the reasons it is refused. Same key, separate signature domain. Rules: `src/lib/marketplace/signingApproval.ts`.
 
 ## Deploy
 

@@ -8,11 +8,15 @@
  * marketplace history from the public log, reports signed with Ed25519.
  * It holds the treasury's public address only — never a seed — and the
  * report-signing key as a Worker secret.
+ *
+ * It also answers deal-bound signing approvals for free (POST /<net>/authorize):
+ * the same key signs them under a separate domain (signingApproval.ts).
  */
 import { isValidClassicAddress } from 'xrpl';
 import { createPaidAgent, SCHEDULE_PRESETS, type JobEvent, type JobStore } from '../../src/lib/agentKit/paidAgent';
 import { rpcLedgerReader } from '../../src/lib/xrpl/xrplRpc';
 import { runCounterpartyCheck, signCheck, type CheckRequest } from '../../src/lib/marketplace/counterpartyCheck';
+import { evaluateSigningIntent, signApproval } from '../../src/lib/marketplace/signingApproval';
 import { attributePublicLog, marketPartition, pullPublicLog, type PublicLogPort } from '../../src/lib/marketplace/publicLog';
 import { resolveMarket, type MarketState } from '../../src/lib/marketplace/replay';
 import { ed25519 } from '@noble/curves/ed25519';
@@ -54,9 +58,9 @@ export function d1JobStore(db: D1, network: Net): JobStore {
 
 /** The marketplace's public log for one network, replayed; cached for a minute per isolate. */
 const cache = new Map<Net, { at: number; state: MarketState }>();
-async function marketState(env: Env, network: Net): Promise<MarketState | null> {
+async function marketState(env: Env, network: Net, fresh = false): Promise<MarketState | null> {
   const hit = cache.get(network);
-  if (hit && Date.now() - hit.at < 60_000) return hit.state;
+  if (!fresh && hit && Date.now() - hit.at < 60_000) return hit.state;
   const partition = marketPartition(network);
   const port: PublicLogPort = {
     insert: async () => ({ error: { message: 'read-only' } }),
@@ -106,6 +110,20 @@ function agentFor(env: Env, network: Net) {
   });
 }
 
+/**
+ * Deal-bound signing approval (free): replay the public log now (never a cached copy, so a dispute raised a moment
+ * ago counts) and approve this exact unsigned escrow transaction, or say why not. Read-only: nothing is stored.
+ */
+export async function authorize(body: unknown, network: Net, state: MarketState | null, seedHex: string, now = new Date().toISOString()) {
+  const b = (typeof body === 'object' && body ? body : {}) as Record<string, unknown>;
+  const tx = b.tx && typeof b.tx === 'object' ? b.tx as Record<string, unknown> : null;
+  const milestone = Number(b.milestone);
+  if (!tx || typeof b.contractId !== 'string' || !Number.isInteger(milestone) || milestone < 0) throw new Error('Send {"contractId": "ct-…", "milestone": 0, "tx": {…unsigned, autofilled…}} and, for agents above their threshold, "coSignedBy".');
+  if (!state) return { code: 503, body: { approved: false, reasons: [{ code: 'market-unreadable', message: 'The marketplace log could not be read just now; nothing is approved. Retry shortly.' }] } };
+  const d = await evaluateSigningIntent(state, { network, contractId: b.contractId, milestone, tx, ...(typeof b.coSignedBy === 'string' ? { coSignedBy: b.coSignedBy } : {}) }, now);
+  return d.approved ? { code: 200, body: { approved: true, ...signApproval(d.approval, seedHex) } } : { code: 200, body: d };
+}
+
 const JOB = /^\/(mainnet|testnet)\/jobs\/(job-[0-9a-f]{16})(\/payments|\/retry|\/stages\/(\d+)\/result)?$/;
 
 export default {
@@ -115,9 +133,15 @@ export default {
     try {
       const publicKey = hex(ed25519.getPublicKey(unhex(env.CHECK_SIGNING_SEED)));
       if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/key')) {
-        return json(200, { service: 'CAPPZ counterparty check', price: `${env.PRICE_XRP || '0.01'} XRP per check`, networks: Object.fromEntries(NETS.map((n) => [n, `${url.origin}/${n}`])), signature: { alg: 'Ed25519', publicKey }, howToUse: 'cappz-market check <address|party> [--network mainnet] — or POST /<network>/jobs {"input": {"address": "r…"}} → pay the stage shown → GET /<network>/jobs/<id>/stages/0/result', rules: 'https://github.com/CAPPZ-ai/cappz-sdk/blob/main/src/lib/marketplace/counterpartyCheck.ts' });
+        return json(200, { service: 'CAPPZ counterparty check', price: `${env.PRICE_XRP || '0.01'} XRP per check`, networks: Object.fromEntries(NETS.map((n) => [n, `${url.origin}/${n}`])), signature: { alg: 'Ed25519', publicKey }, howToUse: 'cappz-market check <address|party> [--network mainnet] — or POST /<network>/jobs {"input": {"address": "r…"}} → pay the stage shown → GET /<network>/jobs/<id>/stages/0/result', approvals: 'Free: POST /<network>/authorize {"contractId", "milestone", "tx"} → a signed approval of that exact unsigned escrow transaction, or the reasons it is refused. Rules: https://github.com/CAPPZ-ai/cappz-sdk/blob/main/src/lib/marketplace/signingApproval.ts', rules: 'https://github.com/CAPPZ-ai/cappz-sdk/blob/main/src/lib/marketplace/counterpartyCheck.ts' });
       }
-      const top = /^\/(mainnet|testnet)(\/agent|\/health|\/jobs)?$/.exec(url.pathname);
+      const top = /^\/(mainnet|testnet)(\/agent|\/health|\/jobs|\/authorize)?$/.exec(url.pathname);
+      if (top && top[2] === '/authorize') {
+        if (req.method !== 'POST') return json(405, { error: 'POST {"contractId", "milestone", "tx"} to get a signing approval.' });
+        const network = top[1] as Net;
+        const r = await authorize(await req.json().catch(() => ({})), network, await marketState(env, network, true), env.CHECK_SIGNING_SEED);
+        return json(r.code, r.body);
+      }
       if (top) {
         const network = top[1] as Net; const agent = agentFor(env, network);
         if (req.method === 'GET' && (!top[2] || top[2] === '/agent')) return json(200, { ...agent.card(), publicKey, howToUse: 'POST /jobs {"input": {"address": "r…"}} → pay the stage shown → GET /jobs/<id>/stages/0/result' });
