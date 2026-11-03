@@ -26,4 +26,4 @@ Pay-to addresses (`PAY_TO_MAINNET`, `PAY_TO_TESTNET`) must be activated accounts
 
 ## Custom domain
 
-To serve it at `check.cappz.ai` (a DNS change on the zone), add `routes = [{ pattern = "check.cappz.ai", custom_domain = true }]` to `wrangler.toml`, deploy, then update `services.counterpartyCheck.url` in the discovery document.
+Production is served at **https://check.cappz.ai** (a custom domain on the cappz.ai zone, set in `wrangler.toml` `routes`), and also at the account's workers.dev address. The marketplace's discovery document (`services.counterpartyCheck.url`) names check.cappz.ai.

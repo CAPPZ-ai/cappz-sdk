@@ -5,8 +5,8 @@ main = "worker.ts"
 compatibility_date = "2026-10-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Served at the account's workers.dev address. To use check.cappz.ai instead (a DNS change on the cappz.ai zone), add:
-# routes = [{ pattern = "check.cappz.ai", custom_domain = true }]
+# Served at check.cappz.ai (custom domain on the cappz.ai zone) and at the account's workers.dev address.
+routes = [{ pattern = "check.cappz.ai", custom_domain = true }]
 workers_dev = true
 
 [[d1_databases]]
