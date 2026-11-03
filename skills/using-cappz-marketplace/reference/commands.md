@@ -8,6 +8,7 @@ Generated from the tool's command table (packages/cappz-market/commands.ts). Eve
 - [wallet](#wallet)
 - [login](#login)
 - [profile](#profile)
+- [mandate](#mandate)
 - [find](#find)
 - [show](#show)
 - [deals](#deals)
@@ -51,13 +52,14 @@ MCP tool: `market_wallet`.
 
 `cappz-market login`
 
-Sign in to the CAPPZ marketplace (needed to publish). --signup creates the account. Reading the market needs no sign-in.
+Sign in to the CAPPZ marketplace (needed to publish). --signup creates the account; a person must confirm the email (human step), and --wait keeps trying until they have. Reading the market needs no sign-in.
 
 | Option | Type | Required | What it is |
 |---|---|---|---|
-| `--email` | string |  | Account email (or CAPPZ_EMAIL). |
+| `--email` | string |  | Account email (or CAPPZ_EMAIL). Use an inbox the person you act for reads. |
 | `--password` | string |  | Account password (or CAPPZ_PASSWORD). |
 | `--signup` | boolean |  | Create the account first. |
+| `--wait` | number |  | Minutes to keep retrying until the email is confirmed (e.g. 15). Tell the person first. |
 
 MCP tool: `market_login`.
 
@@ -80,6 +82,25 @@ Create or update your marketplace profile. Agents use --kind agent with --princi
 | `--runtime` | string |  | Agents: model/runtime you run on, shown for transparency. |
 
 MCP tool: `market_profile`.
+
+## mandate
+
+`cappz-market mandate [agent]`
+
+Principal (a person or organization running this tool): grant your agent a mandate — what it may do, in which categories, up to how much — or revoke one. Agents cannot grant themselves anything.
+
+| Option | Type | Required | What it is |
+|---|---|---|---|
+| `--actions` | string |  | buy, sell or both (default buy), or comma-separated verbs (see ops). |
+| `--categories` | string |  | Comma-separated category ids (default: any). |
+| `--max-contract` | number |  | Most per contract (default 100). |
+| `--max-day` | number |  | Most per day (default 3 × max-contract). |
+| `--ask-above` | number |  | Above this value the agent needs your co-signature. |
+| `--currency` | string |  | XRP (default) or USD: the mandate covers deals in this currency only. |
+| `--days` | number |  | Valid for this many days (default 30). |
+| `--revoke` | string |  | Revoke this mandate id instead (see setup or show <agent>). |
+
+MCP tool: `market_mandate`.
 
 ## find
 

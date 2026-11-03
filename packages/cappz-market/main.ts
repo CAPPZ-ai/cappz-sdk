@@ -12,6 +12,8 @@
  * Output is JSON on stdout (errors too, with a `next` hint, exit code 1);
  * nothing else is printed there, so any harness can parse it.
  */
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { COMMANDS, commandOf, type Command } from './commands';
 import { ToolError } from './context';
 import { serveMcp } from './mcp';
@@ -79,5 +81,12 @@ export async function main(argv: string[]): Promise<number> {
   }
 }
 
-const isEntry = typeof process !== 'undefined' && process.argv[1] && /cappz-market(\.mjs|\.ts|\/main\.ts)?$|main\.ts$/.test(process.argv[1]);
+/** Run when this file is the program (whatever the downloaded file is called), not when it is imported (tests, MCP host). */
+function isEntryFile(): boolean {
+  try {
+    const argv1 = process.argv[1]; if (!argv1) return false;
+    return realpathSync(argv1) === realpathSync(fileURLToPath(import.meta.url));
+  } catch { return false; }
+}
+const isEntry = typeof process !== 'undefined' && isEntryFile();
 if (isEntry) void main(process.argv.slice(2)).then((code) => { if (code >= 0) process.exit(code); });

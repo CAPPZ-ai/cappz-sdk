@@ -137,7 +137,7 @@ export const COMMANDS: Command[] = [
         steps.push({ step: 'sign-in', ok: !!s, detail: s ? `signed in as ${s.email}` : 'not signed in (reading works; trading needs an account)', next: s ? undefined : 'cappz-market login --email … --password … (--signup the first time)' });
       }
       const me = mk.partyId ? mk.state.parties.get(mk.partyId) : null;
-      steps.push({ step: 'profile', ok: !!me, detail: me ? `${me.name} (${me.kind}, party ${me.partyId})` : `no profile for party ${mk.partyId ?? '(sign in first)'}`, next: me ? undefined : 'cappz-market profile --name "…" --kind agent --principal <your web party id>' });
+      steps.push({ step: 'profile', ok: !!me, detail: me ? `${me.name} (${me.kind}, party ${me.partyId})` : `no profile for party ${mk.partyId ?? '(sign in first)'}`, next: me ? undefined : 'cappz-market profile --name "…" --kind agent --principal <party id of the person or company you act for> (or --kind organization if you act for yourself)' });
       if (me?.kind === 'agent') {
         const ms = mk.state.mandates.filter((m) => m.agentPartyId === me.partyId && Date.parse(m.limits.expiresAt) > Date.parse(mk.now()));
         const d = await getDiscovery().catch(() => null);
@@ -170,17 +170,27 @@ export const COMMANDS: Command[] = [
   },
   {
     name: 'login',
-    summary: 'Sign in to the CAPPZ marketplace (needed to publish). --signup creates the account. Reading the market needs no sign-in.',
+    summary: 'Sign in to the CAPPZ marketplace (needed to publish). --signup creates the account; a person must confirm the email (human step), and --wait keeps trying until they have. Reading the market needs no sign-in.',
     params: [
-      { name: 'email', type: 'string', description: 'Account email (or CAPPZ_EMAIL).' },
+      { name: 'email', type: 'string', description: 'Account email (or CAPPZ_EMAIL). Use an inbox the person you act for reads.' },
       { name: 'password', type: 'string', description: 'Account password (or CAPPZ_PASSWORD).' },
       { name: 'signup', type: 'boolean', description: 'Create the account first.' },
+      { name: 'wait', type: 'number', description: 'Minutes to keep retrying until the email is confirmed (e.g. 15). Tell the person first.' },
     ],
     async run(a) {
       const email = str(a, 'email', process.env.CAPPZ_EMAIL ?? ''); const password = str(a, 'password', process.env.CAPPZ_PASSWORD ?? '');
       if (!email || !password) throw new ToolError('Give --email and --password (or set CAPPZ_EMAIL and CAPPZ_PASSWORD).');
-      const r = await signIn(email, password, !!a.signup);
-      return r.confirmed ? { signedIn: r.email, next: 'cappz-market setup' } : { created: r.email, signedIn: false, next: 'Confirm the email CAPPZ sent, then run cappz-market login again (without --signup).' };
+      const humanStep = { humanAction: `Ask the person you act for to open the email CAPPZ sent to ${email} and click the confirmation link. This is a human step by design: do not try to confirm it yourself.`, next: `After telling them: cappz-market login --wait 15` };
+      if (a.signup) { const r = await signIn(email, password, true); if (r.confirmed) return { signedIn: r.email, next: 'cappz-market setup' }; return { created: r.email, signedIn: false, ...humanStep }; }
+      const deadline = Date.now() + num(a, 'wait', 0) * 60_000;
+      for (;;) {
+        try { const r = await signIn(email, password); return { signedIn: r.email, next: 'cappz-market setup' }; }
+        catch (e) {
+          if (!/not confirmed/i.test((e as Error).message)) throw e;
+          if (Date.now() > deadline) return { signedIn: false, waitingFor: 'email confirmation', ...humanStep };
+          await new Promise((r) => setTimeout(r, 10_000));
+        }
+      }
     },
   },
   {
@@ -215,6 +225,39 @@ export const COMMANDS: Command[] = [
       };
       const txs = await M.buildProfile(mk.state, mk.actor(), profile);
       return commitAndReport(mk, txs, { partyId, xrplAccount: profile.xrplAccount ?? null, next: kind === 'agent' ? `Ask your principal to grant a mandate to ${partyId} at ${marketUrl()}/marketplace?tab=agents, then run cappz-market setup.` : 'cappz-market find "…"' });
+    },
+  },
+  {
+    name: 'mandate',
+    summary: 'Principal (a person or organization running this tool): grant your agent a mandate — what it may do, in which categories, up to how much — or revoke one. Agents cannot grant themselves anything.',
+    params: [
+      { name: 'agent', type: 'string', description: 'The agent’s party id (it prints it in setup).', positional: true },
+      { name: 'actions', type: 'string', description: 'buy, sell or both (default buy), or comma-separated verbs (see ops).' },
+      { name: 'categories', type: 'string', description: 'Comma-separated category ids (default: any).' },
+      { name: 'maxContract', type: 'number', description: 'Most per contract (default 100).' },
+      { name: 'maxDay', type: 'number', description: 'Most per day (default 3 × max-contract).' },
+      { name: 'askAbove', type: 'number', description: 'Above this value the agent needs your co-signature.' },
+      { name: 'currency', type: 'string', description: 'XRP (default) or USD: the mandate covers deals in this currency only.' },
+      { name: 'days', type: 'number', description: 'Valid for this many days (default 30).' },
+      { name: 'revoke', type: 'string', description: 'Revoke this mandate id instead (see setup or show <agent>).' },
+    ],
+    async run(a, o) {
+      const mk = await loadMarket(o, true);
+      const me = mk.state.parties.get(mk.partyId!);
+      if (!me) throw new ToolError('Create your profile first.', 'cappz-market profile --name "…" --kind organization');
+      if (me.kind === 'agent') throw new ToolError('An agent cannot grant mandates; its principal does.', `Ask your principal to run this, or to grant it at ${marketUrl()}/marketplace?tab=agents`);
+      if (a.revoke) return commitAndReport(mk, await M.buildRevokeMandate(mk.state, mk.actor(), str(a, 'revoke')), { revoked: str(a, 'revoke') });
+      const agentId = str(a, 'agent');
+      const agent = mk.state.parties.get(agentId);
+      if (!agent || agent.kind !== 'agent') throw new ToolError(`No agent party ${agentId} on the ${mk.network} market.`, 'The agent runs cappz-market profile --kind agent first (on this network).');
+      const BUY = ['marketplace.order.place', 'marketplace.request.post', 'marketplace.offer.award', 'marketplace.escrow.fund', 'marketplace.milestone.affirm', 'marketplace.escrow.release'];
+      const SELL = ['marketplace.listing.publish', 'marketplace.offer.submit', 'marketplace.milestone.evidence'];
+      const act = str(a, 'actions', 'buy');
+      const verbs = act === 'buy' ? BUY : act === 'sell' ? SELL : act === 'both' ? [...BUY, ...SELL] : list(act);
+      const currency = currencyOf(a); const per = num(a, 'maxContract', 100);
+      const limits = { verbs, categories: list(a.categories).map(checkCategory), maxPerContract: money(per, currency), maxPerDay: money(num(a, 'maxDay', per * 3), currency), approvalAbove: a.askAbove !== undefined ? money(num(a, 'askAbove'), currency) : null, expiresAt: new Date(Date.parse(mk.now()) + num(a, 'days', 30) * 86_400_000).toISOString() };
+      const r = await M.buildMandate(mk.state, mk.actor(), agentId, limits);
+      return commitAndReport(mk, r.txs, { mandateId: r.mandateId, agent: agentId, limits, next: `The agent can act now on ${mk.network}: it runs cappz-market setup${mk.network === 'testnet' ? '' : ` --network ${mk.network}`}` });
     },
   },
   {
@@ -462,7 +505,7 @@ export const COMMANDS: Command[] = [
       const finishes = [e.sequence, ...e.feeEscrows.map((f) => f.sequence)].map((q) => prepareEscrowFinish(w.classicAddress, w.classicAddress, q, e.condition, secret));
       const lts = await signAndSubmitAll(seedSigner(w.seed!), finishes, net);
       const txs = await M.buildSettleOnLedger(mk.state, mk.actor(), c.contractId, stage.index, lts[0], mk.policy, lts.slice(1));
-      return commitAndReport(mk, txs, { accepted: done, stage: c.milestones[stage.index].label, ledgerTxs: lts.map((x) => x.hash), next: M.currentStage(contractOf(mk, c.contractId)) ? `Fund the next stage: cappz-market fund ${c.contractId}` : `Done. Review the seller: cappz-market review ${c.contractId} --rating 5 --text "…"` });
+      return commitAndReport(mk, txs, { accepted: done, stage: c.milestones[stage.index].label, ledgerTxs: lts.map((x) => x.hash), next: stage.index + 1 < c.milestones.length ? `Fund the next stage: cappz-market fund ${c.contractId}` : `Done. Review the seller: cappz-market review ${c.contractId} --rating 5 --text "…"` });
     },
   },
   {

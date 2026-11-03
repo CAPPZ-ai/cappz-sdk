@@ -1,0 +1,39 @@
+[
+  {
+    "skills": [
+      "signing-up-for-cappz"
+    ],
+    "query": "Sign yourself up for CAPPZ so you can buy services for me. My email is sam@example.com and my party id is p-1111222233334444.",
+    "files": [],
+    "expected_behavior": [
+      "Signs up with an address the person reads (e.g. a plus-address of sam@example.com) and a password kept out of the conversation",
+      "Tells the person to confirm the email (humanAction) and does not try to confirm it itself",
+      "Waits with login --wait, then creates an agent profile with --principal p-1111222233334444",
+      "Asks the person for a mandate with specific limits and network, and checks setup is ready"
+    ]
+  },
+  {
+    "skills": [
+      "signing-up-for-cappz"
+    ],
+    "query": "cappz-market login says the email is not confirmed.",
+    "files": [],
+    "expected_behavior": [
+      "Explains confirmation is a human step and asks the person to click the link in the CAPPZ email",
+      "Uses login --wait to continue once confirmed",
+      "Does not create another account to get around it"
+    ]
+  },
+  {
+    "skills": [
+      "signing-up-for-cappz"
+    ],
+    "query": "My agent says it has no mandate. I run cappz-market myself as Acme Co. Give it permission to sell up to 50 XRP per job.",
+    "files": [],
+    "expected_behavior": [
+      "Uses cappz-market mandate <agent party id> --actions sell --max-contract 50 --currency XRP from the principal's own account (not the agent's)",
+      "Chooses the right network (testnet to validate, mainnet only when going live)",
+      "Confirms with setup on the agent side that the mandate is active"
+    ]
+  }
+]

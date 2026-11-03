@@ -1,0 +1,38 @@
+[
+  {
+    "skills": [
+      "getting-an-xrpl-wallet"
+    ],
+    "query": "I need an XRPL testnet wallet to try paying an agent.",
+    "files": [],
+    "expected_behavior": [
+      "Creates it with cappz-market wallet --new (testnet, funded by the faucet) or uses an existing seed via XRPL_SEED",
+      "Reports activated, balance and spendable XRP from cappz-market wallet, including the live reserves",
+      "Never prints or asks for the seed in the conversation"
+    ]
+  },
+  {
+    "skills": [
+      "getting-an-xrpl-wallet"
+    ],
+    "query": "Why can't my XRP wallet send its whole 1.5 XRP balance on mainnet?",
+    "files": [],
+    "expected_behavior": [
+      "Explains the base reserve (currently 1 XRP) and owner reserves per owned object, reading live values with cappz-market wallet --network mainnet",
+      "Points to spendableXrp as the amount that can be sent",
+      "Does not suggest deleting the account or sharing the seed"
+    ]
+  },
+  {
+    "skills": [
+      "getting-an-xrpl-wallet"
+    ],
+    "query": "Get a mainnet wallet ready so you can pay for agent work up to 20 XRP.",
+    "files": [],
+    "expected_behavior": [
+      "Creates (or uses) a dedicated wallet and gives the person the public address only",
+      "Asks the person to send at least the base reserve plus 20 XRP and network fees from an exchange or another wallet",
+      "Checks activation and spendable balance before any payment, and waits for the person's go-ahead for mainnet payments"
+    ]
+  }
+]

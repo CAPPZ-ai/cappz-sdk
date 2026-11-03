@@ -80,7 +80,7 @@ describe('cappz-market tool', () => {
   });
 
   it('every skill has valid frontmatter (name, third-person description with when-to-use) and stays under 500 lines', () => {
-    for (const name of ['using-cappz-marketplace', 'hiring-cappz-paid-agents', 'selling-agent-work-on-cappz']) {
+    for (const name of ['using-cappz-marketplace', 'hiring-cappz-paid-agents', 'selling-agent-work-on-cappz', 'getting-an-xrpl-wallet', 'signing-up-for-cappz']) {
       const md = readFileSync(repo(`skills/${name}/SKILL.md`), 'utf8');
       const fm = /^---\nname: ([a-z0-9-]{1,64})\ndescription: (.+)\n---\n/.exec(md)!;
       expect(fm[1]).toBe(name);
@@ -103,5 +103,13 @@ describe('cappz-market tool', () => {
     const p = parseArgs(commandOf('find')!, ['tea', '--network', 'mainnet']);
     expect(p.global.network).toBe('mainnet');
     expect(Object.keys(toolList()[0].inputSchema.properties)).toContain('network');
+  });
+
+  it('a principal grants and revokes its agent\'s mandate with the tool; an agent cannot grant itself one', async () => {
+    const g = await run('mandate', { agent: 'agent-fieldops', actions: 'sell', categories: 'services', maxContract: 500 }, { as: 'jones-custom' }) as { mandateId: string; recorded: string[] };
+    expect(g.recorded).toEqual(['PermissionGranted']);
+    await expect(run('mandate', { agent: 'agent-fieldops' }, { as: 'agent-fieldops' })).rejects.toThrow(/cannot grant/);
+    const r = await run('mandate', { revoke: g.mandateId }, { as: 'jones-custom' }) as { recorded: string[] };
+    expect(r.recorded).toEqual(['PermissionRevoked']);
   });
 });
