@@ -279,6 +279,10 @@ export function replayJob(events: readonly JobEvent[], jobId: string): JobView |
 export interface JobStore {
   append(e: JobEvent): Promise<void>;
   events(): Promise<JobEvent[]>;
+  /** Optional: one job's events only (a database store answers this without reading every job). */
+  eventsFor?(jobId: string): Promise<JobEvent[]>;
+  /** Optional: whether a payment transaction already paid some stage (one payment pays once). */
+  paymentUsed?(txHash: string): Promise<boolean>;
   putResult(jobId: string, stage: number, bytes: Uint8Array): Promise<void>;
   getResult(jobId: string, stage: number): Promise<Uint8Array | null>;
 }
@@ -320,7 +324,7 @@ export function createPaidAgent(opts: PaidAgentOptions) {
   /** Last check per job and stage, for status pages (diagnostic, not part of the log). */
   const lastChecks = new Map<string, PaymentCheck>();
 
-  const view = async (jobId: string) => replayJob(await store.events(), jobId);
+  const view = async (jobId: string) => replayJob(store.eventsFor ? await store.eventsFor(jobId) : await store.events(), jobId);
   const jobIds = async () => [...new Set((await store.events()).filter((e) => e.type === 'JobOpened').map((e) => e.jobId))];
   const terms: JobTerms = { payTo: offer.payTo, network: offer.network, currency: offer.currency, token: offer.token, price: offer.price, stages: offer.stages };
 
@@ -333,7 +337,7 @@ export function createPaidAgent(opts: PaidAgentOptions) {
   async function record(job: JobView, req: PaymentRequest, check: PaymentCheck): Promise<void> {
     lastChecks.set(`${job.jobId}/${req.stage}`, check);
     if (check.state !== 'paid') return;
-    const used = (await store.events()).some((e) => e.type === 'StagePaid' && e.txHash === check.txHash);
+    const used = store.paymentUsed ? await store.paymentUsed(check.txHash) : (await store.events()).some((e) => e.type === 'StagePaid' && e.txHash === check.txHash);
     if (!used) await store.append({ type: 'StagePaid', jobId: job.jobId, at: now(), stage: req.stage, txHash: check.txHash, delivered: check.delivered! });
   }
 
@@ -375,6 +379,8 @@ export function createPaidAgent(opts: PaidAgentOptions) {
       return { job, pay: await due(job) };
     },
     async job(jobId: string) { const job = await view(jobId); return job ? { job, pay: await due(job), lastCheck: [...lastChecks.entries()].filter(([k]) => k.startsWith(`${jobId}/`)).map(([, v]) => v).at(-1) ?? null } : null; },
+    /** Run the job's pending work now and resolve when it is done (hosts that must keep work alive, e.g. edge workers). */
+    async work(jobId: string) { const j = await view(jobId); if (j) await runWork(j); return view(jobId); },
     async jobs() { return Promise.all((await jobIds()).map(async (id) => (await view(id))!)); },
     /** The buyer reports a transaction hash; it is checked on the ledger before anything is recorded. */
     async claimPayment(jobId: string, txHash: string): Promise<PaymentCheck> {

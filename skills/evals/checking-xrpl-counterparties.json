@@ -1,0 +1,38 @@
+[
+  {
+    "skills": [
+      "checking-xrpl-counterparties"
+    ],
+    "query": "Before I fund contract ct-123 with 25 XRP, make sure the seller is legit.",
+    "files": [],
+    "expected_behavior": [
+      "Runs cappz-market check <seller party> --amount 25 on the contract's network",
+      "Confirms signedByCappz and hashMatched are true before relying on the report",
+      "Does not fund on a stop verdict; explains warnings and asks the person for significant amounts"
+    ]
+  },
+  {
+    "skills": [
+      "checking-xrpl-counterparties"
+    ],
+    "query": "Is rXYZ\u2026 safe to send 500 XRP to on mainnet?",
+    "files": [],
+    "expected_behavior": [
+      "Asks the person to approve the 0.01 XRP mainnet check (or uses an existing approval) and runs check with --network mainnet --yes --amount 500",
+      "Reports the verdict with each reason in plain words, including destination-tag requirements",
+      "Keeps the report file path for the person's records"
+    ]
+  },
+  {
+    "skills": [
+      "checking-xrpl-counterparties"
+    ],
+    "query": "Our tool isn't installed; check this address with plain HTTP.",
+    "files": [],
+    "expected_behavior": [
+      "Finds the service URL and public key in https://cappz.ai/.well-known/cappz-market.json (services.counterpartyCheck)",
+      "Opens a job, pays 0.01 XRP with the destination tag, reports the hash, fetches the result",
+      "Verifies the Ed25519 signature over the canonical report against the published key"
+    ]
+  }
+]

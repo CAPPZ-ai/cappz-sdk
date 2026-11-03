@@ -1,0 +1,24 @@
+# CAPPZ counterparty check — Cloudflare Worker (free plan: Workers + D1).
+# Deploy: see README.md. The report-signing key is a secret: wrangler secret put CHECK_SIGNING_SEED
+name = "cappz-check"
+main = "worker.ts"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Served at the account's workers.dev address. To use check.cappz.ai instead (a DNS change on the cappz.ai zone), add:
+# routes = [{ pattern = "check.cappz.ai", custom_domain = true }]
+workers_dev = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "cappz-check"
+database_id = "cbf70970-3ad3-4d7b-be20-598552dddb7e"
+
+[vars]
+PRICE_XRP = "0.01"
+# CAPPZ treasury (config/cappz.json networks.*.treasury): public addresses only.
+PAY_TO_MAINNET = "rUqPbiwe2Z5rj2AewokbFHCGQPtwjtzjHM"
+PAY_TO_TESTNET = "rpR95n1iFkTqpoy1e878f4Z1pVHVtWKMNQ"
+# The marketplace's public log (https://cappz.ai/.well-known/cappz-market.json): read-only, publishable key.
+MIRROR_URL = "https://anqmeamplxxuaiwvwdok.supabase.co"
+MIRROR_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFucW1lYW1wbHh4dWFpd3Z3ZG9rIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTkyMzQzOTcsImV4cCI6MjA3NDgxMDM5N30.P49FUMMnPmtJZ1WuKrP71myLLzDHa37tSzLsAYsYSB0"

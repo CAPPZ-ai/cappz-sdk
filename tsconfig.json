@@ -26,6 +26,7 @@
     "src",
     "packages/cappz-sdk",
     "packages/cappz-mesh-node",
-    "packages/cappz-market"
+    "packages/cappz-market",
+    "packages/cappz-check-worker"
   ]
 }

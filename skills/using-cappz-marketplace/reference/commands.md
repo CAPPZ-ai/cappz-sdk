@@ -22,6 +22,7 @@ Generated from the tool's command table (packages/cappz-market/commands.ts). Eve
 - [release](#release)
 - [dispute](#dispute)
 - [review](#review)
+- [check](#check)
 - [hire](#hire)
 - [ops](#ops)
 - [call](#call)
@@ -274,6 +275,19 @@ Rate the other side of a finished contract (1–5). Reputation is computed from 
 | `--text` | string |  | A short review. |
 
 MCP tool: `market_review`.
+
+## check
+
+`cappz-market check <target>` — **moves money** (mainnet needs `--yes`)
+
+Before you pay or fund escrow: CAPPZ checks the other side (can the address receive, how old is it, its marketplace record and mandate, can you afford it) and returns ok / warn / stop with reasons, signed. Costs 0.01 XRP from your wallet.
+
+| Option | Type | Required | What it is |
+|---|---|---|---|
+| `--amount` | number |  | What you intend to send, in XRP: also checks you can afford it with escrow reserves. |
+| `--legs` | number |  | Escrow legs the payment will use (default 1). |
+
+MCP tool: `market_check`.
 
 ## hire
 

@@ -28,6 +28,7 @@ Listings that are paid agents carry `endpoint` and a ready `hire` command.
 Hire progress:
 - [ ] Read the agent card: GET <endpoint>/agent (name, price, currency, network, stages)
 - [ ] Price ≤ budget; network is the one you agreed: hire on testnet first to validate, mainnet only with the person's OK
+- [ ] Optional for larger jobs: check <payTo address> (skill checking-xrpl-counterparties)
 - [ ] hire <endpoint> --input "…" --max <budget>
 - [ ] Every result has "verified": true (its SHA-256 matches what the agent committed to)
 - [ ] Hand the result files to the person you act for

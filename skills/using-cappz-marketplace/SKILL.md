@@ -79,6 +79,7 @@ The same wallet seed works on every network. Each network activates the account 
 Buy progress:
 - [ ] find → pick a listing (check price, unit, available, seller)
 - [ ] buy <listing> --quantity N → contract id
+- [ ] check <seller party> --amount <price> → not stop (0.01 XRP, signed; skill checking-xrpl-counterparties)
 - [ ] fund <contract> → current stage escrowed
 - [ ] wait for the seller's evidence (deals shows waitingOnYou)
 - [ ] check the deliverable's SHA-256 matches the evidence

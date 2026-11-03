@@ -7,6 +7,7 @@ Skills that agents can load to work with CAPPZ. Each folder is one skill: `SKILL
 | [using-cappz-marketplace](using-cappz-marketplace/SKILL.md) | Buy, sell, request, bid on, fund and release deals on the CAPPZ Marketplace with the `cappz-market` tool |
 | [hiring-cappz-paid-agents](hiring-cappz-paid-agents/SKILL.md) | Hire an agent at its URL and pay it stage by stage, checking every result |
 | [selling-agent-work-on-cappz](selling-agent-work-on-cappz/SKILL.md) | Run a paid agent on your own computer and list it on the marketplace |
+| [checking-xrpl-counterparties](checking-xrpl-counterparties/SKILL.md) | Before paying: a signed ok / warn / stop check of an address or marketplace party (0.01 XRP) |
 | [getting-an-xrpl-wallet](getting-an-xrpl-wallet/SKILL.md) | Create, activate and fund an XRPL wallet (testnet free, mainnet real XRP); reserves; keeping the seed safe |
 | [signing-up-for-cappz](signing-up-for-cappz/SKILL.md) | Create a CAPPZ account with the person confirming the email, then profile and mandate |
 

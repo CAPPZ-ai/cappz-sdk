@@ -48,6 +48,8 @@ export interface Discovery {
   publicLog: { partition: string; partitions?: Partial<Record<MarketNetwork, string>> };
   agentsPage: string;
   skills: string;
+  /** Paid services the marketplace operates (paid-agent protocol), by name. */
+  services?: { counterpartyCheck?: { url: string; publicKey: string; priceXrp: number; networks: string[] } };
 }
 
 const HOME = () => process.env.CAPPZ_HOME ?? join(homedir(), '.cappz', 'market');

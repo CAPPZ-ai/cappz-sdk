@@ -23,6 +23,7 @@ import { newEscrowSecret, prepareEscrowFinish, prepareStageEscrows } from '../..
 import { seedSigner, signAndSubmit, signAndSubmitAll } from '../../src/lib/marketplace/ledgerSigning';
 import { xrpNeededForStage } from '../../src/lib/marketplace/onRamp';
 import { AGENT_OPERATIONS, executeAgentOperation, type AgentOperation } from '../../src/lib/marketplace/agentApi';
+import { verifyCheck, type SignedCheck } from '../../src/lib/marketplace/counterpartyCheck';
 import type { MarketplaceVerb } from '../../src/lib/marketplace/marketplaceVerbs';
 import type { ContractView, Currency, ListingContent, PartyKind, PartyProfile, PartyRole, SupplyOfferContent, SupplyRequestContent } from '../../src/lib/marketplace/types';
 import type { ListingView, MarketState, RequestView } from '../../src/lib/marketplace/replay';
@@ -535,6 +536,36 @@ export const COMMANDS: Command[] = [
     },
   },
   {
+    name: 'check',
+    summary: 'Before you pay or fund escrow: CAPPZ checks the other side (can the address receive, how old is it, its marketplace record and mandate, can you afford it) and returns ok / warn / stop with reasons, signed. Costs 0.01 XRP from your wallet.',
+    money: true,
+    params: [
+      { name: 'target', type: 'string', description: 'The XRPL address (r…) you will pay, or a marketplace party id (p-…).', required: true, positional: true },
+      { name: 'amount', type: 'number', description: 'What you intend to send, in XRP: also checks you can afford it with escrow reserves.' },
+      { name: 'legs', type: 'number', description: 'Escrow legs the payment will use (default 1).' },
+    ],
+    async run(a, o) {
+      const d = await getDiscovery(); const svc = d.services?.counterpartyCheck;
+      if (!svc) throw new ToolError(`${marketUrl()} does not offer a counterparty check.`);
+      const net = marketNetwork(o);
+      if (!svc.networks.includes(net)) throw new ToolError(`The counterparty check runs on ${svc.networks.join(' and ')}, not ${net}.`);
+      const w = await requireWallet(); const target = str(a, 'target');
+      const input = { ...(target.startsWith('r') ? { address: target } : { party: target }), payer: w.classicAddress, ...(a.amount !== undefined ? { amountXrp: num(a, 'amount') } : {}), ...(a.legs !== undefined ? { escrowLegs: num(a, 'legs') } : {}) };
+      const out = join(homeDir(), 'checks');
+      const r = await commandOf('hire')!.run({ url: `${svc.url}/${net}`, input: JSON.stringify(input), max: svc.priceXrp, out, timeout: 3 }, o) as { results?: Array<{ file: string; verified: boolean }>; payments?: string[]; paid?: string; next?: string };
+      const file = r.results?.[0]?.file;
+      if (!file) return { checked: false, ...r };
+      const signed = JSON.parse(await readFile(file, 'utf8')) as SignedCheck;
+      const signatureOk = verifyCheck(signed, svc.publicKey);
+      const rep = signed.report;
+      return {
+        verdict: rep.verdict, reasons: rep.reasons, subject: rep.subject, network: rep.network,
+        signedByCappz: signatureOk, hashMatched: r.results?.[0]?.verified ?? false, paid: r.paid, report: file,
+        next: !signatureOk ? 'Do not rely on this report: its signature does not match the published CAPPZ key.' : rep.verdict === 'stop' ? 'Do not pay: fix or ask about the stop reasons first.' : rep.verdict === 'warn' ? 'Paying is possible; weigh the warnings (or ask the person you act for).' : 'OK to proceed.',
+      };
+    },
+  },
+  {
     name: 'hire',
     summary: 'Hire a CAPPZ paid agent at its URL: open a job, pay each stage from your wallet, collect each result and check its SHA-256.',
     money: true,
@@ -548,7 +579,7 @@ export const COMMANDS: Command[] = [
     ],
     async run(a, o) {
       const base = str(a, 'url').replace(/\/$/, ''); const max = num(a, 'max'); const out = resolve(str(a, 'out', 'cappz-results'));
-      const http = async (path: string, init?: RequestInit) => { const r = await fetch(base + path, init); return { status: r.status, headers: r.headers, body: r.headers.get('content-type')?.includes('json') ? await r.json() : new Uint8Array(await r.arrayBuffer()) }; };
+      const http = async (path: string, init?: RequestInit, raw = false) => { const r = await fetch(base + path, init); return { status: r.status, headers: r.headers, body: !raw && r.headers.get('content-type')?.includes('json') ? await r.json() : new Uint8Array(await r.arrayBuffer()) }; };
       const card = (await http('/agent')).body as { name: string; price: string; currency: string; network: XrplNetwork; stages: unknown[] };
       if (card.currency !== 'XRP' && card.currency !== 'CAPPZ') throw new ToolError(`Unexpected currency ${card.currency}.`);
       if (Number(card.price) > max) throw new ToolError(`${card.name} costs ${card.price} ${card.currency} per job; your max is ${max}.`, 'Raise --max if the person you act for agrees.');
@@ -562,7 +593,7 @@ export const COMMANDS: Command[] = [
         const v = (await http(`/jobs/${jobId}`)).body as { job: { state: string; stages: Array<{ index: number; state: string; result: { hash: string } | null }> }; pay: { stage: number; amount: string; network: XrplNetwork; preparedTx: Record<string, unknown> } | null };
         for (const s of v.job.stages) {
           if (s.state !== 'released' || !s.result || results.some((r) => r.stage === s.index)) continue;
-          const r = await http(`/jobs/${jobId}/stages/${s.index}/result`);
+          const r = await http(`/jobs/${jobId}/stages/${s.index}/result`, undefined, true); // results are bytes, hashed as delivered
           const bytes = r.body as Uint8Array; const got = await sha256Bytes(bytes);
           const file = join(out, `${jobId}-stage-${s.index}`); await writeFile(file, bytes);
           results.push({ stage: s.index, file, sha256: got, verified: got === s.result.hash });

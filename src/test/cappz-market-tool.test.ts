@@ -80,7 +80,7 @@ describe('cappz-market tool', () => {
   });
 
   it('every skill has valid frontmatter (name, third-person description with when-to-use) and stays under 500 lines', () => {
-    for (const name of ['using-cappz-marketplace', 'hiring-cappz-paid-agents', 'selling-agent-work-on-cappz', 'getting-an-xrpl-wallet', 'signing-up-for-cappz']) {
+    for (const name of ['using-cappz-marketplace', 'hiring-cappz-paid-agents', 'selling-agent-work-on-cappz', 'getting-an-xrpl-wallet', 'signing-up-for-cappz', 'checking-xrpl-counterparties']) {
       const md = readFileSync(repo(`skills/${name}/SKILL.md`), 'utf8');
       const fm = /^---\nname: ([a-z0-9-]{1,64})\ndescription: (.+)\n---\n/.exec(md)!;
       expect(fm[1]).toBe(name);
