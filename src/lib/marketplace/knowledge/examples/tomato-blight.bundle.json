@@ -1,0 +1,230 @@
+{
+  "manifest": {
+    "version": "phyto-graph/v1",
+    "graphId": "phyto-example",
+    "graphVersion": "0.1.0",
+    "title": "Phyto example — tomato early blight slice",
+    "description": "A minimal three-layer slice: taxonomy for one fungal disease, context-qualified properties, and one observed instance with a treatment event. Used by tests and the README walkthrough.",
+    "modelIds": [],
+    "publisher": "cappz-marketplace",
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  },
+  "nodes": [
+    {
+      "id": "taxon:condition",
+      "layer": "taxonomy",
+      "class": "taxon",
+      "label": "Plant condition",
+      "props": {},
+      "context": {},
+      "provenance": { "source": "example", "method": "human", "confidence": 1 }
+    },
+    {
+      "id": "taxon:condition/disease",
+      "layer": "taxonomy",
+      "class": "taxon",
+      "label": "Disease",
+      "props": {},
+      "context": {},
+      "provenance": { "source": "example", "method": "human", "confidence": 1 }
+    },
+    {
+      "id": "taxon:condition/disease/fungal",
+      "layer": "taxonomy",
+      "class": "taxon",
+      "label": "Fungal disease",
+      "props": {},
+      "context": {},
+      "provenance": { "source": "example", "method": "human", "confidence": 1 }
+    },
+    {
+      "id": "taxon:condition/disease/fungal/early-blight",
+      "layer": "taxonomy",
+      "class": "taxon",
+      "label": "Early blight (Alternaria solani)",
+      "body": "Fungal foliar disease of solanaceous crops. Concentric dark lesions with chlorotic halos, beginning on the oldest leaves and progressing upward.",
+      "props": { "pathogen": "Alternaria solani" },
+      "context": { "species": "Solanum lycopersicum" },
+      "provenance": { "source": "example", "method": "human", "confidence": 0.95 }
+    },
+    {
+      "id": "taxon:symptom",
+      "layer": "taxonomy",
+      "class": "taxon",
+      "label": "Symptom",
+      "props": {},
+      "context": {},
+      "provenance": { "source": "example", "method": "human", "confidence": 1 }
+    },
+    {
+      "id": "taxon:symptom/leaf-lesion/concentric-rings",
+      "layer": "taxonomy",
+      "class": "taxon",
+      "label": "Concentric ring leaf lesions",
+      "body": "Brown lesions with visible concentric rings, typically 4-12 mm, often surrounded by yellowing tissue.",
+      "props": {},
+      "context": {},
+      "provenance": { "source": "example", "method": "human", "confidence": 0.9 }
+    },
+    {
+      "id": "taxon:symptom/chlorosis/lower-leaves",
+      "layer": "taxonomy",
+      "class": "taxon",
+      "label": "Lower-leaf chlorosis",
+      "body": "Yellowing that begins on the oldest foliage. Ambiguous on its own: also consistent with nitrogen deficiency.",
+      "props": {},
+      "context": {},
+      "provenance": { "source": "example", "method": "human", "confidence": 0.9 }
+    },
+    {
+      "id": "taxon:condition/deficiency/nitrogen",
+      "layer": "taxonomy",
+      "class": "taxon",
+      "label": "Nitrogen deficiency",
+      "body": "Uniform pale-green to yellow older foliage, reduced vigour, no lesions.",
+      "props": {},
+      "context": {},
+      "provenance": { "source": "example", "method": "human", "confidence": 0.95 }
+    },
+    {
+      "id": "taxon:treatment",
+      "layer": "taxonomy",
+      "class": "taxon",
+      "label": "Treatment",
+      "props": {},
+      "context": {},
+      "provenance": { "source": "example", "method": "human", "confidence": 1 }
+    },
+    {
+      "id": "taxon:treatment/fungicide/chlorothalonil",
+      "layer": "taxonomy",
+      "class": "taxon",
+      "label": "Chlorothalonil protectant spray",
+      "body": "Broad-spectrum protectant fungicide. Preventative only — protects unaffected tissue, does not cure existing lesions. Observe the label's pre-harvest interval.",
+      "props": { "mode": "protectant", "preHarvestIntervalDays": 7 },
+      "context": {},
+      "provenance": { "source": "example", "method": "human", "confidence": 0.85 }
+    },
+    {
+      "id": "taxon:treatment/cultural/sanitation",
+      "layer": "taxonomy",
+      "class": "taxon",
+      "label": "Sanitation and airflow",
+      "body": "Remove and destroy affected lower foliage, mulch to block soil splash, widen spacing, water at the soil line.",
+      "props": {},
+      "context": {},
+      "provenance": { "source": "example", "method": "human", "confidence": 0.9 }
+    },
+    {
+      "id": "taxon:environment/humidity/high",
+      "layer": "taxonomy",
+      "class": "taxon",
+      "label": "Prolonged leaf wetness",
+      "props": {},
+      "context": {},
+      "provenance": { "source": "example", "method": "human", "confidence": 0.9 }
+    },
+    {
+      "id": "property:early-blight/onset-temp",
+      "layer": "property",
+      "class": "measurement",
+      "label": "Sporulation temperature range",
+      "body": "Lesion expansion accelerates between 24 and 29 C with leaf wetness over 6 hours.",
+      "props": { "minC": 24, "maxC": 29, "leafWetnessHours": 6 },
+      "context": { "method": "field-observation", "climateZone": "temperate", "season": "summer" },
+      "provenance": { "source": "example", "method": "pipeline", "confidence": 0.8 }
+    },
+    {
+      "id": "property:early-blight/severity-greenhouse",
+      "layer": "property",
+      "class": "property",
+      "label": "Severity under greenhouse cover",
+      "body": "Under cover with drip irrigation, severity is materially lower than field-grown — the same treatment recommendation should be weaker in this context.",
+      "props": { "severity": "moderate" },
+      "context": { "medium": "greenhouse-drip", "growthStage": "fruiting" },
+      "provenance": { "source": "example", "method": "pipeline", "confidence": 0.7 }
+    },
+    {
+      "id": "property:chlorothalonil/harvest-restriction",
+      "layer": "property",
+      "class": "property",
+      "label": "Not for near-harvest fruit",
+      "body": "Do not apply within the pre-harvest interval; prefer sanitation-only in the final fortnight.",
+      "props": { "restrictedWithinDays": 7 },
+      "context": { "growthStage": "harvest" },
+      "provenance": { "source": "example", "method": "human", "confidence": 0.95 }
+    },
+    {
+      "id": "substance:chlorothalonil",
+      "layer": "instance",
+      "class": "substance",
+      "label": "Chlorothalonil 720 SC",
+      "props": { "concentration": "720 g/L" },
+      "context": {},
+      "provenance": { "source": "example", "method": "import", "confidence": 0.9 }
+    },
+    {
+      "id": "plant:demo/tomato-01",
+      "layer": "instance",
+      "class": "plant",
+      "label": "Demo tomato, bed 3",
+      "props": { "plantedOn": "2026-04-02" },
+      "context": { "cultivar": "San Marzano", "medium": "raised-bed", "climateZone": "temperate" },
+      "provenance": { "source": "example", "method": "human", "confidence": 1 }
+    },
+    {
+      "id": "observation:demo/tomato-01/2026-07-14",
+      "layer": "instance",
+      "class": "observation",
+      "label": "Ringed lesions on lower leaves",
+      "body": "Lower third of the canopy shows ringed brown lesions with yellow halos after a humid week.",
+      "props": { "affectedFraction": 0.3 },
+      "context": { "growthStage": "fruiting", "season": "summer" },
+      "provenance": { "source": "example", "method": "human", "confidence": 0.85, "observedAt": "2026-07-14T09:00:00.000Z" }
+    },
+    {
+      "id": "treatment:demo/tomato-01/sanitation-1",
+      "layer": "instance",
+      "class": "treatment",
+      "label": "Removed affected foliage, added mulch",
+      "props": { "appliedOn": "2026-07-15" },
+      "context": { "growthStage": "fruiting" },
+      "provenance": { "source": "example", "method": "human", "confidence": 1 }
+    },
+    {
+      "id": "environment:demo/bed-3/july",
+      "layer": "instance",
+      "class": "environment",
+      "label": "Bed 3 microclimate, July",
+      "props": { "meanTempC": 27, "leafWetnessHours": 9 },
+      "context": { "season": "summer", "method": "sensor" },
+      "provenance": { "source": "example", "method": "import", "confidence": 0.9 }
+    }
+  ],
+  "edges": [
+    { "id": "e:tax-1", "kind": "broader", "from": "taxon:condition/disease", "to": "taxon:condition", "context": {}, "provenance": { "source": "example", "method": "human", "confidence": 1 } },
+    { "id": "e:tax-2", "kind": "broader", "from": "taxon:condition/disease/fungal", "to": "taxon:condition/disease", "context": {}, "provenance": { "source": "example", "method": "human", "confidence": 1 } },
+    { "id": "e:tax-3", "kind": "broader", "from": "taxon:condition/disease/fungal/early-blight", "to": "taxon:condition/disease/fungal", "context": {}, "provenance": { "source": "example", "method": "human", "confidence": 1 } },
+    { "id": "e:tax-4", "kind": "broader", "from": "taxon:symptom/leaf-lesion/concentric-rings", "to": "taxon:symptom", "context": {}, "provenance": { "source": "example", "method": "human", "confidence": 1 } },
+    { "id": "e:tax-5", "kind": "broader", "from": "taxon:symptom/chlorosis/lower-leaves", "to": "taxon:symptom", "context": {}, "provenance": { "source": "example", "method": "human", "confidence": 1 } },
+    { "id": "e:tax-6", "kind": "broader", "from": "taxon:condition/deficiency/nitrogen", "to": "taxon:condition", "context": {}, "provenance": { "source": "example", "method": "human", "confidence": 1 } },
+    { "id": "e:tax-7", "kind": "broader", "from": "taxon:treatment/fungicide/chlorothalonil", "to": "taxon:treatment", "context": {}, "provenance": { "source": "example", "method": "human", "confidence": 1 } },
+    { "id": "e:tax-8", "kind": "broader", "from": "taxon:treatment/cultural/sanitation", "to": "taxon:treatment", "context": {}, "provenance": { "source": "example", "method": "human", "confidence": 1 } },
+    { "id": "e:sym-1", "kind": "symptom-of", "from": "taxon:symptom/leaf-lesion/concentric-rings", "to": "taxon:condition/disease/fungal/early-blight", "weight": 0.9, "context": {}, "provenance": { "source": "example", "method": "human", "confidence": 0.9 } },
+    { "id": "e:sym-2", "kind": "symptom-of", "from": "taxon:symptom/chlorosis/lower-leaves", "to": "taxon:condition/disease/fungal/early-blight", "weight": 0.45, "context": {}, "provenance": { "source": "example", "method": "human", "confidence": 0.6 } },
+    { "id": "e:sym-3", "kind": "symptom-of", "from": "taxon:symptom/chlorosis/lower-leaves", "to": "taxon:condition/deficiency/nitrogen", "weight": 0.7, "context": {}, "provenance": { "source": "example", "method": "human", "confidence": 0.8 } },
+    { "id": "e:cause-1", "kind": "caused-by", "from": "taxon:condition/disease/fungal/early-blight", "to": "taxon:environment/humidity/high", "weight": 0.8, "context": { "season": "summer" }, "provenance": { "source": "example", "method": "human", "confidence": 0.8 } },
+    { "id": "e:treat-1", "kind": "treated-by", "from": "taxon:condition/disease/fungal/early-blight", "to": "taxon:treatment/cultural/sanitation", "weight": 0.85, "context": {}, "provenance": { "source": "example", "method": "human", "confidence": 0.9 } },
+    { "id": "e:treat-2", "kind": "treated-by", "from": "taxon:condition/disease/fungal/early-blight", "to": "taxon:treatment/fungicide/chlorothalonil", "weight": 0.75, "context": { "growthStage": "fruiting" }, "provenance": { "source": "example", "method": "human", "confidence": 0.85 } },
+    { "id": "e:req-1", "kind": "requires", "from": "taxon:treatment/fungicide/chlorothalonil", "to": "substance:chlorothalonil", "context": {}, "provenance": { "source": "example", "method": "human", "confidence": 1 } },
+    { "id": "e:prop-1", "kind": "has-property", "from": "taxon:condition/disease/fungal/early-blight", "to": "property:early-blight/onset-temp", "context": {}, "provenance": { "source": "example", "method": "pipeline", "confidence": 0.8 } },
+    { "id": "e:prop-2", "kind": "has-property", "from": "taxon:condition/disease/fungal/early-blight", "to": "property:early-blight/severity-greenhouse", "context": { "medium": "greenhouse-drip" }, "provenance": { "source": "example", "method": "pipeline", "confidence": 0.7 } },
+    { "id": "e:prop-3", "kind": "has-property", "from": "taxon:treatment/fungicide/chlorothalonil", "to": "property:chlorothalonil/harvest-restriction", "context": {}, "provenance": { "source": "example", "method": "human", "confidence": 0.95 } },
+    { "id": "e:inst-1", "kind": "instance-of", "from": "observation:demo/tomato-01/2026-07-14", "to": "taxon:symptom/leaf-lesion/concentric-rings", "context": {}, "provenance": { "source": "example", "method": "human", "confidence": 0.85 } },
+    { "id": "e:inst-2", "kind": "observed-on", "from": "observation:demo/tomato-01/2026-07-14", "to": "plant:demo/tomato-01", "context": {}, "provenance": { "source": "example", "method": "human", "confidence": 1 } },
+    { "id": "e:inst-3", "kind": "instance-of", "from": "treatment:demo/tomato-01/sanitation-1", "to": "taxon:treatment/cultural/sanitation", "context": {}, "provenance": { "source": "example", "method": "human", "confidence": 1 } },
+    { "id": "e:inst-4", "kind": "applied-to", "from": "treatment:demo/tomato-01/sanitation-1", "to": "plant:demo/tomato-01", "context": {}, "provenance": { "source": "example", "method": "human", "confidence": 1 } },
+    { "id": "e:env-1", "kind": "has-property", "from": "plant:demo/tomato-01", "to": "property:early-blight/onset-temp", "weight": 0.5, "context": { "season": "summer" }, "provenance": { "source": "example", "method": "pipeline", "confidence": 0.6 } },
+    { "id": "e:env-2", "kind": "derived-from", "from": "observation:demo/tomato-01/2026-07-14", "to": "environment:demo/bed-3/july", "context": {}, "provenance": { "source": "example", "method": "pipeline", "confidence": 0.7 } }
+  ]
+}

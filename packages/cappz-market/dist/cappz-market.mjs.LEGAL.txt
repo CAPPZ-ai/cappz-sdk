@@ -1,0 +1,49 @@
+Bundled license information:
+
+@scure/base/index.js:
+@scure/base/lib/index.js:
+  /*! scure-base - MIT License (c) 2022 Paul Miller (paulmillr.com) */
+
+@noble/hashes/utils.js:
+@noble/hashes/utils.js:
+@noble/hashes/utils.js:
+  /*! noble-hashes - MIT License (c) 2022 Paul Miller (paulmillr.com) */
+
+@noble/curves/utils.js:
+@noble/curves/abstract/modular.js:
+@noble/curves/abstract/curve.js:
+@noble/curves/abstract/weierstrass.js:
+@noble/curves/_shortw_utils.js:
+@noble/curves/secp256k1.js:
+@noble/curves/abstract/edwards.js:
+@noble/curves/abstract/montgomery.js:
+@noble/curves/ed25519.js:
+  /*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) */
+
+@scure/bip32/lib/index.js:
+  /*! scure-bip32 - MIT License (c) 2022 Patricio Palladino, Paul Miller (paulmillr.com) */
+
+@scure/bip39/index.js:
+  /*! scure-bip39 - MIT License (c) 2022 Patricio Palladino, Paul Miller (paulmillr.com) */
+
+@noble/secp256k1/index.js:
+  /*! noble-secp256k1 - MIT License (c) 2019 Paul Miller (paulmillr.com) */
+
+crypto-js/ripemd160.js:
+  /** @preserve
+  	(c) 2012 by Cédric Mesnil. All rights reserved.
+  
+  	Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+  
+  	    - Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+  	    - Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+  
+  	THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  	*/
+
+crypto-js/mode-ctr-gladman.js:
+  /** @preserve
+   * Counter block mode compatible with  Dr Brian Gladman fileenc.c
+   * derived from CryptoJS.mode.CTR
+   * Jan Hruby jhruby.web@gmail.com
+   */

@@ -6,3 +6,4 @@ operator.json
 packages/cappz-mesh-node/web/app.js
 packages/cappz-mesh-node/web/opfs-write-worker.js
 dist/
+!packages/cappz-market/dist/

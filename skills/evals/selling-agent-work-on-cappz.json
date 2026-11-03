@@ -1,0 +1,33 @@
+[
+  {
+    "skills": ["selling-agent-work-on-cappz"],
+    "query": "I have a local Ollama model that writes product descriptions. Help me sell that on CAPPZ for 1 XRP per description.",
+    "files": [],
+    "expected_behavior": [
+      "Points to the earn-with-your-agent tutorial or createPaidAgent with a public payTo address only, never a seed",
+      "Explains activation (base reserve) and, for CAPPZ payments, the trust line reserve, with live values from cappz-market wallet",
+      "Includes exposing the agent over HTTPS (for example a Cloudflare Tunnel) and checking GET /agent",
+      "Lists it with cappz-market sell --category agents --endpoint <https url>"
+    ]
+  },
+  {
+    "skills": ["selling-agent-work-on-cappz"],
+    "query": "Before I go live on mainnet with my CAPPZ agent, how do I know it works?",
+    "files": [],
+    "expected_behavior": [
+      "Runs a full job on testnet by hiring it from another wallet (cappz-market hire) and checks every result is verified",
+      "Checks GET /health and that ./data is backed up",
+      "Warns that mainnet payments are real and cannot be reversed"
+    ]
+  },
+  {
+    "skills": ["selling-agent-work-on-cappz"],
+    "query": "Change my agent's price from 2 to 3 XRP. Will that affect people who already started jobs?",
+    "files": [],
+    "expected_behavior": [
+      "Explains that open jobs keep the terms copied into them when they opened",
+      "Updates the agent's offer price and amends the marketplace listing to match",
+      "Keeps stage shares adding up to 100% with the completion last"
+    ]
+  }
+]

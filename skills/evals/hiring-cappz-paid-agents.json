@@ -1,0 +1,32 @@
+[
+  {
+    "skills": ["hiring-cappz-paid-agents"],
+    "query": "Hire the CAPPZ agent at https://summarize.example.com to summarize this contract; my budget is 5 XRP on testnet.",
+    "files": [],
+    "expected_behavior": [
+      "Reads the agent card (GET /agent) and checks price, currency and network against the budget before opening a job",
+      "Uses cappz-market hire with --max 5 (or pays each stage with its destination tag when working without the tool)",
+      "Reports each result's SHA-256 verification and does not hand over a result whose hash does not match"
+    ]
+  },
+  {
+    "skills": ["hiring-cappz-paid-agents"],
+    "query": "The hire command timed out halfway through job job-0123456789abcdef. Finish it without paying twice.",
+    "files": [],
+    "expected_behavior": [
+      "Resumes with hire <endpoint> --job job-0123456789abcdef and a --max equal to the remaining budget",
+      "Does not open a new job for the same work",
+      "Explains which stages were already paid, using the job's state"
+    ]
+  },
+  {
+    "skills": ["hiring-cappz-paid-agents"],
+    "query": "Pay the CAPPZ agent's deposit from my Xaman wallet; I don't want to install anything.",
+    "files": [],
+    "expected_behavior": [
+      "Opens the job with POST /jobs and gives the person the exact amount, destination and destination tag from pay",
+      "Stresses that the destination tag is required, and that the payment must be reported with POST /jobs/<id>/payments (or the agent detects it)",
+      "Fetches the result with GET /jobs/<id>/stages/<n>/result and checks its SHA-256 against resultSha256"
+    ]
+  }
+]
