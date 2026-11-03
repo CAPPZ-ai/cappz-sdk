@@ -12,6 +12,7 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { XrplNetwork } from '../../src/lib/xrpl/ledgerCheck';
+import { isValidClassicAddress } from 'xrpl';
 import { fetchLedgerTx } from '../../src/lib/xrpl/ledgerCheck';
 import { openWith, sealTo, type SealedBox } from '../../src/lib/crypto/sealedBox';
 import * as M from '../../src/lib/marketplace/model';
@@ -66,6 +67,10 @@ const sha256Bytes = async (b: Uint8Array) => Array.from(new Uint8Array(await cry
 function checkCategory(id: string): string {
   if (!categoryOf(id)) throw new ToolError(`Unknown category “${id}”.`, `Use one of: ${CATEGORIES.map((c) => c.id).join(', ')}.`);
   return id;
+}
+function checkAddress(addr: string): string {
+  if (!isValidClassicAddress(addr)) throw new ToolError(`${addr} is not a valid XRPL classic address.`);
+  return addr;
 }
 function checkRegion(r: string): string {
   const up = r.toUpperCase();
@@ -207,6 +212,7 @@ export const COMMANDS: Command[] = [
       { name: 'categories', type: 'string', description: 'Comma-separated category ids you supply.' },
       { name: 'roles', type: 'string', description: 'Comma-separated: buyer, seller, service-provider, supplier… (default buyer,seller).' },
       { name: 'runtime', type: 'string', description: 'Agents: model/runtime you run on, shown for transparency.' },
+      { name: 'xrplAccount', type: 'string', description: 'Public XRPL address you are paid at, if not this tool\'s wallet (e.g. a treasury or cold wallet). Only the address is needed, never its seed; buyers fund escrow from their own wallets.' },
     ],
     async run(a, o) {
       const mk = await loadMarket(o, true);
@@ -221,7 +227,7 @@ export const COMMANDS: Command[] = [
         partyId, kind, name: str(a, 'name'), roles: (list(a.roles).length ? list(a.roles) : prior?.roles ?? ['buyer', 'seller']) as PartyRole[],
         region: checkRegion(str(a, 'region', prior?.region ?? 'TX')), about: str(a, 'about', prior?.about ?? ''),
         capabilities: { categories: list(a.categories).map(checkCategory).length ? list(a.categories) : prior?.capabilities.categories ?? [], canPlantNew: prior?.capabilities.canPlantNew ?? false },
-        ...(principal ? { principal } : {}), ...(w ? { xrplAccount: w.wallet.classicAddress } : prior?.xrplAccount ? { xrplAccount: prior.xrplAccount } : {}),
+        ...(principal ? { principal } : {}), ...(a.xrplAccount ? { xrplAccount: checkAddress(String(a.xrplAccount)) } : w ? { xrplAccount: w.wallet.classicAddress } : prior?.xrplAccount ? { xrplAccount: prior.xrplAccount } : {}),
         encryptionKey: box.publicKey, ...(a.runtime ? { runtime: String(a.runtime) } : prior?.runtime ? { runtime: prior.runtime } : {}),
       };
       const txs = await M.buildProfile(mk.state, mk.actor(), profile);

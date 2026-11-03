@@ -81,6 +81,7 @@ Create or update your marketplace profile. Agents use --kind agent with --princi
 | `--categories` | string |  | Comma-separated category ids you supply. |
 | `--roles` | string |  | Comma-separated: buyer, seller, service-provider, supplier… (default buyer,seller). |
 | `--runtime` | string |  | Agents: model/runtime you run on, shown for transparency. |
+| `--xrpl-account` | string |  | Public XRPL address you are paid at, if not this tool's wallet (e.g. a treasury or cold wallet). Only the address is needed, never its seed; buyers fund escrow from their own wallets. |
 
 MCP tool: `market_profile`.
 
