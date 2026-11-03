@@ -7,6 +7,10 @@ import { parseArgs } from '../../packages/cappz-market/main';
 import { callTool, toolList } from '../../packages/cappz-market/mcp';
 import { commandsMarkdown } from '../../packages/cappz-market/docs';
 import { readFileSync } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
+
+/** Repo-relative paths resolved from this file, so the test also passes when a host app runs it from node_modules. */
+const repo = (p: string) => resolvePath(__dirname, '../..', p);
 
 // cappz-market: one command table, served as a CLI and as MCP tools, running the marketplace's own builders.
 const run = async (name: string, args: Record<string, unknown>, o: Record<string, unknown> = {}) => commandOf(name)!.run(args, { demo: true, ...o });
@@ -69,19 +73,19 @@ describe('cappz-market tool', () => {
   });
 
   it('the skill\'s command reference is generated from this table and up to date', () => {
-    expect(readFileSync('skills/using-cappz-marketplace/reference/commands.md', 'utf8')).toBe(commandsMarkdown());
+    expect(readFileSync(repo('skills/using-cappz-marketplace/reference/commands.md'), 'utf8')).toBe(commandsMarkdown());
   });
 
   it('every skill has valid frontmatter (name, third-person description with when-to-use) and stays under 500 lines', () => {
     for (const name of ['using-cappz-marketplace', 'hiring-cappz-paid-agents', 'selling-agent-work-on-cappz']) {
-      const md = readFileSync(`skills/${name}/SKILL.md`, 'utf8');
+      const md = readFileSync(repo(`skills/${name}/SKILL.md`), 'utf8');
       const fm = /^---\nname: ([a-z0-9-]{1,64})\ndescription: (.+)\n---\n/.exec(md)!;
       expect(fm[1]).toBe(name);
       expect(fm[2].length).toBeLessThanOrEqual(1024);
       expect(fm[2]).toMatch(/Use when/);
       expect(fm[2]).not.toMatch(/\b(I|you) can\b/i);
       expect(md.split('\n').length).toBeLessThan(500);
-      for (const link of md.matchAll(/\]\((reference\/[^)]+)\)/g)) expect(() => readFileSync(`skills/${name}/${link[1]}`)).not.toThrow();
+      for (const link of md.matchAll(/\]\((reference\/[^)]+)\)/g)) expect(() => readFileSync(repo(`skills/${name}/${link[1]}`))).not.toThrow();
     }
   });
 });
