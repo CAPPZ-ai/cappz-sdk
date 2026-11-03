@@ -118,9 +118,9 @@ export async function authorize(body: unknown, network: Net, state: MarketState 
   const b = (typeof body === 'object' && body ? body : {}) as Record<string, unknown>;
   const tx = b.tx && typeof b.tx === 'object' ? b.tx as Record<string, unknown> : null;
   const milestone = Number(b.milestone);
-  if (!tx || typeof b.contractId !== 'string' || !Number.isInteger(milestone) || milestone < 0) throw new Error('Send {"contractId": "ct-…", "milestone": 0, "tx": {…unsigned, autofilled…}} and, for agents above their threshold, "coSignedBy".');
+  if (!tx || typeof b.contractId !== 'string' || !Number.isInteger(milestone) || milestone < 0) throw new Error('Send {"contractId": "ct-…", "milestone": 0, "tx": {…unsigned, autofilled…}} and, for agents above their threshold, the grantor’s "coSignature".');
   if (!state) return { code: 503, body: { approved: false, reasons: [{ code: 'market-unreadable', message: 'The marketplace log could not be read just now; nothing is approved. Retry shortly.' }] } };
-  const d = await evaluateSigningIntent(state, { network, contractId: b.contractId, milestone, tx, ...(typeof b.coSignedBy === 'string' ? { coSignedBy: b.coSignedBy } : {}) }, now);
+  const d = await evaluateSigningIntent(state, { network, contractId: b.contractId, milestone, tx, ...(b.coSignature && typeof b.coSignature === 'object' ? { coSignature: b.coSignature as never } : {}) }, now);
   return d.approved ? { code: 200, body: { approved: true, ...signApproval(d.approval, seedHex) } } : { code: 200, body: d };
 }
 

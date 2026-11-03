@@ -25,6 +25,7 @@
  * validated ledger.
  */
 import { ed25519 } from '@noble/curves/ed25519';
+import { decode, deriveAddress, verifySignature } from 'xrpl';
 import type { XrplNetwork } from '../xrpl/ledgerCheck';
 import type { MarketState } from './replay';
 import type { ContractView } from './types';
@@ -41,8 +42,45 @@ export interface SigningIntent {
   milestone: number;
   /** The unsigned transaction exactly as the wallet will sign it (autofilled: Fee, Sequence, LastLedgerSequence). */
   tx: Record<string, unknown>;
-  /** Agent buyers above their mandate's approval threshold: the granting party that co-signed. */
-  coSignedBy?: string;
+  /** Agent buyers above their mandate's approval threshold: the grantor's signed co-signature of this stage. */
+  coSignature?: CoSignature;
+}
+
+// ─── Co-signature: the mandate's grantor signs the stage, with their own XRPL key ───
+//
+// Above an agent's approval threshold, a person (the party that granted the mandate) must agree. They sign a
+// statement naming the network, contract, stage, action, amount and an expiry, as the memo of an AccountSet that
+// is signed and never submitted (LastLedgerSequence 1 has long passed, Fee 0): any XRPL wallet can sign it, and
+// anyone can check it was the grantor's profile account, by its master key, that agreed — not a name typed in.
+
+export const CO_SIGN_MEMO_TYPE = 'cappz/co-signature';
+export interface CoSignTerms { network: XrplNetwork; contractId: string; milestone: number; action: 'fund'; amountDrops: string; expiresAt: string }
+export interface CoSignature { terms: CoSignTerms; txBlob: string }
+
+export const coSignStatement = (t: CoSignTerms) => ['CAPPZ co-signature v1', `network: ${t.network}`, `contract: ${t.contractId}`, `milestone: ${t.milestone}`, `action: ${t.action}`, `amount-drops: ${t.amountDrops}`, `expires: ${t.expiresAt}`].join('\n');
+const utf8Hex = (s: string) => hex(new TextEncoder().encode(s)).toUpperCase();
+
+/** The unsigned AccountSet a grantor signs (and never submits) to co-sign a stage. */
+export function coSignTx(account: string, t: CoSignTerms): Record<string, unknown> {
+  return { TransactionType: 'AccountSet', Account: account, Fee: '0', Sequence: 0, LastLedgerSequence: 1, Memos: [{ Memo: { MemoType: utf8Hex(CO_SIGN_MEMO_TYPE), MemoData: utf8Hex(coSignStatement(t)) } }] };
+}
+
+/** Problems with a co-signature as `account`'s agreement to `cs.terms` (empty = valid). */
+export function verifyCoSignature(cs: CoSignature, account: string, now: string): string[] {
+  const p: string[] = [];
+  let tx: Record<string, unknown>;
+  try { tx = decode(cs.txBlob) as Record<string, unknown>; } catch { return ['Not an XRPL transaction.']; }
+  if (tx.TransactionType !== 'AccountSet') p.push('A co-signature is an AccountSet.');
+  if (['SetFlag', 'ClearFlag', 'Domain', 'EmailHash', 'MessageKey', 'TransferRate', 'TickSize', 'NFTokenMinter'].some((f) => tx[f] !== undefined)) p.push('A co-signature must not change the account.');
+  if (tx.Account !== account) p.push(`Signed by ${String(tx.Account)}, not ${account}.`);
+  let derived = ''; try { derived = deriveAddress(String(tx.SigningPubKey ?? '')); } catch { /* below */ }
+  if (derived !== account) p.push('Not signed by the account\'s master key.');
+  const memos = Array.isArray(tx.Memos) ? (tx.Memos as Array<{ Memo?: { MemoType?: string; MemoData?: string } }>) : [];
+  if (!memos.some((m) => m.Memo?.MemoType?.toUpperCase() === utf8Hex(CO_SIGN_MEMO_TYPE) && m.Memo?.MemoData?.toUpperCase() === utf8Hex(coSignStatement(cs.terms)))) p.push('The memo is not the co-signature statement for these terms.');
+  let ok = false; try { ok = verifySignature(cs.txBlob); } catch { ok = false; }
+  if (!ok) p.push('The signature does not verify.');
+  if (!(Date.parse(cs.terms.expiresAt) > Date.parse(now))) p.push('The co-signature has expired.');
+  return p;
 }
 
 export interface ApprovalReason { code: string; message: string }
@@ -184,9 +222,19 @@ export async function evaluateSigningIntent(state: MarketState, intent: SigningI
       mandateNote = m.reason;
       if (!m.ok) no('mandate', `Agent ${buyer.name}: ${m.reason}`);
       else if (m.needsApproval) {
-        const grantors = new Set(state.mandates.filter((x) => x.agentPartyId === buyer.partyId).map((x) => x.grantedBy));
-        if (!intent.coSignedBy || !grantors.has(intent.coSignedBy)) no('co-signature', `Agent ${buyer.name}: ${m.reason} — co-signature missing.`);
-        else coSignedBy = intent.coSignedBy;
+        // A real co-signature: signed by a grantor's profile account, for this network, contract, stage, action and the stage's full amount.
+        const stageDrops = sellerAccount ? milestoneEscrowLegs(contract, intent.milestone, sellerAccount).reduce((a, l) => a + BigInt(l.drops), 0n).toString() : null;
+        const grantors = [...new Set(state.mandates.filter((x) => x.agentPartyId === buyer.partyId).map((x) => x.grantedBy))];
+        const cs = intent.coSignature;
+        if (!cs) no('co-signature', `Agent ${buyer.name}: ${m.reason} — ask ${grantors.join(' or ')} to co-sign this stage (cappz-market cosign ${contract.contractId}).`);
+        else {
+          const t = cs.terms;
+          const termProblems = [t.network !== intent.network && 'network', t.contractId !== contract.contractId && 'contract', t.milestone !== intent.milestone && 'milestone', t.action !== 'fund' && 'action', t.amountDrops !== stageDrops && 'amount'].filter(Boolean);
+          const signer = grantors.find((g) => { const acct = state.parties.get(g)?.xrplAccount; return !!acct && verifyCoSignature(cs, acct, now).length === 0; });
+          if (termProblems.length) no('co-signature', `The co-signature is for a different ${termProblems.join(', ')}.`);
+          else if (!signer) no('co-signature', `The co-signature is not a valid signature by ${grantors.join(' or ')} (their profile XRPL account): ${grantors.map((g) => { const acct = state.parties.get(g)?.xrplAccount; return acct ? verifyCoSignature(cs, acct, now).join(' ') : `${g} has no XRPL account on their profile`; }).join(' / ')}`);
+          else coSignedBy = signer;
+        }
       }
     }
   } else {
@@ -240,4 +288,23 @@ export async function verifyApproval(signed: SignedApproval, tx: Record<string, 
   if (Date.parse(signed.approval.expiresAt) <= Date.parse(now)) p.push('The approval has expired.');
   if ((await intentHash(tx)) !== signed.approval.txHash) p.push('The transaction differs from the one approved.');
   return p;
+}
+
+/**
+ * A SigningDeps.approve hook: before each escrow transaction is signed, ask the approval service to approve these
+ * exact bytes and verify the signed answer against the published key. Throws (nothing is signed) on any refusal.
+ */
+export function approvalHook(opts: { serviceUrl: string; publicKey: string; network: XrplNetwork; contractId: string; milestone: number; coSignature?: CoSignature; onApproved?: (a: SignedApproval) => void; fetcher?: typeof fetch }): (prepared: Record<string, unknown>) => Promise<void> {
+  const f = opts.fetcher ?? fetch;
+  return async (prepared) => {
+    let res: Response;
+    try {
+      res = await f(`${opts.serviceUrl.replace(/\/$/, '')}/${opts.network}/authorize`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ contractId: opts.contractId, milestone: opts.milestone, tx: prepared, ...(opts.coSignature ? { coSignature: opts.coSignature } : {}) }) });
+    } catch (e) { throw new Error(`The signing-approval service could not be reached (${(e as Error).message}); nothing was signed.`); }
+    const body = (await res.json().catch(() => ({}))) as { approved?: boolean; reasons?: ApprovalReason[]; error?: string } & Partial<SignedApproval>;
+    if (!body.approved) throw new Error(`Not approved for signing: ${(body.reasons ?? []).map((r) => r.message).join(' ') || body.error || `HTTP ${res.status}`} Nothing was signed.`);
+    const problems = await verifyApproval(body as SignedApproval, prepared, opts.publicKey);
+    if (problems.length) throw new Error(`The approval does not cover this transaction: ${problems.join(' ')} Nothing was signed.`);
+    opts.onApproved?.(body as SignedApproval);
+  };
 }

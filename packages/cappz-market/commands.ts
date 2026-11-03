@@ -22,7 +22,9 @@ import { searchMarket } from '../../src/lib/marketplace/search';
 import { matchDemand } from '../../src/lib/marketplace/matching';
 import { newEscrowSecret, prepareEscrowFinish, prepareStageEscrows } from '../../src/lib/marketplace/settlement';
 import { liveSigningDeps, seedSigner, signAndSubmit, signAndSubmitAll, type SigningDeps } from '../../src/lib/marketplace/ledgerSigning';
-import { verifyApproval, type SignedApproval, type ApprovalReason } from '../../src/lib/marketplace/signingApproval';
+import { approvalHook, coSignTx, verifyCoSignature, type CoSignature, type CoSignTerms } from '../../src/lib/marketplace/signingApproval';
+import { milestoneEscrowLegs } from '../../src/lib/marketplace/settlement';
+import { Wallet } from 'xrpl';
 import { xrpNeededForStage } from '../../src/lib/marketplace/onRamp';
 import { AGENT_OPERATIONS, executeAgentOperation, type AgentOperation } from '../../src/lib/marketplace/agentApi';
 import { verifyCheck, type SignedCheck } from '../../src/lib/marketplace/counterpartyCheck';
@@ -37,25 +39,28 @@ import { ToolError, boxKey, getDiscovery, homeDir, loadMarket, marketNetwork, ma
  * signed, and verify the signed approval against the published key and those bytes. Fails closed: no approval, no
  * signature. Networks the service does not cover (devnet) sign without one, and say so.
  */
-async function approvedSigning(net: string, contractId: string, milestone: number, approvals: string[]): Promise<SigningDeps> {
+async function approvedSigning(net: string, contractId: string, milestone: number, approvals: string[], coSignature?: CoSignature): Promise<SigningDeps> {
   const d = await getDiscovery(); const svc = d.services?.counterpartyCheck;
   if (!svc?.url || !svc.publicKey) {
     if (net === 'mainnet') throw new ToolError(`${marketUrl()} publishes no signing-approval service, so mainnet escrow is not signed.`);
     approvals.push(`none (no approval service published for ${net})`); return liveSigningDeps;
   }
   if (!svc.networks.includes(net)) { approvals.push(`none (the approval service covers ${svc.networks.join(' and ')}, not ${net})`); return liveSigningDeps; }
-  return {
-    ...liveSigningDeps,
-    async approve(prepared) {
-      const res = await fetch(`${svc.url}/${net}/authorize`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ contractId, milestone, tx: prepared }) })
-        .catch((e: Error) => { throw new ToolError(`The signing-approval service could not be reached (${e.message}); nothing was signed.`, 'Retry shortly.'); });
-      const body = (await res.json().catch(() => ({}))) as { approved?: boolean; reasons?: ApprovalReason[]; error?: string } & Partial<SignedApproval>;
-      if (!body.approved) throw new ToolError(`Not approved for signing: ${(body.reasons ?? []).map((r) => r.message).join(' ') || body.error || `HTTP ${res.status}`}`, 'Nothing was signed. Check the deal with: cappz-market show ' + contractId);
-      const problems = await verifyApproval(body as SignedApproval, prepared, svc.publicKey);
-      if (problems.length) throw new ToolError(`The approval does not cover this transaction: ${problems.join(' ')}`, 'Nothing was signed.');
-      approvals.push((body as SignedApproval).approval.txHash);
-    },
-  };
+  const hook = approvalHook({ serviceUrl: svc.url, publicKey: svc.publicKey, network: net as XrplNetwork, contractId, milestone, coSignature, onApproved: (a) => approvals.push(a.approval.txHash) });
+  return { ...liveSigningDeps, approve: async (prepared) => { try { await hook(prepared); } catch (e) { throw new ToolError((e as Error).message, 'Check the deal with: cappz-market show ' + contractId); } } };
+}
+
+/** The grantor party whose profile account made this (service-verified) co-signature. */
+function coSignerOf(mk: Market, c: ContractView, cs: CoSignature): string | undefined {
+  const grantors = mk.state.mandates.filter((m) => m.agentPartyId === c.buyerId).map((m) => m.grantedBy);
+  return grantors.find((g) => { const acct = mk.state.parties.get(g)?.xrplAccount; return !!acct && verifyCoSignature(cs, acct, new Date().toISOString()).length === 0; });
+}
+
+/** Read a co-signature given as JSON or as a file path. */
+async function readCoSignature(v: unknown): Promise<CoSignature | undefined> {
+  if (v === undefined) return undefined;
+  const text = String(v).trim().startsWith('{') ? String(v) : await readFile(resolve(String(v)), 'utf8');
+  try { const cs = JSON.parse(text) as CoSignature; if (!cs.terms || !cs.txBlob) throw new Error('shape'); return cs; } catch { throw new ToolError('--co-signature must be the JSON (or a file of it) that cappz-market cosign printed.'); }
 }
 
 export type ParamType = 'string' | 'number' | 'boolean' | 'json';
@@ -263,6 +268,37 @@ export const COMMANDS: Command[] = [
     },
   },
   {
+    name: 'cosign',
+    summary: 'Mandate grantor (a person): co-sign one stage of your agent’s deal that is above its approval threshold. Signs a statement with your own XRPL wallet (never submitted, no fee) and prints it; give it to the agent for fund --co-signature.',
+    params: [
+      { name: 'contract', type: 'string', description: 'Contract id.', required: true, positional: true },
+      { name: 'milestone', type: 'number', description: 'Stage index (default: the stage to fund now).' },
+      { name: 'hours', type: 'number', description: 'How long the co-signature is valid (default 24).' },
+    ],
+    async run(a, o) {
+      const mk = await loadMarket(o, true);
+      const c = contractOf(mk, str(a, 'contract'));
+      const buyer = mk.state.parties.get(c.buyerId);
+      if (buyer?.kind !== 'agent') throw new ToolError('Only an agent buyer’s stages need a co-signature.');
+      const grantors = new Set(mk.state.mandates.filter((m) => m.agentPartyId === buyer.partyId).map((m) => m.grantedBy));
+      if (!mk.partyId || !grantors.has(mk.partyId)) throw new ToolError(`Only a party that granted ${buyer.name} a mandate can co-sign (${[...grantors].join(', ') || 'none'}).`);
+      const me = mk.state.parties.get(mk.partyId)!;
+      const w = await requireWallet();
+      if (me.xrplAccount !== w.classicAddress) throw new ToolError(`Your profile’s XRPL account is ${me.xrplAccount ?? 'missing'}, but this wallet is ${w.classicAddress}.`, 'The co-signature must come from the account on your profile: cappz-market profile --xrpl-account …');
+      if (!w.seed) throw new ToolError('This wallet has no seed on this computer, so it cannot sign.');
+      const milestone = a.milestone === undefined ? (M.currentStage(c)?.index ?? 0) : num(a, 'milestone');
+      const seller = mk.state.parties.get(c.sellerId)?.xrplAccount;
+      if (!seller) throw new ToolError('The seller has no XRPL account on their profile yet.');
+      const amountDrops = milestoneEscrowLegs(c, milestone, seller).reduce((s, l) => s + BigInt(l.drops), 0n).toString();
+      const terms: CoSignTerms = { network: mk.policy.network as XrplNetwork, contractId: c.contractId, milestone, action: 'fund', amountDrops, expiresAt: new Date(Date.now() + num(a, 'hours', 24) * 3_600_000).toISOString() };
+      const signed = Wallet.fromSeed(w.seed).sign(coSignTx(w.classicAddress, terms) as never);
+      const cs: CoSignature = { terms, txBlob: signed.tx_blob };
+      const problems = verifyCoSignature(cs, w.classicAddress, new Date().toISOString());
+      if (problems.length) throw new ToolError(`Could not make a valid co-signature: ${problems.join(' ')}`);
+      return { coSigned: `${c.title} — stage ${milestone} (${c.milestones[milestone]?.label ?? ''}): ${Number(amountDrops) / 1e6} XRP on ${terms.network}`, validUntil: terms.expiresAt, coSignature: cs, next: `Give the agent the coSignature JSON: cappz-market fund ${c.contractId} --co-signature '<json>' (or a file). Nothing was submitted to the ledger.` };
+    },
+  },
+  {
     name: 'mandate',
     summary: 'Principal (a person or organization running this tool): grant your agent a mandate — what it may do, in which categories, up to how much — or revoke one. Agents cannot grant themselves anything.',
     params: [
@@ -466,11 +502,13 @@ export const COMMANDS: Command[] = [
     params: [
       { name: 'contract', type: 'string', description: 'Contract id.', required: true, positional: true },
       { name: 'reference', type: 'string', description: 'USD deals only: the payment reference (USD is otherwise paid in the web app).' },
+      { name: 'co-signature', type: 'string', description: 'Agents above their mandate threshold: the co-signature (JSON or file) the mandate grantor made with cappz-market cosign.' },
     ],
     async run(a, o) {
       const mk = await loadMarket(o, true); guardMainnet(this, mk, o);
       const c = contractOf(mk, str(a, 'contract'));
       if (c.buyerId !== mk.partyId) throw new ToolError('Only the buyer funds a contract.');
+      const coSignature = await readCoSignature(a['co-signature']);
       const stage = M.currentStage(c) ?? (() => { throw new ToolError('Every stage is paid.'); })();
       if (mk.mode === 'demo') return commitAndReport(mk, await M.buildFund(mk.state, mk.actor(), c.contractId, stage.need, { rail: 'demo' }), { stage: c.milestones[stage.index].label, amount: stage.need, next: 'The seller delivers evidence next; then cappz-market release ' + c.contractId });
       if (c.total.currency === 'USD') {
@@ -490,11 +528,12 @@ export const COMMANDS: Command[] = [
       const box = await boxKey();
       const sealedSecret = (await sealTo(box.publicKey, { contractId: c.contractId, milestone: stage.index, secret })) as unknown as Record<string, unknown>;
       const signed: string[] = []; const approvals: string[] = [];
-      const deps = await approvedSigning(net, c.contractId, stage.index, approvals);
+      const deps = await approvedSigning(net, c.contractId, stage.index, approvals, coSignature);
       try {
         const lts = await signAndSubmitAll(seedSigner(w.seed!), legs.map((l) => l.tx), net, (_n, lt) => signed.push(lt.hash), deps);
         const checks = legs.map((p, i) => ({ milestone: p.milestone, condition: p.condition, sealedSecret, lt: lts[i] }));
-        const txs = await M.buildFundOnLedger(mk.state, mk.actor(), c.contractId, mk.policy, checks);
+        // The approval service verified the grantor's signature; the log records who co-signed.
+        const txs = await M.buildFundOnLedger(mk.state, mk.actor(coSignature ? coSignerOf(mk, c, coSignature) : undefined), c.contractId, mk.policy, checks);
         return commitAndReport(mk, txs, { stage: c.milestones[stage.index].label, escrowed: `${stage.amount} XRP`, ledgerTxs: lts.map((x) => x.hash), approvedIntents: approvals, returnsToYouAfter: '30 days if not released', next: 'The seller delivers evidence; then: cappz-market release ' + c.contractId });
       } catch (e) {
         throw new ToolError(`${(e as Error).message}${signed.length ? ` Escrows already on the ledger: ${signed.join(', ')}.` : ''}`, signed.length ? `Record them with: cappz-market call marketplace.escrow.fund --input '{"contractId":"${c.contractId}","escrows":[…]}' (secret kept in ${homeDir()}).` : undefined);

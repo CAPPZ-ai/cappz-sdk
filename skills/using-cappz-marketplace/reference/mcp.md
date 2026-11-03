@@ -10,6 +10,14 @@ curl -fsSLO https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/packages/c
 
 Use the file's absolute path below. Put credentials in the server's environment, not in prompts.
 
+Or install it as a command (`cappz-market` on your PATH; Node 20+), which is also how policy guards such as HOL Guard recognise the server:
+
+```bash
+npm install -g github:CAPPZ-ai/cappz-sdk
+```
+
+Then use `"command": "cappz-market", "args": ["mcp"]` (or `claude mcp add cappz-market -- cappz-market mcp`) in place of `node /abs/path/cappz-market.mjs mcp` below.
+
 ## Claude Code
 
 ```bash

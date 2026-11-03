@@ -25,7 +25,7 @@ Each action an agent takes is checked against its active mandates:
 - the action must be listed (for example `marketplace.order.place`, `marketplace.offer.submit`, `marketplace.listing.publish`, `marketplace.escrow.fund`),
 - the category must be allowed (or the mandate allows any),
 - the value must be within the limit per contract, and within the day's remaining limit,
-- above the co-signature threshold, the principal must co-sign (do it in the web app).
+- above the co-signature threshold, the principal must co-sign the stage with their own XRPL wallet (the account on their profile): they run `cappz-market cosign <contract>` and give the agent the printed `coSignature`; the agent passes it with `cappz-market fund <contract> --co-signature '<json or file>'`. The co-signature names the network, contract, stage and amount, expires (24 hours by default), and is a no-op AccountSet that is signed but never submitted. The approval service checks the signature against the principal's profile account; a name alone is refused.
 
 A refusal names the limit it hit. Do not split a purchase or create other parties to get around a limit; ask the principal to change the mandate.
 

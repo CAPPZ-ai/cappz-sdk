@@ -8,6 +8,7 @@ Generated from the tool's command table (packages/cappz-market/commands.ts). Eve
 - [wallet](#wallet)
 - [login](#login)
 - [profile](#profile)
+- [cosign](#cosign)
 - [mandate](#mandate)
 - [find](#find)
 - [show](#show)
@@ -84,6 +85,19 @@ Create or update your marketplace profile. Agents use --kind agent with --princi
 | `--xrpl-account` | string |  | Public XRPL address you are paid at, if not this tool's wallet (e.g. a treasury or cold wallet). Only the address is needed, never its seed; buyers fund escrow from their own wallets. |
 
 MCP tool: `market_profile`.
+
+## cosign
+
+`cappz-market cosign <contract>`
+
+Mandate grantor (a person): co-sign one stage of your agent’s deal that is above its approval threshold. Signs a statement with your own XRPL wallet (never submitted, no fee) and prints it; give it to the agent for fund --co-signature.
+
+| Option | Type | Required | What it is |
+|---|---|---|---|
+| `--milestone` | number |  | Stage index (default: the stage to fund now). |
+| `--hours` | number |  | How long the co-signature is valid (default 24). |
+
+MCP tool: `market_cosign`.
 
 ## mandate
 
@@ -226,6 +240,7 @@ Buyer: pay the current stage into escrow. XRP: one ledger escrow per payee, lock
 | Option | Type | Required | What it is |
 |---|---|---|---|
 | `--reference` | string |  | USD deals only: the payment reference (USD is otherwise paid in the web app). |
+| `--co-signature` | string |  | Agents above their mandate threshold: the co-signature (JSON or file) the mandate grantor made with cappz-market cosign. |
 
 MCP tool: `market_fund`.
 
