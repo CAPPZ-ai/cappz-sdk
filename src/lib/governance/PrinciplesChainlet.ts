@@ -22,6 +22,11 @@ import { WALLET_ROOTS } from '../wallets/paths';
 // ─── HD Path Constants ───────────────────────────────────────────
 
 /** RepoZ root for principles — m/44'/144'/100'/principles */
+/** Author of substrate-level adoptions (soul.md → COPE). Records written before 15.30.0 say 'lovable-agent'; both mean this author. */
+export const SUBSTRATE_AUTHOR = 'cappz-build-agent';
+export const SUBSTRATE_AUTHOR_ALIASES: readonly string[] = [SUBSTRATE_AUTHOR, 'lovable-agent'];
+export const isSubstrateAuthor = (author: string) => SUBSTRATE_AUTHOR_ALIASES.includes(author);
+
 export const PRINCIPLES_ROOT = `${WALLET_ROOTS.UNASSIGNED.replace(/\/99'$/, "/100'")}/principles`;
 
 /** Build a versioned principle path. */
@@ -59,7 +64,7 @@ export interface PrincipleRecord {
   sourceDocument: string;
   /** Adoption / amendment rationale */
   rationale: string;
-  /** Author wallet (or 'lovable-agent' for substrate-level adoption) */
+  /** Author wallet (or SUBSTRATE_AUTHOR for substrate-level adoption; earlier records say 'lovable-agent', an alias of it) */
   author: string;
   adoptedAt: string;
   /** If amendment, the prior version's contentHash */
@@ -315,7 +320,7 @@ export async function bootstrapCopeSubstrate(): Promise<PrincipleRecord> {
       sourceDocument: 'public/soul.md',
       content,
       rationale: 'Initial adoption of COPE substrate v1',
-      author: 'lovable-agent',
+      author: SUBSTRATE_AUTHOR,
     });
   }
 
@@ -327,7 +332,7 @@ export async function bootstrapCopeSubstrate(): Promise<PrincipleRecord> {
       sourceDocument: 'public/soul.md',
       content,
       rationale: `soul.md drift detected; amending v${latest.version} → v${latest.version + 1}`,
-      author: 'lovable-agent',
+      author: SUBSTRATE_AUTHOR,
     });
   }
   return latest;

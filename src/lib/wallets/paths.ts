@@ -460,3 +460,49 @@ export const HEWN_ADMIN_ADDRESS = bip44Address(HEWN_ROOT, 0, 0);
 
 /** Agent-owned session descendants; IDs never encode display labels. */
 export function agentSessionPath(parent: string, ...parts: string[]): string { return `${parent}/${parts.join("/")}`; }
+
+// ─── COPE nodes, capabilities and the provider-segment rule (15.30.0) ──
+
+/**
+ * COPE nodes (crystallized learnings, accepted corrections) live under the
+ * CAPPZ principles account, beside the COPE substrate itself
+ * (m/44'/144'/100'/principles/cope/v1): m/44'/144'/100'/cope/<topic>/<YYYY-MM-DD>.
+ * Earlier documentation named m/44'/144'/0'/lovable/cope/…; nothing was ever
+ * written there, and `copeAlias` resolves such an address read-only.
+ */
+export const COPE_ROOT = `${WALLET_ROOTS.REPOZ}/cope`;
+const slugSegment = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'untitled';
+/** One COPE node: a topic (slugged) and the day it was crystallized (YYYY-MM-DD). */
+export function copeNodePath(topic: string, date: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error(`COPE node date must be YYYY-MM-DD, got ${date}`);
+  return `${COPE_ROOT}/${slugSegment(topic)}/${date}`;
+}
+/** The shared log of proposed and accepted agent learnings (one public partition of the hosted mirror). */
+export const COPE_LEARNING_LOG = `${COPE_ROOT}/learning/event-log`;
+/** The documented-but-never-used provider-rooted COPE prefix. */
+export const LEGACY_COPE_PREFIX = `${WALLET_ROOTS.HEAVEN}/lovable/cope`;
+/** Read-only alias: an address under the legacy prefix → its CAPPZ-rooted address; any other address unchanged. */
+export function copeAlias(address: string): string {
+  return address.startsWith(`${LEGACY_COPE_PREFIX}/`) ? `${COPE_ROOT}/${address.slice(LEGACY_COPE_PREFIX.length + 1)}` : address;
+}
+
+/** A platform capability's canonical MDM account: m/44'/144'/0'/cappz/capabilities/<id>. */
+export function capabilityPath(id: string): string {
+  return cappzPath('capabilities', slugSegment(id));
+}
+
+/**
+ * Third-party names that must not own a segment of a CAPPZ address or a
+ * provenance string: addresses are CAPPZ's, whichever vendor built or hosts a
+ * part. A path naming the service a CAPPZ skill bridges to is the only
+ * exception, and each one is listed with its reason where it is checked.
+ */
+export const PROVIDER_NAMES = ['lovable', 'openai', 'anthropic', 'claude', 'gemini', 'google', 'supabase', 'cloudflare', 'vercel', 'netlify', 'stripe', 'xumm', 'xaman', 'crossmark', 'github', 'together', 'ollama', 'aws', 'azure', 'huggingface'] as const;
+/** The provider names that appear as a word in any segment of `path`. */
+export function providerSegmentsIn(path: string): string[] {
+  const found = new Set<string>();
+  for (const seg of path.split('/')) {
+    for (const word of seg.toLowerCase().split(/[^a-z0-9]+/)) if ((PROVIDER_NAMES as readonly string[]).includes(word)) found.add(word);
+  }
+  return [...found];
+}
