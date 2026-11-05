@@ -31,7 +31,8 @@
     "mesh": "vite-node packages/cappz-mesh-node/main.ts --",
     "mesh:kit": "vite-node packages/cappz-mesh-node/main.ts -- kit-build",
     "market:build": "node packages/cappz-market/build.mjs && vite-node packages/cappz-market/write-docs.ts",
-    "native:bench": "vite-node packages/cappz-native/bench/sdk-bench.ts"
+    "native:bench": "vite-node packages/cappz-native/bench/sdk-bench.ts",
+    "validate:token-stage": "vite-node tools/validate-token-stage.ts --"
   },
   "dependencies": {
     "@noble/curves": "^1.9.6",

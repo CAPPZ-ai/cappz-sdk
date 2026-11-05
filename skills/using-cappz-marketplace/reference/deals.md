@@ -133,3 +133,8 @@ Reputation is computed from finished contracts and reviews (`review`), never typ
 ## What is public
 
 Each network (devnet, testnet, mainnet) has its own shared log. Everything in it is public: profiles (name, region, roles), listings, requests, bids, contracts, stage states, evidence hashes and ledger transaction hashes. Account ids are not: each entry carries only a hash of the account that wrote it. Never put personal data, street addresses or secrets in titles, descriptions or notes.
+
+
+## Validating the token rail yourself
+
+`npm run validate:token-stage -- --rlusd 2` (in the SDK repository) runs a whole RLUSD deal on the XRPL testnet with test money: two faucet wallets, test RLUSD bought from the testnet XRP/RLUSD pool, the counterparty check stopping a seller without a trust line, a deal with a 1% fee to the testnet treasury, each stage Payment approved for its exact bytes (a substituted destination refused), signed, validated and recorded, and the deal completing. The deal is replayed in that process rather than published to the shared log, so the approvals are the SDK's rules run locally, not the hosted service's answer.
