@@ -9,6 +9,7 @@ import { evaluateSigningIntent } from '../lib/marketplace/signingApproval';
 import { PAYMENT_ASSETS, PAYMENT_RAILS, assetAvailability, currencyOf, issuedValue, resolvePaymentAsset, unitsOfIssuedValue, USD_TOKENZ_FAMILY } from '../lib/marketplace/paymentAssets';
 import { providerSegmentsIn } from '../lib/wallets/paths';
 import { fundingNeed } from '../lib/marketplace/walletFunding';
+import { applyNetworkAddressOverrides } from '../lib/network/networkConfig';
 import { committedKey } from '../lib/marketplace/rules';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -54,7 +55,9 @@ describe('payment assets and rails registry', () => {
   it('availability is a state with a reason: RLUSD is not issued on devnet; a bad issuer checksum is refused', () => {
     expect(assetAvailability('USD-tokenZ/1', 'testnet').state).toBe('available');
     expect(assetAvailability('USD-tokenZ/1', 'devnet')).toEqual(expect.objectContaining({ state: 'not-issued' }));
-    expect(assetAvailability('CAPPZ', 'devnet').state).toBe('invalid-config');
+    expect(assetAvailability('CAPPZ', 'devnet').state).toBe('available');
+    applyNetworkAddressOverrides({ devnet: { issuer: { address: 'rN7n7otQDd6FczFgLdlqtyMVrn3WkRxBPK' } } }); // fails checksum
+    try { expect(assetAvailability('CAPPZ', 'devnet').state).toBe('invalid-config'); } finally { applyNetworkAddressOverrides({}); }
     expect(assetAvailability('XRP', 'devnet').state).toBe('available');
   });
 

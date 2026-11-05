@@ -27,16 +27,16 @@ export interface NetworkAddresses {
 
 const NETWORK_REGISTRY: Record<CappzNetwork, NetworkAddresses> = {
   testnet: {
-    issuer: 'rU6K7V3Po4snVhBBaU29sesqs2qTQJWDw1',
-    treasury: 'rpR95n1iFkTqpoy1e878f4Z1pVHVtWKMNQ',
-    service: 'rLHzPsX6oXkzU9rFpMiFyiVfXZ9k8jJ3rZ',
+    issuer: 'rUGJER9ryngy6i12ZW57zjRiBZQ9Cx8ecD',
+    treasury: 'rnQ3gydd9kTdx6gHKzhNHSKHSq6whzdiMe',
+    service: 'rsCYgPfATXotqcnpbUwugafvUCwoYy1hf3',
     wsEndpoint: 'wss://s.altnet.rippletest.net:51233',
     rpcEndpoint: 'https://s.altnet.rippletest.net:51234',
   },
   devnet: {
-    issuer: 'rN7n7otQDd6FczFgLdlqtyMVrn3WkRxBPK',
-    treasury: 'rDN4U8Xby5iLvqwS1mG8KxyMQhU3FyZ3yf',
-    service: 'rJP4Z8xhqhzJjV8MvRnz3W2qQ7yKjS9tLm',
+    issuer: 'rsPqd13cpLfatVSw79eAbAJdDoAnLwXbfc',
+    treasury: 'rUJ8RQzFRjt3BHnC8aikidJDdxeBeqLofx',
+    service: 'rBQSSpamtnHvVRJHkBQ2hMvLUENs5zESjX',
     wsEndpoint: 'wss://s.devnet.rippletest.net:51233',
     rpcEndpoint: 'https://s.devnet.rippletest.net:51234',
   },
