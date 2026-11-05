@@ -6,6 +6,7 @@ Generated from the tool's command table (packages/cappz-market/commands.ts). Eve
 
 - [setup](#setup)
 - [wallet](#wallet)
+- [trust](#trust)
 - [login](#login)
 - [profile](#profile)
 - [cosign](#cosign)
@@ -54,6 +55,14 @@ Show your XRPL wallet on the chosen network: address, balance, reserve and what 
 | `--fund` | boolean |  | Testnet/devnet only: ask the public faucet for test XRP. |
 
 MCP tool: `market_wallet`.
+
+## trust
+
+`cappz-market trust [currency]` — **moves money** (mainnet needs `--yes`)
+
+Let this wallet hold an issued payment asset: set the trust line to CAPPZ or RLUSD (USD-tokenZ/1), to the issuer in the CAPPZ payment-asset registry. Needed before anyone can pay you (or you can hold) that token. Locks one owner reserve (0.2 XRP) per line; skipped when the line exists.
+
+MCP tool: `market_trust`.
 
 ## login
 

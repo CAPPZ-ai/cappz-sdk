@@ -56,7 +56,7 @@ type Net = 'mainnet' | 'testnet';
 const NETS: Net[] = ['mainnet', 'testnet'];
 const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type, content-digest, signature, signature-input, cappz-wallet, cappz-party', 'access-control-allow-methods': 'GET, POST, OPTIONS' };
 /** The card's version follows the SDK release that ships this worker. */
-export const SERVICE_VERSION = '15.31.0';
+export const SERVICE_VERSION = '15.31.2';
 const json = (code: number, body: unknown) => new Response(JSON.stringify(body, null, 2), { status: code, headers: { 'content-type': 'application/json; charset=utf-8', ...CORS } });
 const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 const unhex = (h: string) => new Uint8Array((h.match(/../g) ?? []).map((x) => parseInt(x, 16)));

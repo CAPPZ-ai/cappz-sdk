@@ -23,14 +23,14 @@ import { matchDemand } from '../../src/lib/marketplace/matching';
 import { channelCapDrops, channelIdOf, payChannelNode, prepareChannelClaim, prepareChannelClose, prepareChannelCreate, prepareChannelFeePayments, signChannelClaim, unitPriceDrops, verifyChannelClaim } from '../../src/lib/marketplace/settlement';
 import { contractRail, newEscrowSecret, prepareEscrowFinish, prepareStageEscrows, prepareStagePayments, stagePaymentLegs } from '../../src/lib/marketplace/settlement';
 import { assetLabel, assetsOn, currencyOf as assetCodeOf, formatMoney, fromMinor, PAYMENT_ASSETS, tokenSpecFor } from '../../src/lib/marketplace/paymentAssets';
-import { fundingNeed, fundingSummary } from '../../src/lib/marketplace/walletFunding';
+import { fundingNeed, fundingSummary, prepareTrustSet } from '../../src/lib/marketplace/walletFunding';
 import { liveSigningDeps, seedSigner, signAndSubmit, signAndSubmitAll, type SigningDeps } from '../../src/lib/marketplace/ledgerSigning';
 import { approvalHook, coSignTx, verifyCoSignature, type CoSignature, type CoSignTerms } from '../../src/lib/marketplace/signingApproval';
 import { milestoneEscrowLegs } from '../../src/lib/marketplace/settlement';
 import { Wallet } from 'xrpl';
 import { xrpNeededForStage } from '../../src/lib/marketplace/walletFunding';
 import { AGENT_OPERATIONS, executeAgentOperation, type AgentOperation } from '../../src/lib/marketplace/agentApi';
-import { verifyCheck, type SignedCheck } from '../../src/lib/marketplace/counterpartyCheck';
+import { readTrustLine, verifyCheck, type SignedCheck } from '../../src/lib/marketplace/counterpartyCheck';
 import type { MarketplaceVerb } from '../../src/lib/marketplace/marketplaceVerbs';
 import type { ContractView, Currency, ListingContent, PartyKind, PartyProfile, PartyRole, SupplyOfferContent, SupplyRequestContent } from '../../src/lib/marketplace/types';
 import type { ListingView, MarketState, RequestView } from '../../src/lib/marketplace/replay';
@@ -225,6 +225,41 @@ export const COMMANDS: Command[] = [
       }
       const st = await walletStatus(w.classicAddress, net);
       return { ...st, assetsOnThisNetwork: assetsOn(net).map((x) => x.label), fundIt: fundingNeed({ network: net, currency: 'XRP', amount: 0, accountExists: st.activated }).steps, tokens: 'CAPPZ and RLUSD (USD-tokenZ) need a trust line to their issuer first; cappz-market check <your address> shows what is missing.', note: 'Reserves are network settings read from the ledger now. Each open escrow, offer or trust line adds one owner reserve until it closes; it is returned then.' };
+    },
+  },
+  {
+    name: 'trust',
+    summary: 'Let this wallet hold an issued payment asset: set the trust line to CAPPZ or RLUSD (USD-tokenZ/1), to the issuer in the CAPPZ payment-asset registry. Needed before anyone can pay you (or you can hold) that token. Locks one owner reserve (0.2 XRP) per line; skipped when the line exists.',
+    money: true,
+    params: [
+      { name: 'currency', type: 'string', description: 'CAPPZ or USD-tokenZ/1 (RLUSD); comma-separated for both (default CAPPZ,USD-tokenZ/1).', positional: true },
+    ],
+    async run(a, o) {
+      const net = marketNetwork(o) as XrplNetwork;
+      const codes = list(a.currency ?? 'CAPPZ,USD-tokenZ/1').map((c) => assetCodeOf(c) ?? (() => { throw new ToolError(`${c} is not a payment asset.`, 'Use CAPPZ or USD-tokenZ/1 (RLUSD).'); })());
+      const w = await requireWallet();
+      const st = await walletStatus(w.classicAddress, net);
+      if (!st.activated) throw new ToolError(`Your wallet ${w.classicAddress} is not activated on XRPL ${net}.`, net === 'mainnet' ? fundingNeed({ network: net, currency: 'XRP', amount: 0, accountExists: false }).steps.join(' ') : 'Run: cappz-market wallet --fund');
+      const results: Array<Record<string, unknown>> = []; const todo: Array<{ code: Currency; tx: Record<string, unknown> }> = [];
+      for (const code of codes) {
+        let tx: Record<string, unknown>;
+        try { tx = prepareTrustSet(w.classicAddress, code, net); } catch (e) { results.push({ asset: assetLabel(code), state: 'unavailable', reason: (e as Error).message }); continue; }
+        const lim = tx.LimitAmount as { currency: string; issuer: string };
+        const line = await readTrustLine(net, w.classicAddress, lim.issuer, lim.currency);
+        if (line.error) throw new ToolError(`Could not read your ${assetLabel(code)} trust line: ${line.error}`);
+        if (line.present) results.push({ asset: assetLabel(code), state: 'already-set', issuer: lim.issuer, balance: line.balance });
+        else todo.push({ code, tx });
+      }
+      if (todo.length) {
+        if (net === 'mainnet' && !o.yes) throw new ToolError(`Setting ${todo.map((t) => assetLabel(t.code)).join(' and ')} trust line(s) on mainnet locks ${todo.length} × ${st.reserveOwnerXrp} XRP of your reserve.`, 'Confirm with the person you act for, then repeat with --yes.');
+        if (st.spendableXrp < todo.length * st.reserveOwnerXrp + 0.001) throw new ToolError(`Each trust line locks ${st.reserveOwnerXrp} XRP; you have ${st.spendableXrp} XRP spendable.`, fundingSummary(fundingNeed({ network: net, currency: 'XRP', amount: todo.length * st.reserveOwnerXrp, accountExists: true })));
+        for (const t of todo) {
+          const lt = await signAndSubmit(seedSigner(w.seed!), t.tx, net);
+          const lim = t.tx.LimitAmount as { issuer: string };
+          results.push({ asset: assetLabel(t.code), state: lt.result === 'tesSUCCESS' ? 'set' : 'failed', result: lt.result, issuer: lim.issuer, tx: lt.hash });
+        }
+      }
+      return { wallet: w.classicAddress, network: net, lines: results, next: 'Others can now pay you in these tokens. To hold some, get them into this wallet (on mainnet: withdraw from an exchange on the XRP Ledger network). Check any time: cappz-market check <your address> --currency USD-tokenZ/1' };
     },
   },
   {

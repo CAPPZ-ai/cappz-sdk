@@ -171,3 +171,14 @@ describe('settlement check for issued tokens (trust lines, issuer flags)', () =>
     expect(short.reasons.map((r) => r.code)).toEqual(expect.arrayContaining(['payer-short-token', 'asset-escrowable']));
   });
 });
+
+describe('trust lines from the registry', () => {
+  it('prepares a no-ripple TrustSet to the registry issuer, and refuses assets that need none or are not issued', async () => {
+    const { prepareTrustSet, TF_SET_NO_RIPPLE } = await import('../lib/marketplace/walletFunding');
+    const tx = prepareTrustSet(BUYER, 'USD-tokenZ/1', 'mainnet');
+    expect(tx).toEqual({ TransactionType: 'TrustSet', Account: BUYER, Flags: TF_SET_NO_RIPPLE, LimitAmount: { currency: RLUSD_HEX, issuer: 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De', value: '1000000000' } });
+    expect((prepareTrustSet(BUYER, 'CAPPZ', 'mainnet').LimitAmount as { issuer: string }).issuer).toBe('rMBcKBgMZFmVrSsJXubMUb2MpSxSLa6fTA');
+    expect(() => prepareTrustSet(BUYER, 'XRP', 'mainnet')).toThrow(/needs no trust line/);
+    expect(() => prepareTrustSet(BUYER, 'USD-tokenZ/1', 'devnet')).toThrow(/not issued on devnet/);
+  });
+});

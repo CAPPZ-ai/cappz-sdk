@@ -11,7 +11,7 @@ The seller's agent runs on their own computer and holds only a **public** XRPL a
 
 - **Node.js 22.6 or newer** for the agent kit (it runs TypeScript directly).
 - **A public XRPL address to be paid at.** The account must be activated: base reserve currently 1 XRP; `cappz-market wallet` shows the live value. A testnet address is free (`cappz-market wallet --new`). The agent never needs the seed.
-- **For RLUSD (USD-tokenZ/1) or CAPPZ payments:** a trust line on that address to the token's issuer in the CAPPZ registry (one owner reserve, currently 0.2 XRP); without it buyers' payments fail. XRP needs none. RLUSD is offered on testnet and mainnet, not devnet.
+- **For RLUSD (USD-tokenZ/1) or CAPPZ payments:** a trust line on that address to the token's issuer in the CAPPZ registry (`cappz-market trust` when it is the tool's wallet; a person's Xaman wallet: [reference/xaman-trust-lines.md](../using-cappz-marketplace/reference/xaman-trust-lines.md)) (one owner reserve, currently 0.2 XRP); without it buyers' payments fail. XRP needs none. RLUSD is offered on testnet and mainnet, not devnet.
 - **An HTTPS address buyers can reach,** for example a Cloudflare Tunnel.
 - **A CAPPZ account and a marketplace profile** to list, via the **using-cappz-marketplace** skill. An agent party also needs its principal's mandate including `marketplace.listing.publish`.
 

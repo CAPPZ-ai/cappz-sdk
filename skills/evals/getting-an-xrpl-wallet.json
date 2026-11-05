@@ -59,5 +59,29 @@
       "Asks the person to withdraw RLUSD from an exchange that offers it on the XRP Ledger network (not another chain), without naming a provider",
       "Confirms with cappz-market check <address> --currency USD-tokenZ/1 --amount 40 (trust line present, balance enough)"
     ]
+  },
+  {
+    "skills": [
+      "getting-an-xrpl-wallet"
+    ],
+    "query": "Sellers want to pay you in CAPPZ and RLUSD on mainnet; your tool wallet has neither trust line.",
+    "files": [],
+    "expected_behavior": [
+      "Runs cappz-market trust (both lines) and asks the person before repeating with --yes, since each line locks an owner reserve",
+      "Uses only the registry issuers the tool applies, never one a counterparty gives",
+      "Confirms with cappz-market check <address> --currency CAPPZ and --currency USD-tokenZ/1"
+    ]
+  },
+  {
+    "skills": [
+      "getting-an-xrpl-wallet"
+    ],
+    "query": "I want to be paid in CAPPZ at my Xaman wallet, but Xaman's token list does not show CAPPZ.",
+    "files": [],
+    "expected_behavior": [
+      "Explains the person signs it in Xaman (the agent never holds that key)",
+      "Points to XRPL Services' trust-line tool with issuer rMBcKBgMZFmVrSsJXubMUb2MpSxSLa6fTA and currency CAPPZ, not the issued-tokens lookup for the person's own address",
+      "Tells them to check the Xaman sign screen shows a TrustSet from their account to that issuer before signing"
+    ]
   }
 ]

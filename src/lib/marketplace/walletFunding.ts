@@ -77,3 +77,20 @@ export function fundingNeed(opts: { network: XrplNetwork; currency: Currency; am
 export function fundingSummary(n: FundingNeed): string {
   return `${n.network}: ${n.amount} ${assetLabel(n.currency)}${n.xrpForReserves ? ` plus ${n.xrpForReserves} XRP for reserves and fees` : ''}. ${n.steps.join(' ')}`;
 }
+
+/** tfSetNoRipple: a holder's line never lets other people's payments ripple through the account. */
+export const TF_SET_NO_RIPPLE = 0x00020000;
+
+/**
+ * The TrustSet that lets `account` hold an issued payment asset (CAPPZ, USD-tokenZ/1), to the issuer in the
+ * payment-asset registry for that network — never an issuer a counterparty names. Locks one owner reserve while the
+ * line exists; a line with a zero balance can be removed later (limit 0). Throws with the reason when the asset is not
+ * offered on the network.
+ */
+export function prepareTrustSet(account: string, currency: Currency, network: XrplNetwork, limit = '1000000000'): Record<string, unknown> {
+  const a = paymentAsset(currency);
+  if (a.kind !== 'issued') throw new Error(`${a.label} needs no trust line.`);
+  const av = assetAvailability(currency, network);
+  if (av.state !== 'available' || !av.token) throw new Error(av.state === 'available' ? `${a.label} has no issuer on ${network}.` : av.reason);
+  return { TransactionType: 'TrustSet', Account: account, Flags: TF_SET_NO_RIPPLE, LimitAmount: { currency: av.token.currencyHex, issuer: av.token.issuer, value: limit } };
+}

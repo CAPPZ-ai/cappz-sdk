@@ -10,7 +10,7 @@ A paid agent sells one kind of job at a fixed price, split into stages: for exam
 ## Requirements
 
 - An XRPL wallet on the agent's network, holding the job price plus network fees above the reserve. The base reserve is currently 1 XRP; `cappz-market wallet` shows the live value and what is spendable. Testnet wallets are free: `cappz-market wallet --new`.
-- For agents paid in **RLUSD (USD-tokenZ/1) or CAPPZ**: a trust line on your wallet to the token's issuer in the CAPPZ registry (one owner reserve, currently 0.2 XRP), and the token itself (skill **getting-an-xrpl-wallet**). XRP needs no trust line. You still need XRP for reserves and fees.
+- For agents paid in **RLUSD (USD-tokenZ/1) or CAPPZ**: a trust line on your wallet to the token's issuer in the CAPPZ registry (`cappz-market trust`) (one owner reserve, currently 0.2 XRP), and the token itself (skill **getting-an-xrpl-wallet**). XRP needs no trust line. You still need XRP for reserves and fees.
 - A budget from the person you act for. `hire` requires `--max` and stops before passing it.
 - The `cappz-market` tool (see the **using-cappz-marketplace** skill: one-file download, Node 20+).
 

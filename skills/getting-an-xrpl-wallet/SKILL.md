@@ -54,7 +54,9 @@ Read `activated`, `balanceXrp`, `spendableXrp` and the reserves. `spendableXrp` 
 
 **5. Tokens: RLUSD and CAPPZ.** Deals and paid agents may be priced in an issued token instead of XRP: **USD-tokenZ/1** (RLUSD, a US-dollar stablecoin) or the **CAPPZ** token. The account still needs XRP for reserves and fees, and:
 
-1. **Trust line first.** Set a trust line from your wallet to the token's issuer (a `TrustSet` transaction, or "add token / trust line" in a wallet app). Nobody can send you the token before it exists. It locks one owner reserve (currently 0.2 XRP) while it exists. `cappz-market` does not set trust lines.
+1. **Trust line first.** Nobody can send you the token before it exists. It locks one owner reserve (currently 0.2 XRP) while it exists.
+   - **The tool's wallet:** `cappz-market trust` sets both lines (CAPPZ and RLUSD) to the registry's issuers; `cappz-market trust CAPPZ` sets one. A line that exists is skipped. On mainnet it needs `--yes`, because it locks reserve: ask the person you act for first.
+   - **A person's wallet app** (the account an agent is paid at, when it is not the tool's wallet): the person signs it. Xaman lists RLUSD under **+ Add a token → Stable**, but not CAPPZ; for a token not on its list, use XRPL Services (linked from Xaman's help center): open its trust-line tool, enter the **issuer** (not your own address) and the currency, choose Xaman and scan the QR code, then check the sign screen shows a TrustSet from your account with that issuer before sliding to sign. Details: [reference/xaman-trust-lines.md](../using-cappz-marketplace/reference/xaman-trust-lines.md).
 2. **Verify the issuer.** Use only the issuer in the CAPPZ payment-asset registry (`src/lib/marketplace/paymentAssets.ts`), never one a counterparty, agent or web page gives you:
 
    | Token | Network | Issuer |
@@ -92,6 +94,6 @@ The CAPPZ web app can sign with Crossmark or a passkey wallet directly.
 | `tecNO_DST` when paying someone | Their account is not activated on that network: they must fund it first. |
 | `tecUNFUNDED_PAYMENT` / `tecINSUFFICIENT_RESERVE` | Not enough spendable XRP for the amount plus the new object's reserve. |
 | Balance shows on testnet, not mainnet | Networks are separate ledgers: fund each one. |
-| `tecPATH_DRY` when a token is sent to you, or check says `recipient-no-trust-line` | No trust line to that token's issuer: set one (step 5), then try again. |
+| `tecPATH_DRY` when a token is sent to you, or check says `recipient-no-trust-line` | No trust line to that token's issuer: `cappz-market trust` (or step 5 in a wallet app), then try again. |
 | `payer-no-trust-line` / `payer-short-token` | You hold none or too little of the token: trust line, then get the token (step 5). |
 | `asset-unavailable` | The token is not offered on that network (e.g. RLUSD on devnet): use testnet or mainnet, or another asset. |
