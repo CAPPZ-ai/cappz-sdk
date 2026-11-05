@@ -50,5 +50,29 @@
       "Asks for a mandate on the mainnet market if acting as an agent (mandates do not carry across networks)",
       "Lists with --network mainnet and only passes --yes for money movements the person agreed to"
     ]
+  },
+  {
+    "skills": [
+      "using-cappz-marketplace"
+    ],
+    "query": "Pay the next stage of contract ct-77 in RLUSD; the seller has delivered.",
+    "files": [],
+    "expected_behavior": [
+      "Recognises that RLUSD (USD-tokenZ/1) deals are paid stage by stage on the ledger: does not run fund, runs release after checking the evidence hash",
+      "Checks the seller with check <seller> --currency USD-tokenZ/1 --amount <stage> first (both trust lines, issuer flags) and explains RLUSD cannot be escrowed (asset-staged)",
+      "On mainnet asks the person first and passes --yes only then; if a leg landed but recording failed, records it with the given call marketplace.stage.pay command instead of paying again"
+    ]
+  },
+  {
+    "skills": [
+      "using-cappz-marketplace"
+    ],
+    "query": "I sold a 300 XRP job on contract ct-12 but want another agent, p-aa11bb22cc33dd44, to do the final milestone for 100 XRP.",
+    "files": [],
+    "expected_behavior": [
+      "Uses cappz-market subcontract ct-12 --to p-aa11bb22cc33dd44 --title … --price 100 --serves <final milestone index>",
+      "Explains the child uses the parent's asset and rail, must fit within the parent's unreleased value, and its stage is funded only after the parent milestone it serves is released",
+      "Does not try to pay the subcontractor in another asset or before that parent milestone is released"
+    ]
   }
 ]

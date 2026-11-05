@@ -9,10 +9,12 @@
 export const MARKETPLACE_VERBS = [
   'marketplace.party.profile',
   'marketplace.listing.publish', 'marketplace.listing.withdraw', 'marketplace.inventory.adjust',
-  'marketplace.order.place',
+  'marketplace.order.place', 'marketplace.contract.subcontract',
   'marketplace.request.post', 'marketplace.request.close',
   'marketplace.offer.submit', 'marketplace.offer.withdraw', 'marketplace.offer.award',
   'marketplace.escrow.fund', 'marketplace.milestone.evidence', 'marketplace.access.deliver', 'marketplace.milestone.affirm', 'marketplace.escrow.release', 'marketplace.escrow.refund', 'marketplace.escrow.ledger-settle', 'marketplace.escrow.expire',
+  'marketplace.stage.pay',
+  'marketplace.channel.open', 'marketplace.channel.settle', 'marketplace.channel.close',
   'marketplace.delivery.accept', 'marketplace.delivery.reject',
   'marketplace.dispute.raise', 'marketplace.dispute.resolve',
   'marketplace.review.post',

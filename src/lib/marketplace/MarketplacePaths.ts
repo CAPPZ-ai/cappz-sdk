@@ -14,6 +14,8 @@
  *   │   └── offers/{offerId}                   ← bids
  *   ├── contracts/{contractId}/                ← composite contract wallet (OTC bilateral)
  *   │   ├── agreement · escrow · milestones/{n} · deliveries/{n} · disputes/{n} · reviews/{partyId}
+ *   │   └── subcontracts/{childId}             ← the parent's HD slot for a child contract (ConstituentIncluded target);
+ *   │                                            the child's own lifecycle stays at contracts/{childId}
  *   ├── tokens/{tokenId}                       ← receipt tokens (warehouse receipts, production rights, titles)
  *   └── event-log
  *   UAW  users/{u}/marketplace                 ← a person's private drafts, saved searches, sealed notes
@@ -52,9 +54,13 @@ export const contractMilestone = (contractId: string, n: number) => `${contractR
 export const contractDelivery = (contractId: string, n: number) => `${contractRoot(contractId)}/deliveries/${n}`;
 export const contractDispute = (contractId: string, n: number) => `${contractRoot(contractId)}/disputes/${n}`;
 export const contractReview = (contractId: string, partyId: string) => `${contractRoot(contractId)}/reviews/${partyId}`;
+/** The HD child position of a parent contract that a subcontract occupies; the parent's ConstituentIncluded TX targets it. */
+export const subcontractAddress = (parentId: string, childId: string) => `${contractRoot(parentId)}/subcontracts/${childId}`;
 export const tokenAddress = (tokenId: string) => `${MARKETPLACE_POW_ROOT}/tokens/${tokenId}`;
 /** A marketplace operator (site administrator or delegated app administrator) acting by their pseudonymous party id. */
 export const operatorAddress = (partyId: string) => `${MARKETPLACE_POW_ROOT}/operators/${partyId}`;
 export const mandateAddress = (partyId: string, mandateId: string) => `${partyAddress(partyId)}/mandates/${mandateId}`;
 /** SKU address used in the commodity leg memo (MarketplaceMemoValidator). */
 export const skuAddress = (listingOrRequestId: string) => `${MARKETPLACE_POW_ROOT}/sku/${listingOrRequestId}`;
+/** v15-31-00: a signed reputation attestation for a party, by UTC date (reputationAttestation.ts). */
+export const reputationAddress = (partyId: string, date: string) => `${partyAddress(partyId)}/reputation/${date}`;

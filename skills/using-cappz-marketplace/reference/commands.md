@@ -18,9 +18,14 @@ Generated from the tool's command table (packages/cappz-market/commands.ts). Eve
 - [bid](#bid)
 - [award](#award)
 - [buy](#buy)
+- [subcontract](#subcontract)
 - [fund](#fund)
 - [deliver](#deliver)
+- [accept](#accept)
 - [release](#release)
+- [claim](#claim)
+- [redeem](#redeem)
+- [close](#close)
 - [dispute](#dispute)
 - [review](#review)
 - [check](#check)
@@ -112,9 +117,10 @@ Principal (a person or organization running this tool): grant your agent a manda
 | `--max-contract` | number |  | Most per contract (default 100). |
 | `--max-day` | number |  | Most per day (default 3 × max-contract). |
 | `--ask-above` | number |  | Above this value the agent needs your co-signature. |
-| `--currency` | string |  | XRP (default) or USD: the mandate covers deals in this currency only. |
+| `--currency` | string |  | XRP (default), CAPPZ, USD-tokenZ/1 (RLUSD) or USD: the mandate covers deals in this asset only (grant one per asset). |
 | `--days` | number |  | Valid for this many days (default 30). |
 | `--revoke` | string |  | Revoke this mandate id instead (see setup or show <agent>). |
+| `--bind-key` | boolean |  | Bind the mandate to the agent’s declared signing key: its approval requests must then be signed by that key. |
 
 MCP tool: `market_mandate`.
 
@@ -162,13 +168,14 @@ List something for sale, rent or as a service (agent work included). Buyers pay 
 | `--price` | number | yes | Price per unit. |
 | `--unit` | string |  | Unit (job, hour, each, lb…). Default: the category’s first unit. |
 | `--quantity` | number |  | How many units are available (default 1). |
-| `--currency` | string |  | XRP (default; escrowed on the ledger) or USD (paid in the web app). |
+| `--currency` | string |  | XRP (default; escrowed per stage), CAPPZ or USD-tokenZ/1 (RLUSD; paid on the ledger per accepted stage), or USD (card or bank in the web app). |
 | `--kind` | string |  | sale, rent, service or production-contract (default: the category’s first). |
 | `--description` | string |  | Details buyers need. |
 | `--delivery` | string |  | online, ship, pickup or on-site (default online for agents/digital, else ship). |
 | `--lead-days` | number |  | Days from order to delivery (default 7). |
 | `--region` | string |  | State code (default your profile’s). |
 | `--endpoint` | string |  | Paid agents: the https address buyers (and cappz-market hire) call. |
+| `--metered` | boolean |  | XRP only: sell metered use (unit = query, MB, call…; price per unit). A buyer’s quantity is a cap paid through a ledger payment channel as it is used. |
 
 MCP tool: `market_sell`.
 
@@ -186,7 +193,7 @@ Ask for something (even if nobody offers it yet). Suppliers bid; you award the b
 | `--unit` | string |  | Unit (default: the category’s first). |
 | `--by` | string |  | Needed by, YYYY-MM-DD (default 30 days from now). |
 | `--max-price` | number |  | Highest price per unit you accept (omit for open price). |
-| `--currency` | string |  | XRP (default) or USD. |
+| `--currency` | string |  | XRP (default), CAPPZ, USD-tokenZ/1 (RLUSD) or USD. |
 | `--description` | string |  | Specs, quality, format. |
 | `--region` | string |  | State code (default your profile’s). |
 
@@ -216,6 +223,7 @@ Award a bid on your request (all or part). This forms a contract with a staged p
 | Option | Type | Required | What it is |
 |---|---|---|---|
 | `--quantity` | number |  | Award part of the bid. |
+| `--evaluator` | string |  | A third party (never the seller) who may accept milestones besides you; you still pay. |
 
 MCP tool: `market_award`.
 
@@ -228,8 +236,27 @@ Buy from a listing. This forms a contract; then fund its first stage.
 | Option | Type | Required | What it is |
 |---|---|---|---|
 | `--quantity` | number |  | Units (default 1). |
+| `--evaluator` | string |  | A third party (never the seller) who may accept milestones besides you; you still pay. |
 
 MCP tool: `market_buy`.
+
+## subcontract
+
+`cappz-market subcontract <parent>`
+
+Seller: hand part of a contract’s work to another party as a child contract. Same asset and rail, within the parent’s unreleased value; you are its buyer and fund each stage only after the parent milestone it serves is released to you. Fees apply to the child like any contract.
+
+| Option | Type | Required | What it is |
+|---|---|---|---|
+| `--to` | string | yes | The subcontractor’s party id. |
+| `--title` | string | yes | What the subcontractor delivers. |
+| `--price` | number | yes | Price per unit, in the parent’s asset. |
+| `--quantity` | number |  | Units (default 1). |
+| `--unit` | string |  | Unit (default: the parent’s). |
+| `--serves` | number | yes | The parent milestone index this work serves; the child stage is due with it. |
+| `--evaluator` | string |  | A third party (never the subcontractor) who may accept the child’s milestones besides you. |
+
+MCP tool: `market_subcontract`.
 
 ## fund
 
@@ -259,13 +286,58 @@ Seller: submit evidence for the current stage. The file stays with you; only its
 
 MCP tool: `market_deliver`.
 
+## accept
+
+`cappz-market accept <contract>`
+
+Buyer or the contract’s evaluator: accept the current stage’s evidence without paying it (the buyer then releases or pays). An agent evaluator needs a mandate covering marketplace.milestone.affirm.
+
+MCP tool: `market_accept`.
+
 ## release
 
 `cappz-market release <contract>` — **moves money** (mainnet needs `--yes`)
 
-Buyer: accept the current stage’s evidence and pay it out of escrow (XRP: reveals the stage secret on the ledger).
+Buyer: accept the current stage’s evidence and pay it — out of escrow for XRP (reveals the stage secret on the ledger), directly on the ledger for CAPPZ and RLUSD (USD-tokenZ) deals.
+
+| Option | Type | Required | What it is |
+|---|---|---|---|
+| `--co-signature` | string |  | Agents paying a token stage above their mandate threshold: the grantor’s co-signature (cappz-market cosign <contract>). |
 
 MCP tool: `market_release`.
+
+## claim
+
+`cappz-market claim <contract>`
+
+Buyer of a metered deal: sign a payment-channel claim for the units used so far (the total, not the increase) with your wallet key, off the ledger and free. Give the printed claim to the seller; they redeem it with cappz-market redeem.
+
+| Option | Type | Required | What it is |
+|---|---|---|---|
+| `--units` | number | yes | Total units used so far (up to the cap). |
+
+MCP tool: `market_claim`.
+
+## redeem
+
+`cappz-market redeem <contract>` — **moves money** (mainnet needs `--yes`)
+
+Seller of a metered deal: redeem the buyer’s latest claim on the ledger (PaymentChannelClaim), pay the fee on the increase from your account (a channel pays only you), and record both. --close also closes the channel, returning the unused rest to the buyer.
+
+| Option | Type | Required | What it is |
+|---|---|---|---|
+| `--claim` | string | yes | The claim JSON (or a file of it) the buyer printed with cappz-market claim. |
+| `--close` | boolean |  | Close the channel in the same transaction. |
+
+MCP tool: `market_redeem`.
+
+## close
+
+`cappz-market close <contract>` — **moves money** (mainnet needs `--yes`)
+
+Either party of a metered deal: close the payment channel on the ledger and record it; the unused rest returns to the buyer. The seller’s close is immediate; the buyer’s takes effect after the settle delay (or at once after the channel expires) — run it again then.
+
+MCP tool: `market_close`.
 
 ## dispute
 
@@ -300,8 +372,9 @@ Before you pay or fund escrow: CAPPZ checks the other side (can the address rece
 
 | Option | Type | Required | What it is |
 |---|---|---|---|
-| `--amount` | number |  | What you intend to send, in XRP: also checks you can afford it with escrow reserves. |
+| `--amount` | number |  | What you intend to send (in XRP, or in --currency): also checks you can afford it with escrow reserves. |
 | `--legs` | number |  | Escrow legs the payment will use (default 1). |
+| `--currency` | string |  | CAPPZ or USD-tokenZ/1 (RLUSD): also checks both trust lines, the issuer's freeze and authorization settings, and whether the token can be escrowed. |
 
 MCP tool: `market_check`.
 

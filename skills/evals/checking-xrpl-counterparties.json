@@ -34,5 +34,17 @@
       "Opens a job, pays 0.01 XRP with the destination tag, reports the hash, fetches the result",
       "Verifies the Ed25519 signature over the canonical report against the published key"
     ]
+  },
+  {
+    "skills": [
+      "checking-xrpl-counterparties"
+    ],
+    "query": "Before I pay seller p-1a2b3c4d5e6f7a8b 40 RLUSD, make sure the payment will land.",
+    "files": [],
+    "expected_behavior": [
+      "Runs cappz-market check p-1a2b3c4d5e6f7a8b --currency USD-tokenZ/1 --amount 40",
+      "Reads trust-line and issuer reasons (recipient-no-trust-line, payer-short-token, asset-frozen, line-not-authorized) and does not pay on stop",
+      "Explains asset-staged as information: RLUSD is paid per accepted stage, not escrowed"
+    ]
   }
 ]

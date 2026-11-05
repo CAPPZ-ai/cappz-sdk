@@ -51,7 +51,9 @@ describe('deal-bound signing approval', () => {
     expect(await refuse({ DestinationTag: 7 })).toContain('tx-extra-fields');
     expect((await refuse({}, { milestone: 7 }))).toContain('no-milestone');
     expect(await refuse({}, { contractId: 'ct-nope' })).toContain('no-contract');
-    expect(codes(await evaluateSigningIntent(r.state, { network: 'testnet', contractId, milestone: 0, tx: { TransactionType: 'Payment', Account: BUYER, Destination: ATTACKER, Amount: '1' } }, NOW))).toEqual(['tx-type']);
+    // A Payment is approved only for a stage-by-stage (issued token) deal; an XRP deal is escrowed.
+    expect(codes(await evaluateSigningIntent(r.state, { network: 'testnet', contractId, milestone: 0, tx: { TransactionType: 'Payment', Account: BUYER, Destination: ATTACKER, Amount: '1' } }, NOW))).toContain('not-staged');
+    expect(codes(await evaluateSigningIntent(r.state, { network: 'testnet', contractId, milestone: 0, tx: { TransactionType: 'TrustSet', Account: BUYER } }, NOW))).toEqual(['tx-type']);
   });
 
   it('a guard verifies the signed approval against the transaction it is about to sign', async () => {

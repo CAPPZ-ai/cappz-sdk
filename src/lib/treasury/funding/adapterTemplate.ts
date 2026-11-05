@@ -3,7 +3,7 @@
  * Provenance: m/44'/144'/100'/principles/cope/v1#local-first
  *
  * Platform adapter config templates: for each service an app depends on
- * (XRPL access, notices, the scheduler, fiat on-ramps…), a list of
+ * (XRPL access, notices, the scheduler…), a list of
  * interchangeable endpoints with a priority and weight. Lower priority is
  * tried first; within a priority, endpoints share load by weight. A failing
  * endpoint is skipped until its back-off ends. Nothing here names a hosting

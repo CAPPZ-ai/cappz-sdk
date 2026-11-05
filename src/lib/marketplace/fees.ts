@@ -26,17 +26,18 @@ import type { LedgerTx, XrplNetwork } from '../xrpl/ledgerCheck';
 import { isValidClassicAddress } from 'xrpl';
 import { routeRoyalty, validateRoyaltyRecipients, FULL_BPS, type RoyaltyLeg, type RoyaltyRecipient } from '../skills/royaltyRouting';
 import { marketLedger, type MarketTx } from './ledger';
-import { buildMemo } from './MarketplaceMemoValidator';
 import { sha256Hex } from '../governance/PrinciplesChainlet';
 import type { MarketState } from './replay';
 import { MARKETPLACE_POW_ROOT } from './MarketplacePaths';
 import { MarketRuleError, milestoneAmounts } from './rules';
 import { CONTRACT_FORMATION_RECORDS, RECORDS_PER_MILESTONE, feeUnitsOf, paymentFeeCents, type FeeComponentsLike, type PaymentFeeRates } from './stageMath';
 import type { ContractTerms, Currency, Money } from './types';
+import { formatMoney, fromMinor, isLedgerAsset, toMinor } from './paymentAssets';
+import { checkLedgerPayment, preparePayment } from './ledgerPayments';
 
 const fail = (msg: string): never => { throw new MarketRuleError(msg); };
 
-/** Fee amounts per currency, in major units (USD dollars, XRP). A currency left out is not charged that fee. */
+/** Fee amounts per asset, in major units (USD dollars, XRP, tokens). An asset left out is not charged that fee. */
 export type FeeAmounts = Partial<Record<Currency, number>>;
 
 /**
@@ -75,12 +76,9 @@ export { CONTRACT_FORMATION_RECORDS, RECORDS_PER_MILESTONE } from './stageMath';
 /** Records in a placement: subscribed, fee charged, allocated. */
 export const RECORDS_PER_PLACEMENT = 3;
 
-const MINOR: Record<Currency, number> = { USD: 100, XRP: 1_000_000 };
-export const toUnits = (amount: number, currency: Currency) => Math.round(amount * MINOR[currency]);
-export const fromUnits = (units: number, currency: Currency) => units / MINOR[currency];
-export const formatUnits = (units: number, currency: Currency) => currency === 'USD'
-  ? `$${fromUnits(units, 'USD').toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-  : `${fromUnits(units, 'XRP').toLocaleString('en-US', { maximumFractionDigits: 6 })} XRP`;
+export const toUnits = (amount: number, currency: Currency) => toMinor(amount, currency);
+export const fromUnits = (units: number, currency: Currency) => fromMinor(units, currency);
+export const formatUnits = (units: number, currency: Currency) => formatMoney(fromMinor(units, currency), currency);
 export const formatBps = (bps: number) => `${(bps / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}%`;
 
 const anyEnabled = (c: FeeComponents) => c.percent.enabled || c.flat.enabled || c.perRecord.enabled;
@@ -91,7 +89,7 @@ function componentViolations(name: string, c: FeeComponents): string[] {
   for (const [kind, f] of [['flat fee', c.flat], ['per-record fee', c.perRecord]] as const) {
     const amounts = Object.values(f.amounts);
     if (amounts.some((a) => !(Number.isFinite(a) && (a as number) >= 0))) v.push(`${name}: ${kind} amounts must be zero or more.`);
-    if (f.enabled && !amounts.some((a) => (a as number) > 0)) v.push(`${name}: an enabled ${kind} needs an amount in USD or XRP.`);
+    if (f.enabled && !amounts.some((a) => (a as number) > 0)) v.push(`${name}: an enabled ${kind} needs an amount in at least one asset.`);
   }
   return v;
 }
@@ -228,20 +226,10 @@ export function placementFeeQuote(terms: FeeTerms | null, amount: Money): FeeQuo
 
 // ─── Settlement of fee legs ───────────────────────────────────────
 
-const feeMemoFor = (lt: LedgerTx) => lt.memos.filter((m) => m.type === 'cappz-marketplace-monetary').map((m) => { try { return JSON.parse(m.data) as { contractId?: string }; } catch { return {}; } });
 
-/** What must be true of a validated Payment for it to settle one fee leg. Returns problems (empty = ok). */
-export function checkFeePayment(lt: LedgerTx, expect: { network: XrplNetwork; from: string; leg: RoyaltyLeg; reference: string }): string[] {
-  const p: string[] = [];
-  if (lt.network !== expect.network) p.push(`On ${lt.network}; this marketplace settles on ${expect.network}.`);
-  if (!lt.validated) p.push('Not in a validated ledger yet.');
-  if (lt.result !== 'tesSUCCESS') p.push(`Result ${lt.result || 'unknown'}, not tesSUCCESS.`);
-  if (lt.type !== 'Payment') p.push(`It is a ${lt.type}, not a Payment.`);
-  if (lt.account !== expect.from) p.push(`Sent from ${lt.account}, not ${expect.from}.`);
-  if (lt.destination !== expect.leg.account) p.push(`Paid to ${lt.destination}, not ${expect.leg.label} (${expect.leg.account}).`);
-  if (lt.deliveredDrops === null || BigInt(lt.deliveredDrops) < BigInt(expect.leg.units)) p.push(`Delivered ${lt.deliveredDrops ?? 'no XRP'} drops; the ${expect.leg.label} leg is ${expect.leg.units}.`);
-  if (!feeMemoFor(lt).some((m) => m.contractId === expect.reference)) p.push(`Memo does not name ${expect.reference}.`);
-  return p;
+/** What must be true of a validated Payment for it to settle one fee leg (XRP or an issued token). Returns problems (empty = ok). */
+export function checkFeePayment(lt: LedgerTx, expect: { network: XrplNetwork; from: string; leg: RoyaltyLeg; reference: string; currency?: Currency }): string[] {
+  return checkLedgerPayment(lt, { network: expect.network, from: expect.from, to: expect.leg.account, toLabel: expect.leg.label, code: expect.currency ?? 'XRP', units: expect.leg.units, reference: expect.reference });
 }
 
 // ─── Distribution from the collection account (ARC → DARC) ────────
@@ -288,25 +276,25 @@ export function collectedFees(state: Pick<MarketState, 'contracts' | 'offerings'
 export const distributionIdOf = async (g: Pick<CollectedFees, 'collector' | 'currency' | 'outstanding'>) => `fd-${(await sha256Hex(JSON.stringify([g.collector.account, g.currency, g.outstanding]))).slice(0, 16)}`;
 
 /** One Payment per outstanding recipient, from the collection account — for its holder's wallet to sign. */
-export async function prepareFeeDistribution(g: CollectedFees): Promise<{ distributionId: string; payments: Array<Record<string, unknown>> }> {
-  if (g.currency !== 'XRP') throw new MarketRuleError('Only XRP collected on the ledger is distributed here; USD fees are recorded by reference and paid off-ledger.');
+export async function prepareFeeDistribution(g: CollectedFees, network: XrplNetwork = 'testnet'): Promise<{ distributionId: string; payments: Array<Record<string, unknown>> }> {
+  if (!isLedgerAsset(g.currency)) throw new MarketRuleError('Only fees collected on the ledger (XRP or issued tokens) are distributed here; USD fees are recorded by reference and paid off-ledger.');
   const distributionId = await distributionIdOf(g);
-  return { distributionId, payments: g.outstanding.map((l) => ({ TransactionType: 'Payment', Account: g.collector.account, Destination: l.account, Amount: String(l.units), Memos: [buildMemo({ class: 'monetary', contractId: distributionId, deliveryIndex: 0, currency: 'XRP' })] })) };
+  return { distributionId, payments: g.outstanding.map((l) => preparePayment(g.collector.account, l.account, l.units, g.currency, network, distributionId, 0)) };
 }
 
 /** Record a distribution once every outstanding recipient's Payment from the collection account is validated on the ledger. */
-export async function buildFeeDistribution(state: MarketState, operatorAddress: string, network: XrplNetwork, collectorAccount: string, lts: readonly LedgerTx[]): Promise<MarketTx[]> {
-  const g = collectedFees(state).find((x) => x.collector.account === collectorAccount && x.currency === 'XRP') ?? fail('Nothing collected in XRP for that account.');
+export async function buildFeeDistribution(state: MarketState, operatorAddress: string, network: XrplNetwork, collectorAccount: string, lts: readonly LedgerTx[], currency: Currency = 'XRP'): Promise<MarketTx[]> {
+  const g = collectedFees(state).find((x) => x.collector.account === collectorAccount && x.currency === currency) ?? fail(`Nothing collected in ${currency} for that account.`);
   if (!g.outstanding.length) fail('Every recipient has been paid.');
   const distributionId = await distributionIdOf(g);
   const legs = g.outstanding.map((l) => {
     const lt = lts.find((x) => x.destination === l.account) ?? fail(`Pay ${l.label} (${l.units} drops to ${l.account}) before recording.`);
-    const problems = checkFeePayment(lt, { network, from: collectorAccount, leg: { ...l, bps: 0 }, reference: distributionId });
+    const problems = checkFeePayment(lt, { network, from: collectorAccount, leg: { ...l, bps: 0 }, reference: distributionId, currency });
     if (problems.length) fail(`${l.label}: ${problems.join(' ')}`);
     return { account: l.account, label: l.label, units: l.units, txHash: lt.hash, ledgerIndex: lt.ledgerIndex, checkedAt: lt.checkedAt };
   });
   const total = legs.reduce((n, l) => n + l.units, 0);
-  return [await marketLedger.create({ eventType: 'PaymentConfirmed', sourceAddress: operatorAddress, targetAddress: `${MARKETPLACE_POW_ROOT}/fees/distributions/${distributionId}`, payload: { contentClass: 'fee-distribution', distributionId, collector: collectorAccount, currency: 'XRP', amount: fromUnits(total, 'XRP'), rail: 'xrpl-payment', reference: distributionId, validated: true, network, legs } })];
+  return [await marketLedger.create({ eventType: 'PaymentConfirmed', sourceAddress: operatorAddress, targetAddress: `${MARKETPLACE_POW_ROOT}/fees/distributions/${distributionId}`, payload: { contentClass: 'fee-distribution', distributionId, collector: collectorAccount, currency, amount: fromUnits(total, currency), rail: 'xrpl-payment', reference: distributionId, validated: true, network, legs } })];
 }
 
 /**

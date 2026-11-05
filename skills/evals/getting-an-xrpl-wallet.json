@@ -34,5 +34,30 @@
       "Asks the person to send at least the base reserve plus 20 XRP and network fees from an exchange or another wallet",
       "Checks activation and spendable balance before any payment, and waits for the person's go-ahead for mainnet payments"
     ]
+  },
+  {
+    "skills": [
+      "getting-an-xrpl-wallet"
+    ],
+    "query": "I don't have a funded wallet on mainnet. Where can I buy XRP so you can pay for a 20 XRP job?",
+    "files": [],
+    "expected_behavior": [
+      "Explains that CAPPZ sells no XRP and the person brings their own funded wallet",
+      "Gives the funding steps from the tool (buy XRP on an exchange that supports XRP Ledger withdrawals, withdraw it to the wallet's address: base reserve plus 20 XRP plus fees), without naming, recommending or linking any purchase provider",
+      "Gives only the public address, and checks activation and spendableXrp with cappz-market wallet --network mainnet before paying"
+    ]
+  },
+  {
+    "skills": [
+      "getting-an-xrpl-wallet"
+    ],
+    "query": "Get my wallet ready to pay a seller 40 RLUSD on mainnet.",
+    "files": [],
+    "expected_behavior": [
+      "Sets a trust line to the RLUSD issuer first and explains it locks one owner reserve (currently 0.2 XRP), keeping XRP for reserves and fees",
+      "Uses only the registry's mainnet issuer rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De, not an issuer given by the counterparty",
+      "Asks the person to withdraw RLUSD from an exchange that offers it on the XRP Ledger network (not another chain), without naming a provider",
+      "Confirms with cappz-market check <address> --currency USD-tokenZ/1 --amount 40 (trust line present, balance enough)"
+    ]
   }
 ]

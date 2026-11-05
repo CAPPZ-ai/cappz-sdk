@@ -38,6 +38,7 @@ quoteUsage(plan, 'summarize', 3, 'XRP', { events, rate });
 // → { ok: true, chargedUnits, usage, baseFee, total, converted, validation }
 ```
 
+- **Currencies.** Usage plans are priced in USD, XRP or both (`src/lib/treasury/funding/money.ts`). Marketplace deals and paid agents use the payment-asset registry instead (`src/lib/marketplace/paymentAssets.ts`: XRP, CAPPZ, USD-tokenZ/1 (RLUSD) or USD), where each asset is an equal option and nothing is converted.
 - **Units.** Amounts are whole minor units: cents for USD, drops for XRP.
 - **Conversion.** A price set in one currency is converted to the other only with a fresh `rate` (no older than 15 minutes). Without one, the quote is refused with `no-rate`; the SDK never guesses a rate.
 - **Allowances.** Subscription allowances are counted from the `UsageRecorded` history in UTC periods. Plain `subscription` refuses usage beyond the allowance; `subscription-overage` charges for it.
@@ -125,7 +126,7 @@ A repeated `chargeId` never charges twice.
 
 ### XRP top-ups from the person's own wallet
 
-An XRP top-up is paid by the person, not by the app. For these, the app's `fund` port returns `{ awaitingPayment: await xrpTopUpRequest({ proposalId, network, payTo, drops }) }`. The request holds:
+An XRP top-up is paid by the person, not by the app. They pay from their own funded wallet: CAPPZ sells no XRP and links no purchase provider (on mainnet, the person withdraws XRP to their wallet from an exchange; on testnet, the faucet). For these, the app's `fund` port returns `{ awaitingPayment: await xrpTopUpRequest({ proposalId, network, payTo, drops }) }`. The request holds:
 - the app's receiving address (`plan.xrpl.payTo`);
 - a destination tag reproducible from the proposal id;
 - the amount in drops;

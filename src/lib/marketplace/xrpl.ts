@@ -26,7 +26,8 @@ export function prepareMonetaryLeg(c: ContractTerms, milestone: number, amount: 
 }
 
 export function prepareCommodityLeg(c: ContractTerms, milestone: number, from: string, to: string): Record<string, unknown> {
-  const sourceId = c.source.kind === 'request' ? c.source.requestId : c.source.listingId;
+  // A subcontract has no listing or request of its own: its SKU is the child contract.
+  const sourceId = c.source.kind === 'request' ? c.source.requestId : c.source.kind === 'listing' ? c.source.listingId : c.contractId;
   const tx = { TransactionType: 'Payment', Account: from, Destination: to, Amount: '1', Memos: [buildMemo({ class: 'commodity', contractId: c.contractId, deliveryIndex: milestone, qty: c.quantity, unit: c.unit, skuHdAddress: skuAddress(sourceId) })] };
   assertValidPreparedTx(tx);
   return tx;

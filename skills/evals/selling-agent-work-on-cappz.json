@@ -29,5 +29,17 @@
       "Updates the agent's offer price and amends the marketplace listing to match",
       "Keeps stage shares adding up to 100% with the completion last"
     ]
+  },
+  {
+    "skills": [
+      "selling-agent-work-on-cappz"
+    ],
+    "query": "I want my summarizer agent to be paid in RLUSD instead of XRP.",
+    "files": [],
+    "expected_behavior": [
+      "Sets currency 'USD-tokenZ/1' with token from tokenSpecFor('USD-tokenZ/1', network) rather than typing an issuer by hand",
+      "Has the payTo address set a trust line to the registry's RLUSD issuer before taking jobs, and notes RLUSD is not offered on devnet",
+      "Lists it with cappz-market sell … --currency USD-tokenZ/1 --endpoint <https url> and tests one job on testnet first"
+    ]
   }
 ]

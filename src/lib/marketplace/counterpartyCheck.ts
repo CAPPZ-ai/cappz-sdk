@@ -15,7 +15,9 @@ import { ed25519 } from '@noble/curves/ed25519';
 import type { XrplNetwork } from '../xrpl/ledgerCheck';
 import { xrplRpc, XrplRpcError } from '../xrpl/xrplRpc';
 import type { MarketState } from './replay';
-import { OWNER_RESERVE_XRP } from './onRamp';
+import { OWNER_RESERVE_XRP } from './walletFunding';
+import { committedKey } from './rules';
+import { assetAvailability, assetLabel, isIssuedAsset, type Currency } from './paymentAssets';
 
 export interface CheckRequest {
   network: XrplNetwork;
@@ -29,6 +31,22 @@ export interface CheckRequest {
   escrowLegs?: number;
   /** Your own address, to check affordability. */
   payer?: string;
+  /** The asset to be paid (paymentAssets code, default XRP). Issued tokens (CAPPZ, USD-tokenZ/1) also check trust lines and the issuer. */
+  currency?: Currency;
+  /** Amount in that asset (issued tokens; XRP uses amountXrp). */
+  amount?: number;
+}
+
+/** One side's trust line to an issued token's issuer (null fields = not read). */
+export interface TrustLineFacts { present: boolean | null; balance: string | null; limit: string | null; frozen: boolean | null; authorized: boolean | null; error: string | null }
+export interface AssetFacts {
+  code: Currency; label: string; availability: string; issuer: string | null;
+  /** Issuer flags that decide whether the token can move at all, and whether it can be escrowed (trust-line locking). */
+  issuerFlags: { globalFreeze: boolean; requireAuth: boolean; allowTrustLineLocking: boolean } | null;
+  recipient: TrustLineFacts | null;
+  payer: TrustLineFacts | null;
+  /** Escrow of this token is possible only when the issuer allows trust-line locking; otherwise it is paid stage by stage. */
+  escrowable: boolean | null;
 }
 
 export type Level = 'stop' | 'warn' | 'info';
@@ -70,10 +88,66 @@ export interface CheckReport {
   ledger: AccountFacts | null;
   payer: (AccountFacts & { spendableXrp: number | null; needsXrp: number | null }) | null;
   market: MarketFacts | null;
+  /** Issued-token checks, when the request names one. */
+  asset?: AssetFacts;
   rules: string;
 }
 
-const LSF = { requireDest: 0x00020000, disallowXrp: 0x00080000, disableMaster: 0x00100000, globalFreeze: 0x00400000, depositAuth: 0x01000000 };
+const LSF = { requireDest: 0x00020000, requireAuth: 0x00040000, disallowXrp: 0x00080000, disableMaster: 0x00100000, globalFreeze: 0x00400000, depositAuth: 0x01000000, allowTrustLineLocking: 0x40000000 };
+
+/** The trust line `account` holds to `issuer` for `currencyHex` (public reads only; a failed read is an error, not "no line"). */
+export async function readTrustLine(network: XrplNetwork, account: string, issuer: string, currencyHex: string, fetcher: typeof fetch = fetch): Promise<TrustLineFacts> {
+  try {
+    const r = await xrplRpc<{ lines?: Array<{ currency: string; balance: string; limit: string; freeze?: boolean; freeze_peer?: boolean; authorized?: boolean; peer_authorized?: boolean }> }>(network, 'account_lines', { account, peer: issuer, ledger_index: 'validated' }, fetcher);
+    const line = (r.lines ?? []).find((l) => l.currency.toUpperCase() === currencyHex.toUpperCase());
+    if (!line) return { present: false, balance: null, limit: null, frozen: null, authorized: null, error: null };
+    return { present: true, balance: line.balance, limit: line.limit, frozen: !!(line.freeze || line.freeze_peer), authorized: line.peer_authorized ?? line.authorized ?? null, error: null };
+  } catch (e) {
+    if (e instanceof XrplRpcError && e.code === 'actNotFound') return { present: false, balance: null, limit: null, frozen: null, authorized: null, error: null };
+    return { present: null, balance: null, limit: null, frozen: null, authorized: null, error: (e as Error).message };
+  }
+}
+
+/** Issued-token facts for a payment: issuer flags, the recipient's and payer's trust lines. */
+export async function readAssetFacts(network: XrplNetwork, code: Currency, recipient: string | null, payer: string | null, fetcher: typeof fetch = fetch): Promise<AssetFacts> {
+  const av = assetAvailability(code, network);
+  const base: AssetFacts = { code, label: assetLabel(code), availability: av.state, issuer: av.state === 'available' ? av.token?.issuer ?? null : null, issuerFlags: null, recipient: null, payer: null, escrowable: null };
+  if (av.state !== 'available' || !av.token) return base;
+  const t = av.token;
+  try {
+    const r = await xrplRpc<{ account_data: Record<string, unknown> }>(network, 'account_info', { account: t.issuer, ledger_index: 'validated' }, fetcher);
+    const f = Number(r.account_data.Flags ?? 0);
+    base.issuerFlags = { globalFreeze: !!(f & LSF.globalFreeze), requireAuth: !!(f & LSF.requireAuth), allowTrustLineLocking: !!(f & LSF.allowTrustLineLocking) };
+    base.escrowable = base.issuerFlags.allowTrustLineLocking;
+  } catch { /* issuer unreadable: flags stay null (unknown, not "fine") */ }
+  if (recipient) base.recipient = await readTrustLine(network, recipient, t.issuer, t.currencyHex, fetcher);
+  if (payer) base.payer = await readTrustLine(network, payer, t.issuer, t.currencyHex, fetcher);
+  return base;
+}
+
+/** Rules for an issued-token payment (pure). */
+export function judgeAsset(a: AssetFacts, amount: number | undefined): Reason[] {
+  const r: Reason[] = [];
+  if (a.availability !== 'available') { r.push({ level: 'stop', code: 'asset-unavailable', text: `${a.label} is not offered on this network (${a.availability}).` }); return r; }
+  if (!a.issuerFlags) r.push({ level: 'warn', code: 'issuer-unreadable', text: `The ${a.label} issuer could not be read; its freeze and authorization settings are unknown.` });
+  else {
+    if (a.issuerFlags.globalFreeze) r.push({ level: 'stop', code: 'asset-frozen', text: `The ${a.label} issuer has frozen the token: it cannot move.` });
+    if (a.issuerFlags.requireAuth && a.recipient?.present && a.recipient.authorized === false) r.push({ level: 'stop', code: 'line-not-authorized', text: `The issuer requires authorized trust lines and the recipient's is not authorized.` });
+    r.push({ level: 'info', code: a.issuerFlags.allowTrustLineLocking ? 'asset-escrowable' : 'asset-staged', text: a.issuerFlags.allowTrustLineLocking ? `${a.label} can be escrowed on the ledger (the issuer allows trust-line locking).` : `${a.label} cannot be escrowed (the issuer does not allow trust-line locking): it is paid stage by stage when each stage is accepted.` });
+  }
+  if (a.recipient) {
+    if (a.recipient.error) r.push({ level: 'warn', code: 'recipient-line-unreadable', text: `The recipient's ${a.label} trust line could not be read (${a.recipient.error}).` });
+    else if (a.recipient.present === false) r.push({ level: 'stop', code: 'recipient-no-trust-line', text: `The recipient has no ${a.label} trust line: a payment to it fails until it sets one to ${a.issuer}.` });
+    else if (a.recipient.frozen) r.push({ level: 'stop', code: 'recipient-line-frozen', text: `The recipient's ${a.label} trust line is frozen.` });
+    else if (amount !== undefined && a.recipient.limit !== null && a.recipient.balance !== null && Number(a.recipient.limit) - Number(a.recipient.balance) < amount) r.push({ level: 'stop', code: 'recipient-limit', text: `The recipient's trust line limit leaves room for ${Number(a.recipient.limit) - Number(a.recipient.balance)} ${a.label}; the payment is ${amount}.` });
+  }
+  if (a.payer) {
+    if (a.payer.error) r.push({ level: 'warn', code: 'payer-line-unreadable', text: `Your ${a.label} trust line could not be read (${a.payer.error}).` });
+    else if (a.payer.present === false) r.push({ level: 'stop', code: 'payer-no-trust-line', text: `You hold no ${a.label}: set a trust line to ${a.issuer}, then get ${a.label} into the account (see walletFunding.fundingNeed).` });
+    else if (amount !== undefined && a.payer.balance !== null && Number(a.payer.balance) < amount) r.push({ level: 'stop', code: 'payer-short-token', text: `You hold ${a.payer.balance} ${a.label}; the payment is ${amount}.` });
+  }
+  return r;
+}
 const DAY = 86_400_000;
 /** Accounts younger than this are flagged: most misdirected and throwaway addresses are new. */
 export const NEW_ACCOUNT_DAYS = 7;
@@ -119,7 +193,7 @@ export function marketFacts(state: MarketState, address: string | null, party: s
     const ms = state.mandates.filter((m) => m.agentPartyId === main.partyId);
     const active = ms.filter((m) => Date.parse(m.limits.expiresAt) > Date.parse(now));
     const m = (active.length ? active : ms).at(-1);
-    if (m) mandate = { active: active.length > 0, perContract: `${m.limits.maxPerContract.amount} ${m.limits.maxPerContract.currency}`, perDay: `${m.limits.maxPerDay.amount} ${m.limits.maxPerDay.currency}`, usedToday: state.committedByDay.get(`${main.partyId}|${now.slice(0, 10)}`) ?? 0, expires: m.limits.expiresAt };
+    if (m) mandate = { active: active.length > 0, perContract: `${m.limits.maxPerContract.amount} ${m.limits.maxPerContract.currency}`, perDay: `${m.limits.maxPerDay.amount} ${m.limits.maxPerDay.currency}`, usedToday: state.committedByDay.get(committedKey(main.partyId, now, m.limits.maxPerDay.currency)) ?? 0, expires: m.limits.expiresAt };
   }
   return { partyIds: ids, name: main?.name ?? null, kind: main?.kind ?? null, principal: main?.principal?.partyId ?? main?.principal?.governanceAddress ?? null, finished, disputes, openDisputes, averageRating: ratings.length ? Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 10) / 10 : null, mandate };
 }
@@ -171,10 +245,12 @@ export async function runCounterpartyCheck(req: CheckRequest, state: MarketState
   }
   const market = state ? marketFacts(state, address, req.party ?? null, now) : null;
   const ledger = acct ? (({ ledgerIndex: _l, reserveBase: _b, reserveInc: _i, ...f }) => f)(acct) : null;
-  const reasons = judge(req, ledger, payer, market, now);
+  const issued = req.currency && isIssuedAsset(req.currency);
+  const asset = issued ? await readAssetFacts(req.network, req.currency!, address, req.payer ?? null, fetcher) : undefined;
+  const reasons = [...judge(req, ledger, payer, market, now), ...(asset ? judgeAsset(asset, req.amount) : [])];
   return {
     kind: 'cappz-counterparty-check', version: 1, network: req.network, checkedAt: now, ledgerIndex: acct?.ledgerIndex ?? null,
-    subject: { address, party: req.party ?? null }, verdict: verdictOf(reasons), reasons, ledger, payer, market,
+    subject: { address, party: req.party ?? null }, verdict: verdictOf(reasons), reasons, ledger, payer, market, ...(asset ? { asset } : {}),
     rules: 'https://github.com/CAPPZ-ai/cappz-sdk/blob/main/src/lib/marketplace/counterpartyCheck.ts',
   };
 }

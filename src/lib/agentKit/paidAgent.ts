@@ -23,7 +23,8 @@ import { isValidClassicAddress } from 'xrpl';
 import { fetchIncomingPayments, fetchLedgerTx, type LedgerTx, type XrplNetwork } from '../xrpl/ledgerCheck.ts';
 
 export type { LedgerTx, XrplNetwork };
-export type PayCurrency = 'XRP' | 'CAPPZ';
+/** Payment asset codes (marketplace paymentAssets.ts): XRP, the CAPPZ token, or USD-tokenZ member 1 (RLUSD). Kept literal: this file ships as-is with only `xrpl`. */
+export type PayCurrency = 'XRP' | 'CAPPZ' | 'USD-tokenZ/1';
 /** An issued token the agent accepts: currency code (and its 40-hex form) plus the issuer it must come from. */
 export interface TokenSpec { code: string; hex: string; issuer: string }
 export type StageKind = 'upfront' | 'milestone' | 'completion';
@@ -44,7 +45,7 @@ export interface AgentOffer {
   payTo: string;
   network: XrplNetwork;
   currency: PayCurrency;
-  /** Required when currency is an issued token (CAPPZ). */
+  /** Required when currency is an issued token (CAPPZ, USD-tokenZ/1): marketplace tokenSpecFor(code, network) gives it. */
   token?: TokenSpec;
   /** Price of one job, in whole XRP or tokens. */
   price: number;
@@ -54,7 +55,7 @@ export interface AgentOffer {
 /** A failing stage is retried automatically this many times; after that, `retry(jobId)` runs it again. */
 export const MAX_AUTO_RETRIES = 3;
 
-/** Both XRP (drops) and CAPPZ use six decimals. */
+/** XRP (drops) and the issued tokens (CAPPZ, USD-tokenZ/1) are counted in six decimals. */
 export const MICRO = 1_000_000n;
 
 /** Ready-made schedules; a person picks one and can still edit labels and shares. */
@@ -185,7 +186,7 @@ export async function paymentRequest(terms: JobTerms, jobId: string, stage: numb
     jobId, stage, label: s.label, network: terms.network, destination: terms.payTo, destinationTag,
     currency: terms.currency, issuer: terms.currency === 'XRP' ? null : terms.token!.issuer, amount,
     preparedTx: { TransactionType: 'Payment', Destination: terms.payTo, DestinationTag: destinationTag, Amount, Memos: [memo('cappz-job', `${jobId}:${stage}`)] },
-    instructions: `Send ${amount} ${terms.currency} on XRPL ${terms.network} to ${terms.payTo} with destination tag ${destinationTag}.`,
+    instructions: `Send ${amount} ${terms.token?.code ?? terms.currency} on XRPL ${terms.network} to ${terms.payTo} with destination tag ${destinationTag}.${terms.currency !== 'XRP' ? ` It must come from issuer ${terms.token?.issuer}; you need a trust line to it.` : ''}`,
   };
 }
 

@@ -28,5 +28,17 @@
       "Stresses that the destination tag is required, and that the payment must be reported with POST /jobs/<id>/payments (or the agent detects it)",
       "Fetches the result with GET /jobs/<id>/stages/<n>/result and checks its SHA-256 against resultSha256"
     ]
+  },
+  {
+    "skills": [
+      "hiring-cappz-paid-agents"
+    ],
+    "query": "Hire the agent at https://agent.example.com; it is paid in RLUSD on testnet. Budget 15.",
+    "files": [],
+    "expected_behavior": [
+      "Reads GET /agent and checks price, currency, issuer and network; the wallet has a trust line to the registry's testnet RLUSD issuer and enough RLUSD plus XRP for fees",
+      "Runs cappz-market hire https://agent.example.com --input … --max 15 and checks every result is verified: true",
+      "Stops and reports if hire refuses because the card names an issuer other than the registry's; never pays that issuer"
+    ]
   }
 ]

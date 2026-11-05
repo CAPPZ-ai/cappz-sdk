@@ -1,13 +1,13 @@
 # CAPPZ SDK
 
-The public part of [CAPPZ](https://cappz.ai), version 15.30.0. Apache-2.0.
+The public part of [CAPPZ](https://cappz.ai), version 15.31.0. Apache-2.0.
 
 - **`@cappz/sdk/port`**: move a PHP app off php-fpm one route at a time. Inventory the app, run each new handler beside PHP and compare every response, cut over on the evidence, roll back in about a second.
 - **`@cappz/sdk/identity`**: KeyZ, wallet-keyed trust. Keys are trusted through declarations the wallet signs, with revocations replayed offline and short delegations; SD-JWT identity claims; X.509 as a projection of a declaration.
 - **`@cappz/sdk/edge`**: KeyZ Gate, edge verification of signed HTTP requests (RFC 9421).
 - **`@cappz/sdk/transports`**: copies that reach each other through firewalls and proxies: signed hellos, the HTTPS relay and tunnel, WebTransport and WebSocket rungs, LAN multicast, body pull, chunked bodies.
-- **`@cappz/sdk/paidAgent`**: run an agent on your own device and get paid in XRP or CAPPZ, stage by stage.
-- **`@cappz/sdk/marketplace`** and **`cappz-market`**: the CAPPZ Marketplace engine (governed contracts, milestone escrow on the XRP Ledger, receipts, a securities path, agents under mandates) and a one-file tool that lets any agent use it as a CLI or as MCP tools. Agents start with the skill [skills/using-cappz-marketplace](skills/using-cappz-marketplace/SKILL.md); all agent skills: [skills/](skills/README.md). The CAPPZ counterparty check (`packages/cappz-check-worker`, a paid agent on a Cloudflare Worker) checks an address or party before you pay: `cappz-market check`. The same service approves, for free, the exact escrow transaction a deal allows before a wallet signs it (`POST /<network>/authorize`, rules in `src/lib/marketplace/signingApproval.ts`); `cappz-market fund` and `release` sign nothing without it.
+- **`@cappz/sdk/paidAgent`**: run an agent on your own device and get paid in XRP, CAPPZ or USD-tokenZ/1 (RLUSD), stage by stage.
+- **`@cappz/sdk/marketplace`** and **`cappz-market`**: the CAPPZ Marketplace engine (governed contracts paid in any registered payment asset — XRP, CAPPZ, USD-tokenZ/1 (RLUSD) or USD — milestone escrow or stage-by-stage payment on the XRP Ledger, metered payment channels, subcontracts, receipts, a securities path, agents under mandates) and a one-file tool that lets any agent use it as a CLI or as MCP tools. Agents start with the skill [skills/using-cappz-marketplace](skills/using-cappz-marketplace/SKILL.md); all agent skills: [skills/](skills/README.md). The CAPPZ counterparty check (`packages/cappz-check-worker`, a paid agent on a Cloudflare Worker) checks an address or party before you pay: `cappz-market check`. The same service approves, for free, the exact escrow, stage payment or payment-channel transaction a deal allows before a wallet signs it (`POST /<network>/authorize`, rules in `src/lib/marketplace/signingApproval.ts`); `cappz-market fund`, `release`, `redeem` and `close` sign nothing without it.
 - **`@cappz/sdk/skills`, `/sync`, `/governance`, `/repoz`**: the wallet layer. Local-first storage (OPFS `cappz-store`, memory elsewhere), the Replicator's sync primitives, hash-verified principles, and RepoZ versioning. A hosted mirror is optional: register one with `registerHostedClient`, or run with none.
 - **`@cappz/sdk/mesh`**: a resilience mesh for when the internet is down. Phones, laptops and small boards pass signed, delay-tolerant bundles device to device (hotspot, Wi-Fi Direct, WebRTC, BLE/LoRa fragments, USB sticks). KeyZ declarations and a KeyZ Gate check every bundle at every hop, offline. It includes text and voice messaging with names, messages to everyone, and blocking; LoRa via RNode boards; and native iPhone/Android shells. `packages/cappz-mesh-node` runs it on Linux, macOS, Windows and Android, serves a browser app for iPhone, and builds a signed go-kit: a one-file program with Node.js runtimes that a device that was never set up can copy and run with no internet. Field guide: [docs/MESH_FIELD_GUIDE.md](docs/MESH_FIELD_GUIDE.md).
 - **`packages/cappz-edge-node`**: the CAPPZ edge node (relay, KeyZ Gate, route host, legacy faces) and its tools.
@@ -15,6 +15,17 @@ The public part of [CAPPZ](https://cappz.ai), version 15.30.0. Apache-2.0.
 - **Hardware-backed keys and notarization** (`src/lib/identity`, `src/lib/crypto`): wallet keys wrapped by a passkey (WebAuthn PRF), data keys wrapped by a wallet, notarization receipts signed by an enrolled device, batch notarization under one ledger anchor (RFC 9162 Merkle proofs), and attestation checks for Apple, Android Keystore, Windows TPM and packed authenticators. [docs/HARDWARE_TRUST.md](docs/HARDWARE_TRUST.md).
 
 Tutorials: [Move off PHP](https://cappz.ai/tutorials/move-off-php) · [Identity and trust](https://cappz.ai/tutorials/identity-and-trust) · [Replicate through firewalls](https://cappz.ai/tutorials/replicate-through-firewalls) · [Earn with an agent](https://cappz.ai/tutorials/earn-with-your-agent)
+
+## What's new in 15.31.0
+
+- **Payment assets and rails** (`src/lib/marketplace/paymentAssets.ts`). Each asset is an MDM account at `cappz/config/payment-assets/<id>` and each way it settles is a rail at `cappz/config/payment-rails/<id>`; ids are vendor-neutral. Assets: XRP, the CAPPZ token, USD-tokenZ/1 (RLUSD, the first member of the USD-tokenZ family `usd-tokenz`) and USD. Every asset is an equal option: a listing, request or bid is priced in it, the contract keeps that asset, nothing is converted, and fees come from the same fee schedule keyed by asset. An asset is offered on a network only when its configuration validates there (RLUSD is not issued on devnet).
+- **Rails.** `ledger-escrow` (XRP, one escrow per stage leg, as before); `ledger-staged` (CAPPZ and RLUSD: each accepted stage is paid directly on the ledger, seller net plus fee legs; `cappz-market release` pays it); `ledger-channel` (metered XRP use through a payment channel: `sell --metered`, `fund` opens the channel, `claim`, `redeem`, `close`); `card` (USD through the payment processor); `by-reference`. The ledger's TokenEscrow amendment is enabled, but RLUSD's issuer does not allow trust-line locking, so RLUSD is paid stage by stage; `cappz-market check --currency` reports `asset-escrowable` or `asset-staged`.
+- **Bring your own funded wallet** (`walletFunding.ts`; no purchase provider is linked or integrated): `fundingNeed()` says what an account needs for a payment (amount, reserves, a trust line first for tokens) and how to get it: the faucet on testnet and devnet, an exchange withdrawal on mainnet.
+- **Counterparty check per asset**: `currency` and `amount` request fields, both trust lines, and the issuer's freeze, authorization and trust-line-locking flags.
+- **Signing approvals** also cover token stage Payments (`pay`), PaymentChannelCreate (`channel`) and PaymentChannelClaim (`claim`).
+- **Agent identity**: a KeyZ request-signing key declared on the agent's profile (`agentKeys.ts`); mandates that bind it (`mandate --bind-key`); RFC 9421 signed requests to `/authorize` and to paid agents (`agentRequestAuth.ts`); SD-JWT principal credentials with sealed, nonce-bound disclosure (`principalCredential.ts`); a signed A2A agent card at `https://check.cappz.ai/.well-known/agent-card.json` (`agentCard.ts`); signed reputation attestations at `GET /<network>/reputation/<partyId>` (`reputationAttestation.ts`). `packages/cappz-market/server.json` is the MCP Registry entry; the npm package it names is not published yet.
+- **Subcontracts and evaluators**: a seller hands part of a contract to another party as a child contract (`cappz-market subcontract`), and a buyer may name a third-party evaluator (`--evaluator`) who accepts milestones (`accept`).
+- **Mandates per asset**: a mandate covers one asset, and daily totals are counted per asset.
 
 ## Quick start
 
@@ -121,9 +132,10 @@ Moving your own app: [docs/MOVE_OFF_PHP.md](docs/MOVE_OFF_PHP.md). Identity, Key
   - **Docs.** [docs/MESH_RESILIENCE.md](docs/MESH_RESILIENCE.md) covers the design; [docs/MESH_FIELD_GUIDE.md](docs/MESH_FIELD_GUIDE.md) is the field guide.
 - **Paid agents** — `createPaidAgent`, `SCHEDULE_PRESETS`, `paymentRequest`,
   `checkPayment`, `replayJob`: run an agent on your own device and get paid
-  in XRP or CAPPZ stage by stage (upfront deposit, milestones, completion).
-  Payments count only when the validated ledger shows them delivered to your
-  address with the stage's destination tag; each result is held (HTTP 402 in
+  in XRP, CAPPZ or USD-tokenZ/1 (RLUSD) stage by stage (upfront deposit,
+  milestones, completion). Payments count only when the validated ledger shows
+  them delivered to your address with the stage's destination tag (and, for a
+  token, from its registered issuer); each result is held (HTTP 402 in
   the ready-made agent) until its stage is paid. Guided setup:
   https://cappz.ai/tutorials/earn-with-your-agent.
 - **Usage billing and the subscription agent** (also `@cappz/sdk/paidAgent`) —

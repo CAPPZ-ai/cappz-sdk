@@ -11,6 +11,9 @@ import type { DealKind } from './catalog';
 import type { FeeTerms } from './fees';
 import type { PaymentFunding } from './stageMath';
 import type { RoyaltyLeg } from '../skills/royaltyRouting';
+import type { Currency, RailId } from './paymentAssets';
+import type { KeyDeclaration, KeyRevocation } from '../identity/keyDeclaration';
+import type { PrincipalCredentialRef } from './principalCredential';
 
 export type PartyKind = 'person' | 'organization' | 'agent';
 export type PartyRole = 'buyer' | 'seller' | 'farmer' | 'supplier' | 'service-provider' | 'equipment-dealer' | 'processor';
@@ -42,9 +45,20 @@ export interface PartyProfile {
   encryptionKey?: JsonWebKey;
   /** For agents: the model / runtime it runs on, for transparency. */
   runtime?: string;
+  /**
+   * v15-31-00 KeyZ: the agent's request-signing key (Ed25519, purpose `signing`), declared by its identity wallet
+   * (keyDeclaration.ts). Public: a key and a wallet signature, never a secret. Absent = `undeclared` (still allowed,
+   * reported) unless a mandate binds the agent to a key (MandateContent.boundKey).
+   */
+  keyDeclaration?: KeyDeclaration;
+  /** Wallet-signed revocations of earlier declarations, replayed by every verifier (no CRL to ask). */
+  keyRevocations?: KeyRevocation[];
+  /** v15-31-00: the principal's SD-JWT credential by reference only (issuer + hash of the issuer-signed part); values are disclosed on request, sealed, never here. */
+  principalCredential?: PrincipalCredentialRef;
 }
 
-export type Currency = 'USD' | 'XRP';
+export type { Currency, RailId } from './paymentAssets';
+/** An amount in one payment asset; `currency` is the asset's code (paymentAssets.ts), the value written on the public log. */
 export interface Money { amount: number; currency: Currency }
 
 export interface ListingContent {
@@ -69,6 +83,12 @@ export interface ListingContent {
   tokenId?: string;
   /** A knowledge graph sold under a sealed key: what the buyer can verify before accepting. */
   knowledge?: { graphId: string; graphVersion: string; merkleRoot: string; nodeCount: number; edgeCount: number };
+  /**
+   * Metered use (15.31.0, rail ledger-channel; XRP only): `unit` is the metered unit (query, MB, call), `pricePerUnit`
+   * the price of one, and an order's quantity is its cap. The buyer opens a payment channel for the cap and signs
+   * claims as the service is used; the seller redeems them.
+   */
+  metered?: boolean;
 }
 
 export interface SupplyRequestContent {
@@ -103,6 +123,8 @@ export interface MilestoneTerm {
   evidence: string;
   /** The final delivery milestone carries the commodity leg. */
   delivery: boolean;
+  /** Subcontracts only: the parent contract's milestone index this stage serves (explicit, never inferred from labels or dates). It is funded only after that parent milestone is released. */
+  servesMilestone?: number;
 }
 
 /** A milestone in a listing's payment schedule; due dates are counted from the day the order is placed. */
@@ -130,7 +152,8 @@ export interface ContractTerms {
   contractId: string;
   buyerId: string;
   sellerId: string;
-  source: { kind: 'request'; requestId: string; offerId: string } | { kind: 'listing'; listingId: string };
+  /** `subcontract`: a child contract the parent's seller formed (buildSubcontract); which parent comes only from the ConstituentIncluded TX written in the same batch. */
+  source: { kind: 'request'; requestId: string; offerId: string } | { kind: 'listing'; listingId: string } | { kind: 'subcontract' };
   categoryId: string;
   title: string;
   quantity: number;
@@ -141,6 +164,10 @@ export interface ContractTerms {
   formedAt: string;
   /** Fee terms copied from the schedule in force when the contract formed (absent/null = no fees). The seller pays them at release. */
   fees?: FeeTerms | null;
+  /** The rail frozen when the contract formed (paymentAssets.defaultRail); absent on deals formed before 15.31.0 = the asset's default. */
+  rail?: RailId;
+  /** A third party named at formation who may affirm milestones besides the buyer (never the seller). The buyer still pays; disputes and operator rulings remain the fallback. */
+  evaluatorId?: string;
 }
 
 export type MilestoneState = 'pending' | 'evidenced' | 'affirmed' | 'released' | 'disputed';
@@ -169,6 +196,26 @@ export interface ContractView extends ContractTerms {
   nextAction: { by: 'buyer' | 'seller' | 'operator' | null; action: string };
   /** Fees charged at release (FeeCharged), with how each was settled. */
   feeCharges: FeeCharge[];
+  /** Set when this is a subcontract: the parent replayed from the ConstituentIncluded TX that links it (never from ids or labels). */
+  parentContractId?: string;
+  /** Child contracts linked to this one by ConstituentIncluded TXs, in link order. */
+  subcontracts: string[];
+  /** Metered contracts (rail ledger-channel): the payment channel as the validated ledger showed it; null before it opens. */
+  channel?: ChannelView | null;
+}
+
+/**
+ * A payment channel replayed from EscrowFunded / EscrowReleased / EscrowRefunded (rail ledger-channel). Amounts in
+ * drops. `releasedDrops` is the cumulative Balance the seller redeemed on the ledger; `closed` only once the ledger
+ * showed the channel deleted.
+ */
+export interface ChannelView {
+  channelId: string; publicKey: string; network: string; txHash: string;
+  capDrops: string; releasedDrops: string; refundedDrops: string;
+  /** Units used so far (released ÷ price per unit) and the cap in units. */
+  unitsUsed: number; unitsCap: number;
+  settleDelay: number | null; cancelAfter: string;
+  closed: boolean; closeTxHash: string | null;
 }
 
 export interface FeeEscrow { account: string; label: string; drops: string; txHash: string; sequence: number }
@@ -214,4 +261,6 @@ export interface MandateLimits {
   expiresAt: string;
 }
 
-export interface MandateContent { mandateId: string; agentPartyId: string; grantedBy: string; limits: MandateLimits }
+export interface MandateContent { mandateId: string; agentPartyId: string; grantedBy: string; limits: MandateLimits;
+  /** v15-31-00: the agent's declared signing key (Ed25519 hex) this mandate is bound to; requests acting under it must be signed by that key (agentRequestAuth.ts). Absent = unbound (older mandates). */
+  boundKey?: string }

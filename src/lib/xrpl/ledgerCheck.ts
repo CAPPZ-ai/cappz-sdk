@@ -30,6 +30,8 @@ export interface LedgerTx {
   fields: Record<string, unknown>;
   memos: Array<{ type: string; data: string }>;
   closeTime: string | null; checkedAt: string;
+  /** The transaction metadata as the ledger returned it (AffectedNodes, TransactionResult…): what the ledger DID to ledger objects. */
+  meta?: Record<string, unknown> | null;
 }
 
 export const hexToUtf8 = (hex: string): string => {
@@ -54,6 +56,7 @@ export function normalizeTx(result: Record<string, unknown>, network: XrplNetwor
     deliveredIssued: delivered && typeof delivered === 'object' && 'issuer' in delivered ? { currency: String((delivered as Record<string, unknown>).currency), issuer: String((delivered as Record<string, unknown>).issuer), value: String((delivered as Record<string, unknown>).value) } : null,
     destinationTag: typeof tx.DestinationTag === 'number' ? tx.DestinationTag : null,
     fields: tx, memos, closeTime: typeof date === 'number' ? new Date((date + 946684800) * 1000).toISOString() : typeof date === 'string' ? date : null, checkedAt,
+    meta: meta ?? null,
   };
 }
 

@@ -18,6 +18,8 @@ npm install -g github:CAPPZ-ai/cappz-sdk
 
 Then use `"command": "cappz-market", "args": ["mcp"]` (or `claude mcp add cappz-market -- cappz-market mcp`) in place of `node /abs/path/cappz-market.mjs mcp` below.
 
+`packages/cappz-market/server.json` is the server's MCP Registry entry (`ai.cappz/cappz-market`). It names the npm package `@cappz/market`, which is **not published yet**: until it is, use the one-file download or the GitHub install above, not `npx @cappz/market`.
+
 ## Claude Code
 
 ```bash

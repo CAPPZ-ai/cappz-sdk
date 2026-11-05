@@ -24,6 +24,11 @@ import { resolveSettlementPolicy, settlementPolicyFor, type SettlementPolicy } f
 import { MARKETPLACE_POW_ROOT } from '../../src/lib/marketplace/MarketplacePaths';
 import type { MarketTx, MarketTxLike } from '../../src/lib/marketplace/ledger';
 import type { Actor } from '../../src/lib/marketplace/model';
+import * as secp from '@noble/secp256k1';
+import { ed25519 } from '@noble/curves/ed25519';
+import { declarationHash, declareKey, type KeyDeclaration } from '../../src/lib/identity/keyDeclaration';
+import { fromHex, toHex } from '../../src/lib/identity/canonical';
+import type { AgentSigningKey } from '../../src/lib/marketplace/agentRequestAuth';
 
 export class ToolError extends Error {
   constructor(message: string, readonly next?: string) { super(message); }
@@ -205,7 +210,7 @@ export async function loadMarket(o: GlobalOptions, needSession = false): Promise
     mode: 'live', network, state, txs, policy: settlementPolicyFor(network), partyId, aside: attribution.rejected.length,
     actor(co) {
       if (!partyId) throw new ToolError('Sign in to act on the live market.', 'Run: cappz-market login');
-      return { partyId, at: new Date().toISOString(), ...(co ? { coSignedBy: co } : {}) };
+      return { partyId, at: new Date().toISOString(), network, ...(co ? { coSignedBy: co } : {}) };
     },
     async commit(batch, opts = {}) {
       const live = await session(true);
@@ -292,6 +297,39 @@ export async function rememberSecret(contractId: string, milestone: number, secr
 }
 export async function recallSecret(contractId: string, milestone: number): Promise<string | null> {
   return ((await readJson<Record<string, string>>('escrow-secrets.json')) ?? {})[`${contractId}:${milestone}`] ?? null;
+}
+
+// ─── The agent's request-signing key (KeyZ) ───────────────────────
+
+/**
+ * An identity wallet key (secp256k1) that declares an Ed25519 request-signing key for purpose `signing`. Both stay in
+ * CAPPZ_HOME (0600); only the declaration (public key + wallet signature) goes on the profile. It is separate from the
+ * XRPL wallet, which may be Ed25519 and which moves money: the signing key can be rotated without moving funds.
+ */
+interface AgentKeyFile { walletPrivateKey: string; walletAddress: string; secretKey: string; declaration: KeyDeclaration }
+/** Renew the declaration when it has less than this left. */
+const RENEW_BEFORE_MS = 14 * 86_400_000;
+
+export async function agentKey(): Promise<AgentKeyFile | null> { return readJson<AgentKeyFile>('agent-key.json'); }
+
+/** The agent key, created on first use and its declaration renewed (superseding the old one) before it expires. */
+export async function ensureAgentKey(now = Date.now()): Promise<AgentKeyFile> {
+  const k = await agentKey();
+  if (k && Date.parse(k.declaration.expiresAt) - now > RENEW_BEFORE_MS) return k;
+  const walletPrivateKey = k ? fromHex(k.walletPrivateKey) : secp.utils.randomSecretKey();
+  const walletAddress = k?.walletAddress ?? toHex(secp.getPublicKey(walletPrivateKey, true));
+  const secretKey = k ? fromHex(k.secretKey) : crypto.getRandomValues(new Uint8Array(32));
+  const declaration = await declareKey(walletPrivateKey, walletAddress, { publicKey: toHex(ed25519.getPublicKey(secretKey)), algorithm: 'ed25519', purpose: 'signing', ...(k ? { supersedes: await declarationHash(k.declaration) } : {}) }, undefined, now);
+  const out: AgentKeyFile = { walletPrivateKey: toHex(walletPrivateKey), walletAddress, secretKey: toHex(secretKey), declaration };
+  await writeJson('agent-key.json', out, true);
+  return out;
+}
+
+/** What signs this party's requests — only when its profile declares this computer's key (a stale or foreign key would sign nothing useful). */
+export async function agentSigningKey(partyId: string | null, declared: KeyDeclaration | undefined): Promise<AgentSigningKey | null> {
+  const k = await agentKey();
+  if (!k || !partyId || !declared || declared.publicKey.toLowerCase() !== k.declaration.publicKey.toLowerCase()) return null;
+  return { partyId, declaration: declared, secretKeyHex: k.secretKey };
 }
 
 export const homeDir = HOME;

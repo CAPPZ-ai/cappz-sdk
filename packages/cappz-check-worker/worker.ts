@@ -11,14 +11,30 @@
  *
  * It also answers deal-bound signing approvals for free (POST /<net>/authorize):
  * the same key signs them under a separate domain (signingApproval.ts).
+ *
+ * v15-31-00: /authorize verifies the request's RFC 9421 signature against the
+ * agent's KeyZ-declared key on its market profile (agentRequestAuth.ts) and
+ * records the state in the approval; an agent whose mandate binds a key is
+ * approved only on `verified-bound`. It serves a signed A2A agent card
+ * (/.well-known/agent-card.json, and per network) and free signed reputation
+ * attestations (GET /<net>/reputation/<partyId>). The card, the reports, the
+ * approvals and the attestations are all signed by the one report key: it is
+ * the key the marketplace discovery document publishes (trust state
+ * `published-key`), not a KeyZ-declared key — no wallet declaration names it
+ * yet, and the card says so.
  */
 import { isValidClassicAddress } from 'xrpl';
 import { createPaidAgent, SCHEDULE_PRESETS, type JobEvent, type JobStore } from '../../src/lib/agentKit/paidAgent';
 import { rpcLedgerReader } from '../../src/lib/xrpl/xrplRpc';
-import { runCounterpartyCheck, signCheck, type CheckRequest } from '../../src/lib/marketplace/counterpartyCheck';
+import { readAccountFacts, runCounterpartyCheck, signCheck, type CheckRequest } from '../../src/lib/marketplace/counterpartyCheck';
 import { evaluateSigningIntent, signApproval } from '../../src/lib/marketplace/signingApproval';
+import { createAgentRequestVerifier, type AgentRequestVerifier, type RequestAuth } from '../../src/lib/marketplace/agentRequestAuth';
+import { buildAgentCard, signAgentCard, type AgentSkill } from '../../src/lib/marketplace/agentCard';
+import { buildReputationAttestation, signReputation } from '../../src/lib/marketplace/reputationAttestation';
+import { readBounded } from '../../src/lib/identity/edgeVerify';
 import { attributePublicLog, marketPartition, pullPublicLog, type PublicLogPort } from '../../src/lib/marketplace/publicLog';
 import { resolveMarket, type MarketState } from '../../src/lib/marketplace/replay';
+import { currencyOf } from '../../src/lib/marketplace/paymentAssets';
 import { ed25519 } from '@noble/curves/ed25519';
 
 interface D1Result<T> { results: T[] }
@@ -38,7 +54,9 @@ export interface Env {
 
 type Net = 'mainnet' | 'testnet';
 const NETS: Net[] = ['mainnet', 'testnet'];
-const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'GET, POST, OPTIONS' };
+const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type, content-digest, signature, signature-input, cappz-wallet, cappz-party', 'access-control-allow-methods': 'GET, POST, OPTIONS' };
+/** The card's version follows the SDK release that ships this worker. */
+export const SERVICE_VERSION = '15.31.0';
 const json = (code: number, body: unknown) => new Response(JSON.stringify(body, null, 2), { status: code, headers: { 'content-type': 'application/json; charset=utf-8', ...CORS } });
 const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 const unhex = (h: string) => new Uint8Array((h.match(/../g) ?? []).map((x) => parseInt(x, 16)));
@@ -82,12 +100,17 @@ async function marketState(env: Env, network: Net, fresh = false): Promise<Marke
 export function checkInput(input: unknown, network: Net): CheckRequest {
   const i = (typeof input === 'object' && input ? input : {}) as Record<string, unknown>;
   const address = i.address ? String(i.address) : undefined; const party = i.party ? String(i.party) : undefined;
-  if (!address && !party) throw new Error('Send {"input": {"address": "r…"}} or {"input": {"party": "p-…"}}; optionally "amountXrp", "payer" and "escrowLegs".');
+  if (!address && !party) throw new Error('Send {"input": {"address": "r…"}} or {"input": {"party": "p-…"}}; optionally "amountXrp", "payer", "escrowLegs", and "currency" + "amount" for CAPPZ or USD-tokenZ/1 (RLUSD).');
   if (address && !isValidClassicAddress(address)) throw new Error(`${address} is not a valid XRPL classic address.`);
   if (i.payer && !isValidClassicAddress(String(i.payer))) throw new Error('payer is not a valid XRPL classic address.');
   const amountXrp = i.amountXrp === undefined ? undefined : Number(i.amountXrp);
   if (amountXrp !== undefined && !(amountXrp >= 0)) throw new Error('amountXrp must be a number of XRP.');
-  return { network, ...(address ? { address } : {}), ...(party ? { party } : {}), ...(amountXrp !== undefined ? { amountXrp } : {}), ...(i.payer ? { payer: String(i.payer) } : {}), ...(i.escrowLegs ? { escrowLegs: Math.max(1, Math.floor(Number(i.escrowLegs))) } : {}) };
+  // 15.31.0: any payment asset (XRP, CAPPZ, USD-tokenZ/1); issued tokens add trust-line and issuer checks.
+  const currency = i.currency === undefined ? undefined : currencyOf(String(i.currency));
+  if (i.currency !== undefined && !currency) throw new Error('currency must name a payment asset: XRP, CAPPZ, USD-tokenZ/1 (RLUSD) or USD.');
+  const amount = i.amount === undefined ? undefined : Number(i.amount);
+  if (amount !== undefined && !(amount >= 0)) throw new Error('amount must be a number in the asset.');
+  return { network, ...(address ? { address } : {}), ...(party ? { party } : {}), ...(amountXrp !== undefined ? { amountXrp } : {}), ...(i.payer ? { payer: String(i.payer) } : {}), ...(i.escrowLegs ? { escrowLegs: Math.max(1, Math.floor(Number(i.escrowLegs))) } : {}), ...(currency ? { currency } : {}), ...(amount !== undefined ? { amount } : {}) };
 }
 
 function agentFor(env: Env, network: Net) {
@@ -114,14 +137,38 @@ function agentFor(env: Env, network: Net) {
  * Deal-bound signing approval (free): replay the public log now (never a cached copy, so a dispute raised a moment
  * ago counts) and approve this exact unsigned escrow transaction, or say why not. Read-only: nothing is stored.
  */
-export async function authorize(body: unknown, network: Net, state: MarketState | null, seedHex: string, now = new Date().toISOString()) {
+export async function authorize(body: unknown, network: Net, state: MarketState | null, seedHex: string, now = new Date().toISOString(), requestAuth?: RequestAuth) {
   const b = (typeof body === 'object' && body ? body : {}) as Record<string, unknown>;
   const tx = b.tx && typeof b.tx === 'object' ? b.tx as Record<string, unknown> : null;
   const milestone = Number(b.milestone);
   if (!tx || typeof b.contractId !== 'string' || !Number.isInteger(milestone) || milestone < 0) throw new Error('Send {"contractId": "ct-…", "milestone": 0, "tx": {…unsigned, autofilled…}} and, for agents above their threshold, the grantor’s "coSignature".');
   if (!state) return { code: 503, body: { approved: false, reasons: [{ code: 'market-unreadable', message: 'The marketplace log could not be read just now; nothing is approved. Retry shortly.' }] } };
-  const d = await evaluateSigningIntent(state, { network, contractId: b.contractId, milestone, tx, ...(b.coSignature && typeof b.coSignature === 'object' ? { coSignature: b.coSignature as never } : {}) }, now);
-  return d.approved ? { code: 200, body: { approved: true, ...signApproval(d.approval, seedHex) } } : { code: 200, body: d };
+  const d = await evaluateSigningIntent(state, { network, contractId: b.contractId, milestone, tx, ...(b.coSignature && typeof b.coSignature === 'object' ? { coSignature: b.coSignature as never } : {}), ...(requestAuth ? { requestAuth } : {}) }, now);
+  return d.approved ? { code: 200, body: { approved: true, ...signApproval(d.approval, seedHex) } } : { code: 200, body: { ...d, ...(requestAuth ? { requestAuth } : {}) } };
+}
+
+/** One request verifier (replay cache) per network per isolate. Nonces are per isolate: a replayed /authorize only gets the same approval of the same single-use ledger transaction again. */
+const verifiers = new Map<Net, AgentRequestVerifier>();
+const verifierFor = (n: Net) => { let v = verifiers.get(n); if (!v) { v = createAgentRequestVerifier(); verifiers.set(n, v); } return v; };
+
+const FREE_SKILLS = (origin: string, nets: readonly Net[]): AgentSkill[] => [
+  ...nets.map((n) => ({ id: `signing-approval-${n}`, name: `Deal-bound signing approval (${n})`, description: `Free: POST ${origin}/${n}/authorize {"contractId","milestone","tx"} → a signed approval of that exact unsigned escrow transaction, or the reasons it is refused. Sign the request (RFC 9421) with your declared key; required when your mandate binds one.`, tags: ['free', 'approval', `xrpl-${n}`], inputModes: ['application/json'], outputModes: ['application/json'] })),
+  ...nets.map((n) => ({ id: `reputation-${n}`, name: `Reputation attestation (${n})`, description: `Free: GET ${origin}/${n}/reputation/<partyId> → a signed snapshot of the party's ledger facts, marketplace history and standing, kept separate.`, tags: ['free', 'reputation', `xrpl-${n}`], inputModes: ['application/json'], outputModes: ['application/json'] })),
+];
+
+/** The signed A2A card: the whole service (top level) or one network's paid check agent. */
+export function serviceCard(env: Env, origin: string, network: Net | null) {
+  const nets = network ? [network] : NETS;
+  const paid = network ? agentFor(env, network).card() : undefined;
+  const card = buildAgentCard({
+    url: network ? `${origin}/${network}` : origin, version: SERVICE_VERSION, ...(paid ? { paid } : { manifest: { name: 'cappz-check', version: SERVICE_VERSION, network: 'xrpl', operations: [] } }),
+    name: network ? undefined : 'CAPPZ check service', description: network ? undefined : 'Counterparty checks (paid, per network), deal-bound signing approvals and reputation attestations (free), each signed with Ed25519.',
+    provider: { organization: 'CAPPZ', url: 'https://cappz.ai' }, documentationUrl: 'https://github.com/CAPPZ-ai/cappz-sdk/tree/main/packages/cappz-check-worker',
+    extraSkills: [...(network ? [] : NETS.map((n) => ({ id: `counterparty-check-${n}`, name: `CAPPZ counterparty check (${n})`, description: `Paid per check: ${origin}/${n}/.well-known/agent-card.json describes it.`, tags: ['paid', `xrpl-${n}`] }))), ...FREE_SKILLS(origin, nets)],
+    requestSigning: 'optional',
+    signingKeyTrust: 'This card, reports, approvals and attestations are signed by the key published in the marketplace discovery document (/.well-known/cappz-market.json, services.counterpartyCheck.publicKey) and at GET /key: trust state published-key. No KeyZ wallet declaration names it yet.',
+  });
+  return signAgentCard(card, env.CHECK_SIGNING_SEED);
 }
 
 const JOB = /^\/(mainnet|testnet)\/jobs\/(job-[0-9a-f]{16})(\/payments|\/retry|\/stages\/(\d+)\/result)?$/;
@@ -132,14 +179,33 @@ export default {
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
     try {
       const publicKey = hex(ed25519.getPublicKey(unhex(env.CHECK_SIGNING_SEED)));
+      const wellKnown = /^(?:\/(mainnet|testnet))?\/\.well-known\/agent-card\.json$/.exec(url.pathname);
+      if (req.method === 'GET' && wellKnown) return json(200, serviceCard(env, url.origin, (wellKnown[1] as Net | undefined) ?? null));
+      const repu = /^\/(mainnet|testnet)\/reputation\/([A-Za-z0-9._-]{1,64})$/.exec(url.pathname);
+      if (repu) {
+        if (req.method !== 'GET') return json(405, { error: 'GET /<network>/reputation/<partyId>' });
+        const network = repu[1] as Net; const state = await marketState(env, network);
+        if (!state) return json(503, { error: 'The marketplace log could not be read just now; nothing is attested. Retry shortly.' });
+        const acct = state.parties.get(repu[2])?.xrplAccount;
+        const ledger = acct ? await readAccountFacts(network, acct).catch((e: Error) => ({ address: acct, activated: null, balanceXrp: null, ownedObjects: null, flags: null, regularKey: null, firstSeen: null, lastActive: null, error: e.message })) : null;
+        const { ledgerIndex: _l, reserveBase: _b, reserveInc: _i, ...facts } = (ledger ?? {}) as Record<string, unknown>;
+        return json(200, signReputation(buildReputationAttestation(state, repu[2], network, new Date().toISOString(), { ledger: ledger ? facts as never : null }), env.CHECK_SIGNING_SEED));
+      }
       if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/key')) {
-        return json(200, { service: 'CAPPZ counterparty check', price: `${env.PRICE_XRP || '0.01'} XRP per check`, networks: Object.fromEntries(NETS.map((n) => [n, `${url.origin}/${n}`])), signature: { alg: 'Ed25519', publicKey }, howToUse: 'cappz-market check <address|party> [--network mainnet] — or POST /<network>/jobs {"input": {"address": "r…"}} → pay the stage shown → GET /<network>/jobs/<id>/stages/0/result', approvals: 'Free: POST /<network>/authorize {"contractId", "milestone", "tx"} → a signed approval of that exact unsigned escrow transaction, or the reasons it is refused. Rules: https://github.com/CAPPZ-ai/cappz-sdk/blob/main/src/lib/marketplace/signingApproval.ts', rules: 'https://github.com/CAPPZ-ai/cappz-sdk/blob/main/src/lib/marketplace/counterpartyCheck.ts' });
+        return json(200, { service: 'CAPPZ counterparty check', price: `${env.PRICE_XRP || '0.01'} XRP per check`, networks: Object.fromEntries(NETS.map((n) => [n, `${url.origin}/${n}`])), signature: { alg: 'Ed25519', publicKey }, howToUse: 'cappz-market check <address|party> [--network mainnet] — or POST /<network>/jobs {"input": {"address": "r…"}} → pay the stage shown → GET /<network>/jobs/<id>/stages/0/result', approvals: 'Free: POST /<network>/authorize {"contractId", "milestone", "tx"} → a signed approval of that exact unsigned escrow transaction or token stage payment, or the reasons it is refused. Rules: https://github.com/CAPPZ-ai/cappz-sdk/blob/main/src/lib/marketplace/signingApproval.ts', reputation: 'Free: GET /<network>/reputation/<partyId> → a signed reputation attestation.', agentCard: `${url.origin}/.well-known/agent-card.json`, rules: 'https://github.com/CAPPZ-ai/cappz-sdk/blob/main/src/lib/marketplace/counterpartyCheck.ts' });
       }
       const top = /^\/(mainnet|testnet)(\/agent|\/health|\/jobs|\/authorize)?$/.exec(url.pathname);
       if (top && top[2] === '/authorize') {
         if (req.method !== 'POST') return json(405, { error: 'POST {"contractId", "milestone", "tx"} to get a signing approval.' });
         const network = top[1] as Net;
-        const r = await authorize(await req.json().catch(() => ({})), network, await marketState(env, network, true), env.CHECK_SIGNING_SEED);
+        // The raw bytes: the signature covers their Content-Digest.
+        const bytes = await readBounded(req, 256 * 1024);
+        if (!bytes) return json(413, { error: 'Request body over 256 KB.' });
+        let body: unknown = {};
+        try { body = JSON.parse(new TextDecoder().decode(bytes)); } catch { body = {}; }
+        const state = await marketState(env, network, true);
+        const requestAuth = state ? await verifierFor(network).verify(state, req, bytes) : undefined;
+        const r = await authorize(body, network, state, env.CHECK_SIGNING_SEED, new Date().toISOString(), requestAuth);
         return json(r.code, r.body);
       }
       if (top) {

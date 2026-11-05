@@ -22,6 +22,8 @@ import { diagnose, indexGraph, searchGraph, walk } from './knowledge/query';
 import { buildSecurityTransfer, buildSubscribe } from './securities';
 import { PUBLIC_LOG_PARTITION } from './publicLog';
 import { resolveSettlementPolicy, type SettlementPolicy } from './settlement';
+import { PAYMENT_ASSETS, PAYMENT_RAILS, assetAvailability } from './paymentAssets';
+import { fundingNeed } from './walletFunding';
 import type { Lacuna } from '../lacuna/types';
 import type { LedgerTx } from '../xrpl/ledgerCheck';
 
@@ -29,7 +31,7 @@ import type { LedgerTx } from '../xrpl/ledgerCheck';
 export interface AgentDeps { policy?: SettlementPolicy; lacuna?: Lacuna | null; research?: ConceptWriter | null; fetchLedgerTx?: (network: SettlementPolicy['network'], hash: string) => Promise<LedgerTx>; boxPrivateKey?: JsonWebKey }
 
 type Field = { type: 'string' | 'number' | 'integer' | 'boolean' | 'object' | 'array'; description: string; required?: boolean };
-export interface AgentOperation { verb: MarketplaceVerb | 'marketplace.match.suppliers' | 'marketplace.match.demand' | 'marketplace.state.read' | 'marketplace.search' | 'marketplace.discovery.global' | 'marketplace.knowledge.query'; summary: string; input: Record<string, Field>; writes: boolean }
+export interface AgentOperation { verb: MarketplaceVerb | 'marketplace.assets.list' | 'marketplace.match.suppliers' | 'marketplace.match.demand' | 'marketplace.state.read' | 'marketplace.search' | 'marketplace.discovery.global' | 'marketplace.knowledge.query'; summary: string; input: Record<string, Field>; writes: boolean }
 
 const s = (description: string, required = true): Field => ({ type: 'string', description, required });
 const n = (description: string, required = true): Field => ({ type: 'number', description, required });
@@ -37,22 +39,28 @@ const o = (description: string, required = true): Field => ({ type: 'object', de
 
 export const AGENT_OPERATIONS: AgentOperation[] = [
   { verb: 'marketplace.state.read', summary: 'Read open listings, open requests, your contracts (each with the fee terms it formed with), token balances and the fee schedule in force.', input: {}, writes: false },
+  { verb: 'marketplace.assets.list', summary: 'Payment assets you can price and pay in on this network (XRP, CAPPZ, RLUSD as USD-tokenZ/1, USD by card), each with its rail, issuer and why one is unavailable; plus how to fund a wallet (exchange instructions, never a provider integration).', input: {}, writes: false },
   { verb: 'marketplace.match.suppliers', summary: 'Rank suppliers (listings and capable parties) for a request, with reasons.', input: { requestId: s('Request id') }, writes: false },
   { verb: 'marketplace.match.demand', summary: 'Rank open requests your party could fill, with reasons.', input: {}, writes: false },
   { verb: 'marketplace.search', summary: 'Ranked search over listings, requests, parties and tokens (synonyms, typos, categories); each hit says which terms matched.', input: { query: s('What to look for'), kinds: { type: 'array', description: 'listing | request | party | token', required: false } }, writes: false },
   { verb: 'marketplace.discovery.global', summary: 'Global whitespace: existing offerings worldwide (from your research function, labelled agent-reported) plus CAPPZ listings (verified), voids found by lacuna. Needs deps.lacuna; deps.research optional.', input: { interests: s('The space to explore'), region: s('Region to emphasize', false) }, writes: false },
   { verb: 'marketplace.knowledge.query', summary: 'Open a purchased knowledge graph with your box key (deps.boxPrivateKey, used in your process only), verify its Merkle root, then search / walk / diagnose.', input: { contractId: s('Contract for the graph license'), symptoms: { type: 'array', description: 'Observed symptoms (diagnose)', required: false }, query: s('Search text', false), nodeId: s('Walk from this node', false), depth: n('Walk depth ≤ 3', false) }, writes: false },
   { verb: 'marketplace.party.profile', summary: 'Create or update your party profile (kind agent requires a principal or governance address).', input: { profile: o('PartyProfile') }, writes: true },
-  { verb: 'marketplace.listing.publish', summary: 'Publish or amend a listing.', input: { listing: o('ListingContent') }, writes: true },
-  { verb: 'marketplace.order.place', summary: 'Buy from a listing; forms a contract.', input: { listingId: s('Listing id'), quantity: n('Quantity in the listing unit') }, writes: true },
+  { verb: 'marketplace.listing.publish', summary: 'Publish or amend a listing. metered: true (XRP only) sells metered use — unit is the metered unit, an order’s quantity is its cap, paid through a ledger payment channel.', input: { listing: o('ListingContent') }, writes: true },
+  { verb: 'marketplace.order.place', summary: 'Buy from a listing; forms a contract.', input: { listingId: s('Listing id'), quantity: n('Quantity in the listing unit'), evaluatorId: s('Optional party who may accept milestones besides you (never the seller)', false) }, writes: true },
+  { verb: 'marketplace.contract.subcontract', summary: 'Seller of a contract: hand part of its work to another party as a child contract (same asset and rail; within the parent\'s unreleased value; each stage serves a parent milestone and is due by it). You are the child\'s buyer and fund each stage only after the parent milestone it serves is released to you. Agents need a mandate covering this verb and the child\'s value; fees apply to the child like any contract.', input: { parentContractId: s('Your parent contract id (you are its seller)'), subcontractorId: s('Party id of the subcontractor'), title: s('What the subcontractor delivers'), quantity: n('Quantity'), pricePerUnit: o('Money { amount, currency } in the parent\'s asset'), serves: n('Parent milestone index the work serves (one stage due with it)', false), milestones: { type: 'array', description: 'Or the stages: [{ label, share, dueBy, evidence, delivery, servesMilestone }]', required: false }, unit: s('Unit (default: the parent\'s)', false), evaluatorId: s('Optional evaluator for the child', false) }, writes: true },
   { verb: 'marketplace.request.post', summary: 'Request supply, including crops that do not exist yet (allowNewPlanting).', input: { request: o('SupplyRequestContent') }, writes: true },
   { verb: 'marketplace.offer.submit', summary: 'Bid on a request (with a production plan for new plantings).', input: { offer: o('SupplyOfferContent') }, writes: true },
-  { verb: 'marketplace.offer.award', summary: 'Award a bid (all or part).', input: { requestId: s('Request id'), offerId: s('Offer id'), quantity: n('Quantity to award', false) }, writes: true },
+  { verb: 'marketplace.offer.award', summary: 'Award a bid (all or part).', input: { requestId: s('Request id'), offerId: s('Offer id'), quantity: n('Quantity to award', false), evaluatorId: s('Optional party who may accept milestones besides you (never the seller)', false) }, writes: true },
   { verb: 'marketplace.escrow.fund', summary: 'USD contracts: record a payment reference. XRP contracts: pass the validated EscrowCreate hashes (one per leg — the seller net and each fee recipient — all under the milestone condition, prepared with settlement.prepareMilestoneEscrows); they are read from the ledger (deps.fetchLedgerTx) and must match amount, accounts, condition and memo.', input: { contractId: s('Contract id'), amount: n('USD: amount to fund', false), reference: s('USD: payment reference', false), escrows: { type: 'array', description: 'XRP: [{ milestone, txHash, condition }]', required: false } }, writes: true },
   { verb: 'marketplace.escrow.ledger-settle', summary: 'Record a validated EscrowFinish (release) or EscrowCancel (refund) for an XRP milestone; every fee leg escrow must be finished (or cancelled) too.', input: { contractId: s('Contract id'), milestone: n('Milestone index'), txHash: s('EscrowFinish / EscrowCancel hash for the seller leg'), feeTxHashes: { type: 'array', description: 'EscrowFinish / EscrowCancel hashes for the fee legs', required: false } }, writes: true },
   { verb: 'marketplace.access.deliver', summary: 'Seller of a knowledge graph: seal its content key to the buyer (uses deps.boxPrivateKey locally).', input: { contractId: s('Contract id') }, writes: true },
   { verb: 'marketplace.milestone.evidence', summary: 'Submit milestone evidence by sha256 hash.', input: { contractId: s('Contract id'), milestone: n('Milestone index'), kind: s('photo | document | inspection | sensor | delivery-receipt'), hash: s('sha256 hex of the evidence file'), note: s('Note', false) }, writes: true },
-  { verb: 'marketplace.milestone.affirm', summary: 'Accept a milestone or delivery.', input: { contractId: s('Contract id'), milestone: n('Milestone index') }, writes: true },
+  { verb: 'marketplace.stage.pay', summary: 'CAPPZ and RLUSD (USD-tokenZ) deals: record an accepted stage you paid directly on the ledger — one validated Payment per leg (seller net, fee legs), prepared with settlement.prepareStagePayments; each is read from the ledger (deps.fetchLedgerTx) and must match amount, currency, issuer, destination and memo.', input: { contractId: s('Contract id'), milestone: n('Milestone index'), txHashes: { type: 'array', description: 'Payment hashes, one per leg', required: true } }, writes: true },
+  { verb: 'marketplace.channel.open', summary: 'Metered XRP deals (listing metered): record the payment channel you opened for the cap — a validated PaymentChannelCreate prepared with settlement.prepareChannelCreate (to the seller, Amount = cap in drops, CancelAfter within 30 days, your claim public key, contract memo), read from the ledger (deps.fetchLedgerTx). Then sign claims off the ledger as you use the service (settlement.signChannelClaim, cumulative drops) and give them to the seller.', input: { contractId: s('Contract id'), txHash: s('PaymentChannelCreate hash') }, writes: true },
+  { verb: 'marketplace.channel.settle', summary: 'Seller of a metered deal: record a claim you redeemed on the ledger (validated PaymentChannelClaim from your account; the channel balance in its metadata is the cumulative amount paid) plus the fee Payments you made from your account for the increment (settlement.prepareChannelFeePayments) — a channel pays only the seller, so the seller pays the fee legs.', input: { contractId: s('Contract id'), txHash: s('PaymentChannelClaim hash'), feeTxHashes: { type: 'array', description: 'Fee Payment hashes, one per fee leg (none when no fee is due)', required: false } }, writes: true },
+  { verb: 'marketplace.channel.close', summary: 'Either party of a metered deal: record the channel closing — a validated channel transaction whose metadata shows the channel deleted (the seller\'s tfClose claim, or a close after SettleDelay or CancelAfter). The unused remainder is recorded as returned to the buyer and the contract completes.', input: { contractId: s('Contract id'), txHash: s('Hash of the transaction that closed the channel') }, writes: true },
+  { verb: 'marketplace.milestone.affirm', summary: 'Accept a milestone or delivery (the buyer, or the evaluator named in the contract; the buyer still pays).', input: { contractId: s('Contract id'), milestone: n('Milestone index') }, writes: true },
   { verb: 'marketplace.escrow.release', summary: 'Release escrow for an accepted milestone.', input: { contractId: s('Contract id'), milestone: n('Milestone index') }, writes: true },
   { verb: 'marketplace.token.transfer', summary: 'Transfer receipt tokens.', input: { tokenId: s('Token id'), to: s('Recipient party id'), amount: { type: 'integer', description: 'Whole tokens', required: true } }, writes: true },
   { verb: 'marketplace.security.subscribe', summary: 'Subscribe to an approved offering. Rule 506(c) requires your party (its principal) to be a verified accredited investor.', input: { offeringId: s('Offering id'), units: { type: 'integer', description: 'Whole units', required: true } }, writes: true },
@@ -70,11 +78,30 @@ export async function executeAgentOperation(state: MarketState, actor: M.Actor, 
   switch (verb) {
     case 'marketplace.state.read': return { data: {
       listings: state.listings.filter((l) => l.open), requests: state.requests.filter((r) => r.open),
-      contracts: state.contracts.filter((c) => c.buyerId === actor.partyId || c.sellerId === actor.partyId),
+      contracts: state.contracts.filter((c) => c.buyerId === actor.partyId || c.sellerId === actor.partyId || c.evaluatorId === actor.partyId),
       tokens: state.tokens.map((t) => ({ tokenId: t.content.tokenId, name: t.content.name, balance: t.balances[actor.partyId] ?? 0 })).filter((t) => t.balance > 0),
       mandates: state.mandates.filter((m) => m.agentPartyId === actor.partyId),
       fees: state.fees,
     }, txs: [] };
+    case 'marketplace.assets.list': {
+      const network = (deps.policy ?? resolveSettlementPolicy([])).network;
+      return { data: { network, assets: PAYMENT_ASSETS.map((a) => { const av = assetAvailability(a.code, network); return { code: a.code, label: a.label, address: a.mdmAddress, kind: a.kind, rails: a.rails, availability: av.state, ...(av.state === 'available' ? { token: av.token } : { reason: av.reason }) }; }), rails: PAYMENT_RAILS.map((r) => ({ id: r.id, address: r.mdmAddress, label: r.label, confirmedBy: r.confirmedBy, holdLimitDays: r.holdLimitDays, description: r.description })), funding: fundingNeed({ network, currency: 'XRP', amount: 0, accountExists: false }).steps }, txs: [] };
+    }
+    case 'marketplace.stage.pay': {
+      if (!deps.fetchLedgerTx) throw new AgentOperationError('Provide deps.fetchLedgerTx to read the ledger.');
+      const policy = deps.policy ?? resolveSettlementPolicy([]);
+      const lts = await Promise.all(((input.txHashes as unknown[]) ?? []).map((h) => deps.fetchLedgerTx!(policy.network, String(h))));
+      return { txs: await M.buildPayStageOnLedger(state, actor, str('contractId'), num('milestone'), policy, lts) };
+    }
+    case 'marketplace.channel.open': case 'marketplace.channel.settle': case 'marketplace.channel.close': {
+      if (!deps.fetchLedgerTx) throw new AgentOperationError('Provide deps.fetchLedgerTx to read the ledger.');
+      const policy = deps.policy ?? resolveSettlementPolicy([]);
+      const lt = await deps.fetchLedgerTx(policy.network, str('txHash'));
+      if (verb === 'marketplace.channel.open') return { txs: await M.buildOpenChannel(state, actor, str('contractId'), policy, lt) };
+      if (verb === 'marketplace.channel.close') return { txs: await M.buildCloseChannel(state, actor, str('contractId'), policy, lt) };
+      const feeLts = await Promise.all(((input.feeTxHashes as unknown[] | undefined) ?? []).map((h) => deps.fetchLedgerTx!(policy.network, String(h))));
+      return { txs: await M.buildChannelSettle(state, actor, str('contractId'), policy, lt, feeLts) };
+    }
     case 'marketplace.match.suppliers': { const r = state.requests.find((x) => x.requestId === str('requestId')); if (!r) throw new AgentOperationError('Unknown request.'); return { data: matchSuppliers(state, r, actor.at), txs: [] }; }
     case 'marketplace.match.demand': { const p = state.parties.get(actor.partyId); if (!p) throw new AgentOperationError('Create a profile first.'); return { data: matchDemand(state, p, state.listings, actor.at), txs: [] }; }
     case 'marketplace.search': return { data: searchMarket(state, str('query'), Array.isArray(input.kinds) ? { kinds: input.kinds as SearchKind[] } : {}), txs: [] };
@@ -104,10 +131,15 @@ export async function executeAgentOperation(state: MarketState, actor: M.Actor, 
     case 'marketplace.security.transfer': return { txs: await buildSecurityTransfer(state, actor, str('offeringId'), str('to'), num('units')) };
     case 'marketplace.party.profile': return { txs: await M.buildProfile(state, actor, input.profile as never) };
     case 'marketplace.listing.publish': return { txs: await M.buildListing(state, actor, input.listing as never) };
-    case 'marketplace.order.place': { const r = await M.buildOrder(state, actor, str('listingId'), num('quantity')); return { data: { contractId: r.contractId }, txs: r.txs }; }
+    case 'marketplace.order.place': { const r = await M.buildOrder(state, actor, str('listingId'), num('quantity'), undefined, input.evaluatorId ? str('evaluatorId') : undefined); return { data: { contractId: r.contractId }, txs: r.txs }; }
     case 'marketplace.request.post': return { txs: await M.buildRequest(state, actor, input.request as never) };
     case 'marketplace.offer.submit': { const r = await M.buildOffer(state, actor, input.offer as never); return { data: { warnings: r.warnings }, txs: r.txs }; }
-    case 'marketplace.offer.award': { const r = await M.buildAward(state, actor, str('requestId'), str('offerId'), input.quantity === undefined ? undefined : num('quantity')); return { data: { contractId: r.contractId }, txs: r.txs }; }
+    case 'marketplace.contract.subcontract': {
+      const r = await M.buildSubcontract(state, actor, str('parentContractId'), { subcontractorId: str('subcontractorId'), title: str('title'), quantity: num('quantity'), pricePerUnit: input.pricePerUnit as never,
+        ...(input.serves !== undefined ? { serves: num('serves') } : {}), ...(Array.isArray(input.milestones) ? { milestones: input.milestones as never } : {}), ...(input.unit ? { unit: str('unit') } : {}), ...(input.evaluatorId ? { evaluatorId: str('evaluatorId') } : {}) });
+      return { data: { contractId: r.contractId }, txs: r.txs };
+    }
+    case 'marketplace.offer.award': { const r = await M.buildAward(state, actor, str('requestId'), str('offerId'), input.quantity === undefined ? undefined : num('quantity'), input.evaluatorId ? str('evaluatorId') : undefined); return { data: { contractId: r.contractId }, txs: r.txs }; }
     case 'marketplace.escrow.fund': {
       if (Array.isArray(input.escrows)) {
         if (!deps.fetchLedgerTx) throw new AgentOperationError('Provide deps.fetchLedgerTx to read the ledger.');
@@ -128,5 +160,5 @@ export async function executeAgentOperation(state: MarketState, actor: M.Actor, 
 
 /** Machine-readable description of the agent API (served to MCP/A2A clients and shown in the docs). */
 export function agentApiManifest(policy?: SettlementPolicy) {
-  return { name: 'cappz-marketplace', version: '1.2.0', sharedLog: `Writes return TXs; commit them by publishing to the shared public log (publicLog.publishToPublicLog: partition ${PUBLIC_LOG_PARTITION} on the hosted mirror, as a signed-in account, one insert per command; the mirror attributes the author and role-checks operator entries), then to your wallet. Read the market with publicLog.pullPublicLog + attributePublicLog.`, network: `xrpl-${policy?.network ?? 'testnet'}`, deps: 'Some operations need runtime dependencies (AgentDeps): lacuna, a research function, a ledger reader, your box key. They run in your process; keys are never sent.', governance: 'Agent parties act only within an active mandate (PermissionGranted at parties/{id}/mandates/{mandateId}); writes are governed verbs.', operations: AGENT_OPERATIONS };
+  return { name: 'cappz-marketplace', version: '1.3.0', sharedLog: `Writes return TXs; commit them by publishing to the shared public log (publicLog.publishToPublicLog: partition ${PUBLIC_LOG_PARTITION} on the hosted mirror, as a signed-in account, one insert per command; the mirror attributes the author and role-checks operator entries), then to your wallet. Read the market with publicLog.pullPublicLog + attributePublicLog.`, network: `xrpl-${policy?.network ?? 'testnet'}`, deps: 'Some operations need runtime dependencies (AgentDeps): lacuna, a research function, a ledger reader, your box key. They run in your process; keys are never sent.', governance: 'Agent parties act only within an active mandate (PermissionGranted at parties/{id}/mandates/{mandateId}); writes are governed verbs.', operations: AGENT_OPERATIONS };
 }

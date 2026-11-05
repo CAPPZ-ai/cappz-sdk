@@ -7,7 +7,7 @@
  * fee, and the 30-day hold. No imports, so the same bytes run in the browser
  * and in supabase/functions/_shared/marketplaceStageMath.ts (a guarded copy,
  * byte-identical — src/test/marketplace-stripe.test.ts). Amounts are integers
- * in the currency's smallest unit (cents, drops).
+ * in the currency's smallest unit (cents, drops, token micro-units).
  */
 
 /** Holds are limited to a 30-day billing cycle: a stage is funded, worked and released within it. */
@@ -31,8 +31,9 @@ export const CONTRACT_FORMATION_RECORDS = 1;
 export const RECORDS_PER_MILESTONE = 3;
 export const stageRecords = (stage: number): number => RECORDS_PER_MILESTONE + (stage === 0 ? CONTRACT_FORMATION_RECORDS : 0);
 
-type Cur = 'USD' | 'XRP';
-const MINOR: Record<Cur, number> = { USD: 100, XRP: 1_000_000 };
+/** Asset codes (paymentAssets.ts); repeated here because this file has no imports. Issued tokens use six decimals. */
+type Cur = 'USD' | 'XRP' | 'CAPPZ' | 'USD-tokenZ/1';
+const MINOR: Record<Cur, number> = { USD: 100, XRP: 1_000_000, CAPPZ: 1_000_000, 'USD-tokenZ/1': 1_000_000 };
 export const toUnits = (amount: number, currency: Cur): number => Math.round(amount * MINOR[currency]);
 
 export interface FeeComponentsLike {

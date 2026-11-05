@@ -8,13 +8,16 @@
  * carries `because`: the event that put it there.
  */
 import type { MarketTxLike } from './ledger';
-import { milestoneAmounts } from './rules';
+import { committedKey, milestoneAmounts, subcontractGate } from './rules';
+import { partyAddress, subcontractAddress } from './MarketplacePaths';
 import type { AccessDelivery, GraphPublication } from './knowledge/access';
 import { applySecurityEvent, type EligibilityAttestation, type OfferingView } from './securities';
 import { contractFeePlan, feeScheduleFrom, type FeeDistribution, type FeeScheduleView } from './fees';
 import type { PaymentFunding } from './stageMath';
+import { contractRail } from './settlement';
+import { formatMoney } from './paymentAssets';
 import type {
-  ContractTerms, ContractView, FeeCharge, FeeEscrow, ListingContent, MandateContent, MilestoneState, PartyProfile, SupplyOfferContent, SupplyRequestContent, TokenContent,
+  ChannelView, ContractTerms, ContractView, FeeCharge, FeeEscrow, ListingContent, MandateContent, MilestoneState, PartyProfile, SupplyOfferContent, SupplyRequestContent, TokenContent,
 } from './types';
 
 export interface ListingView extends ListingContent { open: boolean; remaining: number; publishedAt: string }
@@ -65,6 +68,8 @@ export function resolveMarket(txs: readonly MarketTxLike[]): MarketState {
   const offerings = new Map<string, OfferingView>(); const eligibility = new Map<string, EligibilityAttestation>();
   const boxKeys = new Map<string, Record<string, unknown>>(); const accessDeliveries = new Map<string, AccessDelivery[]>();
   let fees: FeeScheduleView | null = null; const feeHistory: FeeScheduleView[] = []; const feeDistributions: FeeDistribution[] = [];
+  // Parent → child contract edges (ConstituentIncluded, contentClass 'subcontract'), joined to the terms after the pass.
+  const subcontractLinks: Array<{ parentContractId: string; contractId: string; sourceAddress: string }> = [];
   const contractEvent = (id: string, t: MarketTxLike) => { const list = events.get(id) ?? []; list.push(t); events.set(id, list); };
 
   for (const t of order(txs)) {
@@ -90,9 +95,9 @@ export function resolveMarket(txs: readonly MarketTxLike[]): MarketState {
       case 'SupplyAwarded': case 'OrderPlaced': {
         const v = p<{ terms: ContractTerms; agentPartyId?: string }>(t).terms; terms.set(v.contractId, v);
         if (v.source.kind === 'request') { const src = v.source; const r = requests.get(src.requestId); if (r) { r.awardedQuantity += v.quantity; r.contractIds.push(v.contractId); const o = r.offers.find((x) => x.offerId === src.offerId); if (o) o.awardedQuantity += v.quantity; if (r.awardedQuantity >= r.quantity) r.open = false; } }
-        else { const src = v.source; const l = listings.get(src.listingId); if (l) l.remaining -= v.quantity; }
+        else if (v.source.kind === 'listing') { const src = v.source; const l = listings.get(src.listingId); if (l) l.remaining -= v.quantity; }
         const agent = p<{ agentPartyId?: string }>(t).agentPartyId;
-        if (agent) { const k = `${agent}|${t.timestamp.slice(0, 10)}`; committedByDay.set(k, (committedByDay.get(k) ?? 0) + v.total.amount); }
+        if (agent) { const k = committedKey(agent, t.timestamp, v.total.currency); committedByDay.set(k, (committedByDay.get(k) ?? 0) + v.total.amount); }
         break;
       }
       case 'PaymentConfirmed':
@@ -108,6 +113,11 @@ export function resolveMarket(txs: readonly MarketTxLike[]): MarketState {
       case 'AssetTokenized': { const v = p<{ token: TokenContent }>(t).token; tokens.set(v.tokenId, { content: v, issuedAt: t.timestamp, balances: { [v.issuerId]: v.supply }, redeemed: 0 }); break; }
       case 'TokenTransferred': { const v = p<{ tokenId: string; from: string; to: string; amount: number }>(t); const k = tokens.get(v.tokenId); if (k) { k.balances[v.from] = (k.balances[v.from] ?? 0) - v.amount; k.balances[v.to] = (k.balances[v.to] ?? 0) + v.amount; } break; }
       case 'TokenRedeemed': { const v = p<{ tokenId: string; holder: string; amount: number }>(t); const k = tokens.get(v.tokenId); if (k) { k.balances[v.holder] = (k.balances[v.holder] ?? 0) - v.amount; k.redeemed += v.amount; } break; }
+      case 'ConstituentIncluded': if (cls === 'subcontract') {
+        // Only an edge into the parent's own HD slot for this child counts (the address is built from the fields, not parsed).
+        const v = p<{ parentContractId?: string; contractId?: string }>(t);
+        if (typeof v.parentContractId === 'string' && typeof v.contractId === 'string' && t.targetAddress === subcontractAddress(v.parentContractId, v.contractId)) subcontractLinks.push({ parentContractId: v.parentContractId, contractId: v.contractId, sourceAddress: t.sourceAddress });
+      } break;
       case 'PermissionGranted': if (cls === 'mandate') { const v = p<{ mandate: MandateContent }>(t).mandate; mandates.set(v.mandateId, v); } break;
       case 'PermissionRevoked': if (cls === 'mandate') mandates.delete(p<{ mandateId: string }>(t).mandateId); break;
     }
@@ -115,7 +125,17 @@ export function resolveMarket(txs: readonly MarketTxLike[]): MarketState {
 
   // Manifest and ciphertext are written in one batch; join after replay so their order within it does not matter.
   for (const [id, c] of ciphers) { const m = manifests.get(id); if (m) graphs.set(id, { ...c, manifest: m }); }
-  const contracts = [...terms.values()].map((c) => contractView(c, events.get(c.contractId) ?? []));
+  // A link holds when the child was formed as a subcontract, its buyer is the parent's seller, and that seller wrote
+  // the edge; the first valid link for a child wins (a child has one parent).
+  const parentOf = new Map<string, string>(); const childrenOf = new Map<string, string[]>();
+  for (const k of subcontractLinks) {
+    const parent = terms.get(k.parentContractId); const child = terms.get(k.contractId);
+    if (!parent || !child || child.source.kind !== 'subcontract' || parentOf.has(k.contractId) || k.contractId === k.parentContractId) continue;
+    if (child.buyerId !== parent.sellerId || k.sourceAddress !== partyAddress(parent.sellerId)) continue;
+    parentOf.set(k.contractId, k.parentContractId); childrenOf.set(k.parentContractId, [...(childrenOf.get(k.parentContractId) ?? []), k.contractId]);
+  }
+  const contracts = [...terms.values()].map((c) => contractView(c, events.get(c.contractId) ?? [], { parentContractId: parentOf.get(c.contractId), subcontracts: childrenOf.get(c.contractId) }));
+  annotateSubcontracts(contracts);
   const reputation = new Map<string, Reputation>();
   const rep = (id: string) => { let r = reputation.get(id); if (!r) { r = { completed: 0, disputes: 0, ratings: [], average: null }; reputation.set(id, r); } return r; };
   for (const c of contracts) {
@@ -128,8 +148,33 @@ export function resolveMarket(txs: readonly MarketTxLike[]): MarketState {
   return { parties, listings: [...listings.values()], requests: [...requests.values()], contracts, tokens: [...tokens.values()], mandates: [...mandates.values()], reputation, committedByDay, graphs, boxKeys, accessDeliveries, offerings: [...offerings.values()], eligibility, fees, feeHistory, feeDistributions };
 }
 
+/**
+ * Subcontract context on `because` / `nextAction`: a parent names its open child work; a child whose current stage
+ * waits for the parent milestone it serves says so instead of asking its buyer to fund (subcontractGate).
+ */
+function annotateSubcontracts(contracts: ContractView[]): void {
+  const byId = new Map(contracts.map((c) => [c.contractId, c]));
+  for (const c of contracts) {
+    if (c.source.kind !== 'subcontract' || c.state === 'completed' || c.state === 'cancelled' || c.state === 'disputed') continue;
+    const cur = c.milestoneStates.find((m) => m.state !== 'released');
+    if (!cur) continue;
+    const staged = contractRail(c) === 'ledger-staged';
+    const needsMoney = staged ? cur.state === 'affirmed' : c.escrow.balance + 1e-9 < milestoneAmounts(c.total.amount, c.milestones)[cur.index];
+    const why = needsMoney ? subcontractGate(contracts, c, cur.index) : null;
+    if (why) c.nextAction = { by: null, action: `${why}${cur.state === 'pending' ? ' The subcontractor can show evidence meanwhile.' : ''}` };
+  }
+  for (const c of contracts) {
+    const open = c.subcontracts.map((id) => byId.get(id)).filter((k): k is ContractView => !!k && k.state !== 'completed' && k.state !== 'cancelled');
+    if (!open.length) continue;
+    c.because = `${c.because}; open subcontract work: ${open.map((k) => `${k.contractId} (${k.nextAction.action})`).join('; ')}`;
+    const next = c.milestoneStates.find((m) => m.state !== 'released');
+    const serving = next ? open.filter((k) => k.milestones.some((m, i) => m.servesMilestone === next.index && k.milestoneStates[i]?.state !== 'released')) : [];
+    if (c.nextAction.by === 'seller' && serving.length) c.nextAction = { ...c.nextAction, action: `${c.nextAction.action} (subcontracted: ${serving.map((k) => k.contractId).join(', ')})` };
+  }
+}
+
 /** One contract's lifecycle, in event order, mirroring marketplace-supply-request / marketplace-order BPMN. */
-export function contractView(c: ContractTerms, evs: readonly MarketTxLike[]): ContractView {
+export function contractView(c: ContractTerms, evs: readonly MarketTxLike[], links: { parentContractId?: string; subcontracts?: string[] } = {}): ContractView {
   const amounts = milestoneAmounts(c.total.amount, c.milestones);
   const ms: ContractView['milestoneStates'] = c.milestones.map((m) => ({ index: m.index, state: 'pending' as MilestoneState, evidence: [], releasedAmount: 0, stage: null, processor: null }));
   const fees = contractFeePlan(c);
@@ -139,9 +184,38 @@ export function contractView(c: ContractTerms, evs: readonly MarketTxLike[]): Co
   let because = 'Contract formed'; let rejected = false;
   // Refunds of an expired 30-day hold reopen that stage for funding; they do not cancel the contract.
   let expiredRefunds = 0;
+  // Metered deals (rail ledger-channel): one payment channel. Redemptions release part of it without completing the
+  // stage; the stage completes only when the ledger showed the channel closed (released + returned = the cap).
+  const channelRail = contractRail(c) === 'ledger-channel';
+  let channel: ChannelView | null = null;
+  const capUnits = c.quantity;
   for (const t of order(evs)) {
     const v = t.payload as Record<string, unknown>;
     const n = typeof v.milestone === 'number' ? v.milestone : -1;
+    if (channelRail && v.rail === 'ledger-channel' && (t.eventType === 'EscrowFunded' || t.eventType === 'EscrowReleased' || t.eventType === 'EscrowRefunded')) {
+      const amount = Number(v.amount);
+      if (t.eventType === 'EscrowFunded' && !channel) {
+        channel = { channelId: String(v.channelId), publicKey: String(v.publicKey ?? ''), network: String(v.network), txHash: String(v.txHash), capDrops: String(v.capDrops ?? Math.round(amount * 1_000_000)), releasedDrops: '0', refundedDrops: '0', unitsUsed: 0, unitsCap: capUnits, settleDelay: typeof v.settleDelay === 'number' ? v.settleDelay : null, cancelAfter: String(v.holdUntil), closed: false, closeTxHash: null };
+        if (ms[0]) ms[0].stage = { fundedAt: String(v.fundedAt ?? t.timestamp), dueBy: String(v.stageDueBy), holdUntil: String(v.holdUntil) };
+        escrow.funded += amount;
+        because = `Payment channel opened on the ledger: up to ${capUnits} ${c.unit} (${formatMoney(amount, 'XRP')}), expires ${String(v.holdUntil).slice(0, 10)}`;
+      }
+      if (t.eventType === 'EscrowReleased' && channel && !channel.closed && BigInt(String(v.balanceDrops ?? '0')) > BigInt(channel.releasedDrops)) {
+        channel.releasedDrops = String(v.balanceDrops); channel.unitsUsed = Number(v.totalUnitsUsed ?? 0);
+        escrow.released += amount; if (ms[0]) ms[0].releasedAmount += amount;
+        ledgerSettlements.push({ milestone: 0, kind: 'release', txHash: String(v.txHash), network: String(v.network) });
+        because = `Seller redeemed ${formatMoney(amount, 'XRP')} on the channel (${channel.unitsUsed} of ${capUnits} ${c.unit} used)`;
+      }
+      if (t.eventType === 'EscrowRefunded' && channel && !channel.closed && v.closed === true) {
+        channel.closed = true; channel.refundedDrops = String(v.refundedDrops ?? '0'); channel.closeTxHash = String(v.txHash);
+        escrow.refunded += amount;
+        ledgerSettlements.push({ milestone: 0, kind: 'refund', txHash: String(v.txHash), network: String(v.network) });
+        // Something was used and paid: the stage is done. Nothing used: the refund cancels the deal (rule below).
+        if (ms[0] && BigInt(channel.releasedDrops) > 0n) ms[0].state = 'released';
+        because = `Channel closed on the ledger: ${formatMoney(Number(channel.releasedDrops) / 1_000_000, 'XRP')} paid for ${channel.unitsUsed} ${c.unit}, ${formatMoney(amount, 'XRP')} returned to the buyer`;
+      }
+      continue;
+    }
     switch (t.eventType) {
       case 'EscrowFunded': if (ms[n] && !ms[n].stage && typeof v.holdUntil === 'string') ms[n].stage = { fundedAt: String(v.fundedAt ?? t.timestamp), dueBy: String(v.stageDueBy), holdUntil: v.holdUntil };
         escrow.funded += Number(v.amount); because = `Escrow funded ${v.amount} ${c.total.currency}${v.txHash ? ' on the ledger' : ''}`; if (v.txHash) ledgerEscrows.push({ milestone: Number(v.milestone), txHash: String(v.txHash), sequence: Number(v.sequence), condition: String(v.condition), network: String(v.network), ledgerIndex: typeof v.ledgerIndex === 'number' ? v.ledgerIndex : null, ...(v.sealedSecret ? { sealedSecret: v.sealedSecret as Record<string, unknown> } : {}), feeEscrows: (v.feeEscrows as FeeEscrow[] | undefined) ?? [] }); break;
@@ -179,9 +253,16 @@ export function contractView(c: ContractTerms, evs: readonly MarketTxLike[]): Co
         payments.push({ reference: String(v.reference ?? ''), amount: Number(v.amount ?? 0), rail: String(v.rail ?? ''), validated: v.validated === true, ...(v.validated === true ? { confirmedBy: 'ledger' as const } : {}), ...(v.network ? { network: String(v.network) } : {}) }); break;
       }
       case 'MilestoneEvidenced': if (ms[n]) { ms[n].evidence.push({ kind: String(v.kind), hash: String(v.hash), note: String(v.note ?? ''), at: t.timestamp }); if (ms[n].state === 'pending') ms[n].state = 'evidenced'; because = `Evidence for “${c.milestones[n].label}”`; } break;
-      case 'MilestoneAffirmed': case 'DeliveryApproved': if (ms[n] && ms[n].state === 'evidenced') { ms[n].state = 'affirmed'; because = `Buyer accepted “${c.milestones[n].label}”`; } break;
+      case 'MilestoneAffirmed': case 'DeliveryApproved': if (ms[n] && ms[n].state === 'evidenced') {
+        // An evaluator's acceptance counts only from the evaluator named in the terms, written from their own address.
+        const byEvaluator = v.role === 'evaluator';
+        if (byEvaluator && (!c.evaluatorId || v.by !== c.evaluatorId || t.sourceAddress !== partyAddress(c.evaluatorId))) break;
+        ms[n].state = 'affirmed'; because = byEvaluator ? `Evaluator ${c.evaluatorId} accepted “${c.milestones[n].label}”` : `Buyer accepted “${c.milestones[n].label}”`; } break;
       case 'DeliveryRejected': if (ms[n]) { ms[n].state = 'pending'; rejected = true; because = `Buyer rejected delivery: ${v.reason ?? ''}`; } break;
-      case 'EscrowReleased': if (v.txHash) ledgerSettlements.push({ milestone: n, kind: 'release', txHash: String(v.txHash), network: String(v.network) }); if (ms[n]) { ms[n].state = 'released'; ms[n].releasedAmount += Number(v.amount); escrow.released += Number(v.amount); because = `Released ${v.amount} for “${c.milestones[n].label}”`; } break;
+      case 'EscrowReleased': if (v.txHash) ledgerSettlements.push({ milestone: n, kind: 'release', txHash: String(v.txHash), network: String(v.network) }); if (ms[n]) { ms[n].state = 'released'; ms[n].releasedAmount += Number(v.amount); escrow.released += Number(v.amount);
+        // A stage paid directly on the ledger (rail ledger-staged) was never held: it is funded and released in one step.
+        if (v.direct === true) { escrow.funded += Number(v.amount); because = `Paid ${formatMoney(Number(v.amount), c.total.currency)} on the ledger for “${c.milestones[n].label}”`; }
+        else because = `Released ${v.amount} for “${c.milestones[n].label}”`; } break;
       case 'EscrowRefunded': if (ms[n] && ms[n].state !== 'released') ms[n].stage = null;
         if (v.expiredHold === true) expiredRefunds += Number(v.amount);
         escrow.refunded += Number(v.amount); if (v.txHash) ledgerSettlements.push({ milestone: n, kind: 'refund', txHash: String(v.txHash), network: String(v.network) }); because = `Refunded ${v.amount} to buyer${v.txHash ? ' (escrow cancelled on the ledger)' : ''}`; break;
@@ -194,15 +275,21 @@ export function contractView(c: ContractTerms, evs: readonly MarketTxLike[]): Co
   escrow.balance = Math.round((escrow.funded - escrow.released - escrow.refunded) * 100) / 100;
   const allReleased = ms.every((m) => m.state === 'released');
   const open = disputes.some((d) => !d.resolved);
-  const state = allReleased ? 'completed' : open ? 'disputed' : escrow.refunded - expiredRefunds > 1e-9 && escrow.balance <= 0 && escrow.released < c.total.amount ? 'cancelled' : escrow.funded === 0 ? 'awaiting-funding' : 'in-progress';
+  const staged = contractRail(c) === 'ledger-staged';
+  const state = allReleased ? 'completed' : open ? 'disputed' : (channelRail ? channel?.closed === true : escrow.refunded - expiredRefunds > 1e-9 && escrow.balance <= 0 && escrow.released < c.total.amount) ? 'cancelled' : escrow.funded === 0 && !staged ? 'awaiting-funding' : 'in-progress';
   const next = ms.find((m) => m.state !== 'released');
   const nextAction: ContractView['nextAction'] = state === 'completed' ? { by: null, action: reviews.length < 2 ? 'Leave a review' : 'Done' }
     : state === 'cancelled' ? { by: null, action: 'Cancelled' }
     : open ? { by: 'operator', action: 'Resolve the dispute' }
     : !next ? { by: null, action: 'Done' }
-    : escrow.balance + 1e-9 < amounts[next.index] ? { by: 'buyer', action: `Fund the next stage: ${Math.round((amounts[next.index] - Math.max(0, escrow.balance)) * 100) / 100} ${c.total.currency} for “${c.milestones[next.index].label}” (held up to 30 days)` }
+    : channelRail ? (!channel ? { by: 'buyer', action: `Open the payment channel: up to ${capUnits} ${c.unit} at ${formatMoney(c.pricePerUnit.amount, 'XRP')} each (cap ${formatMoney(c.total.amount, 'XRP')}, returned unused within 30 days)` }
+      : channel.releasedDrops === '0' ? { by: 'buyer', action: `Use the service and sign claims as you use it (each for the total used so far, up to ${capUnits} ${c.unit}); the seller redeems them` }
+      : { by: 'seller', action: `Redeem the buyer's latest claim, or close the channel to return the unused ${formatMoney(Number(BigInt(channel.capDrops) - BigInt(channel.releasedDrops)) / 1_000_000, 'XRP')} (it expires ${channel.cancelAfter.slice(0, 10)})` })
+    : !staged && escrow.balance + 1e-9 < amounts[next.index] ? { by: 'buyer', action: `Fund the next stage: ${Math.round((amounts[next.index] - Math.max(0, escrow.balance)) * 100) / 100} ${c.total.currency} for “${c.milestones[next.index].label}” (held up to 30 days)` }
     : next.state === 'pending' ? { by: 'seller', action: `${rejected ? 'Redeliver' : 'Show evidence'}: ${c.milestones[next.index].evidence}` }
-    : next.state === 'evidenced' ? { by: 'buyer', action: `Review evidence and accept “${c.milestones[next.index].label}”` }
+    : next.state === 'evidenced' ? { by: 'buyer', action: `Review evidence and accept “${c.milestones[next.index].label}”${c.evaluatorId ? ` (or the evaluator ${c.evaluatorId} accepts)` : ''}` }
+    : staged ? { by: 'buyer', action: `Pay ${formatMoney(amounts[next.index], c.total.currency)} on the ledger for “${c.milestones[next.index].label}” (seller net and fee legs)` }
     : { by: 'buyer', action: `Release ${amounts[next.index]} ${c.total.currency} for “${c.milestones[next.index].label}”` };
-  return { ...c, ledgerEscrows, ledgerSettlements, state, because: state === 'awaiting-funding' && because === 'Contract formed' ? 'Contract formed; nothing funded yet' : because, escrow, milestoneStates: ms, disputes, reviews, payments, nextAction, feeCharges };
+  return { ...c, ledgerEscrows, ledgerSettlements, channel, state, because: state === 'awaiting-funding' && because === 'Contract formed' ? (channelRail ? 'Contract formed; the buyer opens a payment channel for the cap' : 'Contract formed; nothing funded yet') : staged && because === 'Contract formed' ? 'Contract formed; each stage is paid on the ledger when accepted' : because, escrow, milestoneStates: ms, disputes, reviews, payments, nextAction, feeCharges,
+    ...(links.parentContractId ? { parentContractId: links.parentContractId } : {}), subcontracts: links.subcontracts ?? [] };
 }

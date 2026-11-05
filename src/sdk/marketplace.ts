@@ -1,5 +1,5 @@
 /**
- * CAPPZ Marketplace engine (15.25.0; one market per XRPL network): governed contracts with milestone
+ * CAPPZ Marketplace engine (15.31.0; one market per XRPL network; payment assets XRP, CAPPZ, USD-tokenZ/1, USD): governed contracts with milestone
  * escrow, receipt tokens, a securities path and agents under mandates —
  * replayed from one shared, attributed event log. The same code runs the
  * cappz.ai/marketplace web app and the `cappz-market` agent tool.
@@ -24,7 +24,15 @@ export * from '../lib/marketplace/ledgerSigning';
 export * from '../lib/marketplace/agentApi';
 export * from '../lib/marketplace/matching';
 export * from '../lib/marketplace/search';
-export * from '../lib/marketplace/onRamp';
+export * from '../lib/marketplace/walletFunding';
+export * from '../lib/marketplace/paymentAssets';
+export * from '../lib/marketplace/ledgerPayments';
+export * from '../lib/marketplace/counterpartyCheck';
+export * from '../lib/marketplace/agentKeys';
+export * from '../lib/marketplace/agentRequestAuth';
+export * from '../lib/marketplace/principalCredential';
+export * from '../lib/marketplace/agentCard';
+export * from '../lib/marketplace/reputationAttestation';
 export * from '../lib/marketplace/demo';
 export * as model from '../lib/marketplace/model';
 export * as fees from '../lib/marketplace/fees';

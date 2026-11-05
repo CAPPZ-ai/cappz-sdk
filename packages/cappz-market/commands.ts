@@ -17,21 +17,36 @@ import { fetchLedgerTx } from '../../src/lib/xrpl/ledgerCheck';
 import { openWith, sealTo, type SealedBox } from '../../src/lib/crypto/sealedBox';
 import * as M from '../../src/lib/marketplace/model';
 import { CATEGORIES, REGIONS, categoryOf, rootCategoryOf } from '../../src/lib/marketplace/catalog';
-import { milestoneAmounts, defaultMilestones } from '../../src/lib/marketplace/rules';
+import { milestoneAmounts, defaultMilestones, subcontractGate } from '../../src/lib/marketplace/rules';
 import { searchMarket } from '../../src/lib/marketplace/search';
 import { matchDemand } from '../../src/lib/marketplace/matching';
-import { newEscrowSecret, prepareEscrowFinish, prepareStageEscrows } from '../../src/lib/marketplace/settlement';
+import { channelCapDrops, channelIdOf, payChannelNode, prepareChannelClaim, prepareChannelClose, prepareChannelCreate, prepareChannelFeePayments, signChannelClaim, unitPriceDrops, verifyChannelClaim } from '../../src/lib/marketplace/settlement';
+import { contractRail, newEscrowSecret, prepareEscrowFinish, prepareStageEscrows, prepareStagePayments, stagePaymentLegs } from '../../src/lib/marketplace/settlement';
+import { assetLabel, assetsOn, currencyOf as assetCodeOf, formatMoney, fromMinor, PAYMENT_ASSETS, tokenSpecFor } from '../../src/lib/marketplace/paymentAssets';
+import { fundingNeed, fundingSummary } from '../../src/lib/marketplace/walletFunding';
 import { liveSigningDeps, seedSigner, signAndSubmit, signAndSubmitAll, type SigningDeps } from '../../src/lib/marketplace/ledgerSigning';
 import { approvalHook, coSignTx, verifyCoSignature, type CoSignature, type CoSignTerms } from '../../src/lib/marketplace/signingApproval';
 import { milestoneEscrowLegs } from '../../src/lib/marketplace/settlement';
 import { Wallet } from 'xrpl';
-import { xrpNeededForStage } from '../../src/lib/marketplace/onRamp';
+import { xrpNeededForStage } from '../../src/lib/marketplace/walletFunding';
 import { AGENT_OPERATIONS, executeAgentOperation, type AgentOperation } from '../../src/lib/marketplace/agentApi';
 import { verifyCheck, type SignedCheck } from '../../src/lib/marketplace/counterpartyCheck';
 import type { MarketplaceVerb } from '../../src/lib/marketplace/marketplaceVerbs';
 import type { ContractView, Currency, ListingContent, PartyKind, PartyProfile, PartyRole, SupplyOfferContent, SupplyRequestContent } from '../../src/lib/marketplace/types';
 import type { ListingView, MarketState, RequestView } from '../../src/lib/marketplace/replay';
-import { ToolError, boxKey, getDiscovery, homeDir, loadMarket, marketNetwork, marketUrl, newWallet, recallSecret, rememberSecret, requireWallet, resetDemo, session, signIn, wallet, walletStatus, type GlobalOptions, type Market } from './context';
+import { ToolError, agentKey, agentSigningKey, boxKey, ensureAgentKey, getDiscovery, homeDir, loadMarket, marketNetwork, marketUrl, newWallet, partyIdForAccount, recallSecret, rememberSecret, requireWallet, resetDemo, session, signIn, wallet, walletStatus, type GlobalOptions, type Market } from './context';
+import { agentRequestHook, signAgentRequest, type RequestSignHook } from '../../src/lib/marketplace/agentRequestAuth';
+
+/**
+ * RFC 9421 request signing with this party's declared key, when its profile declares the key kept on this computer
+ * (the same Signature-Input / Signature / Content-Digest headers card networks' agent protocols and Web Bot Auth use).
+ * Absent: requests go unsigned, as before, and the service reports them as not-signed.
+ */
+async function requestHookFor(mk: Market): Promise<RequestSignHook | undefined> {
+  const me = mk.partyId ? mk.state.parties.get(mk.partyId) : undefined;
+  const k = await agentSigningKey(mk.partyId, me?.keyDeclaration);
+  return k ? agentRequestHook(k) : undefined;
+}
 
 
 /**
@@ -39,14 +54,14 @@ import { ToolError, boxKey, getDiscovery, homeDir, loadMarket, marketNetwork, ma
  * signed, and verify the signed approval against the published key and those bytes. Fails closed: no approval, no
  * signature. Networks the service does not cover (devnet) sign without one, and say so.
  */
-async function approvedSigning(net: string, contractId: string, milestone: number, approvals: string[], coSignature?: CoSignature): Promise<SigningDeps> {
+async function approvedSigning(net: string, contractId: string, milestone: number, approvals: string[], coSignature?: CoSignature, signRequest?: RequestSignHook): Promise<SigningDeps> {
   const d = await getDiscovery(); const svc = d.services?.counterpartyCheck;
   if (!svc?.url || !svc.publicKey) {
     if (net === 'mainnet') throw new ToolError(`${marketUrl()} publishes no signing-approval service, so mainnet escrow is not signed.`);
     approvals.push(`none (no approval service published for ${net})`); return liveSigningDeps;
   }
   if (!svc.networks.includes(net)) { approvals.push(`none (the approval service covers ${svc.networks.join(' and ')}, not ${net})`); return liveSigningDeps; }
-  const hook = approvalHook({ serviceUrl: svc.url, publicKey: svc.publicKey, network: net as XrplNetwork, contractId, milestone, coSignature, onApproved: (a) => approvals.push(a.approval.txHash) });
+  const hook = approvalHook({ serviceUrl: svc.url, publicKey: svc.publicKey, network: net as XrplNetwork, contractId, milestone, coSignature, signRequest, onApproved: (a) => approvals.push(a.approval.requestAuth ? `${a.approval.txHash} (request ${a.approval.requestAuth.state})` : a.approval.txHash) });
   return { ...liveSigningDeps, approve: async (prepared) => { try { await hook(prepared); } catch (e) { throw new ToolError((e as Error).message, 'Check the deal with: cappz-market show ' + contractId); } } };
 }
 
@@ -90,7 +105,8 @@ const num = (a: Record<string, unknown>, k: string, fallback?: number): number =
 };
 const list = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typeof v === 'string' && v ? v.split(',').map((x) => x.trim()).filter(Boolean) : []);
 const money = (amount: number, currency: Currency) => ({ amount, currency });
-const currencyOf = (a: Record<string, unknown>): Currency => { const c = str(a, 'currency', 'XRP').toUpperCase(); if (c !== 'XRP' && c !== 'USD') throw new ToolError('currency is XRP or USD.'); return c; };
+/** Any payment asset by code, id or alias (XRP, CAPPZ, USD-tokenZ/1 — RLUSD —, USD). */
+const currencyOf = (a: Record<string, unknown>): Currency => { const c = assetCodeOf(str(a, 'currency', 'XRP')); if (!c) throw new ToolError(`currency is one of ${PAYMENT_ASSETS.map((x) => `${x.code}${x.label !== x.code ? ` (${x.label})` : ''}`).join(', ')}.`); return c; };
 const date = (s: string) => { if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new ToolError(`Dates are YYYY-MM-DD, got “${s}”.`); return s; };
 const inDays = (from: string, d: number) => new Date(Date.parse(from) + d * 86_400_000).toISOString().slice(0, 10);
 const price = (m: { amount: number; currency: string }, unit: string) => `${m.amount} ${m.currency}/${unit}`;
@@ -116,15 +132,19 @@ const requestCard = (s: MarketState, r: RequestView) => ({ id: r.requestId, titl
 
 function dealCard(c: ContractView, me: string | null) {
   const amounts = milestoneAmounts(c.total.amount, c.milestones);
-  const role = c.buyerId === me ? 'buyer' : c.sellerId === me ? 'seller' : 'observer';
+  const role = c.buyerId === me ? 'buyer' : c.sellerId === me ? 'seller' : c.evaluatorId && c.evaluatorId === me ? 'evaluator' : 'observer';
   return {
     id: c.contractId, title: c.title, role, total: `${c.total.amount} ${c.total.currency}`, state: c.state,
     waitingOnYou: (c.nextAction.by === 'buyer' && role === 'buyer') || (c.nextAction.by === 'seller' && role === 'seller'),
     nextAction: c.nextAction,
-    settlement: c.total.currency === 'XRP' ? 'XRP escrow on the ledger' : 'USD',
+    settlement: contractRail(c) === 'ledger-channel' ? 'XRP payment channel on the ledger (metered)' : c.total.currency === 'XRP' ? 'XRP escrow on the ledger' : contractRail(c) === 'ledger-staged' ? `${assetLabel(c.total.currency)} paid on the ledger per stage` : 'USD',
+    ...(c.channel ? { channel: c.channel } : {}),
     escrow: c.escrow,
     stages: c.milestones.map((m, i) => ({ index: i, label: m.label, amount: amounts[i], dueBy: m.dueBy, evidence: m.evidence, state: c.milestoneStates[i]?.state, onLedger: c.ledgerEscrows.some((e) => e.milestone === i) })),
     openDisputes: c.disputes.filter((d) => !d.resolved).length,
+    ...(c.evaluatorId ? { evaluator: c.evaluatorId } : {}),
+    ...(c.parentContractId ? { parentContract: c.parentContractId } : {}),
+    ...(c.subcontracts.length ? { subcontracts: c.subcontracts } : {}),
   };
 }
 
@@ -165,11 +185,11 @@ export const COMMANDS: Command[] = [
       const net = mk.policy.network as XrplNetwork;
       steps.push({ step: 'market', ok: true, detail: mk.mode === 'demo' ? 'practice market (local, nothing is published, no real money)' : `${net} market at ${marketUrl()}${net === 'mainnet' ? ' — real XRP' : ' — test XRP, no value'} (choose with --network devnet|testnet|mainnet)` });
       const w = await wallet();
-      if (!w) steps.push({ step: 'wallet', ok: false, detail: 'no XRPL wallet', next: net === 'mainnet' ? 'cappz-market wallet --new, then fund it from an exchange (or set XRPL_SEED)' : 'cappz-market wallet --new (funded with free test XRP)' });
+      if (!w) steps.push({ step: 'wallet', ok: false, detail: 'no XRPL wallet — bring your own funded wallet (XRPL_SEED) or create one here', next: net === 'mainnet' ? `cappz-market wallet --new, then: ${fundingNeed({ network: net, currency: 'XRP', amount: 0, accountExists: false }).steps.join(' ')}` : 'cappz-market wallet --new (funded with free test XRP)' });
       else if (mk.mode === 'demo') steps.push({ step: 'wallet', ok: true, detail: `${w.wallet.classicAddress} (not used by the practice market)` });
       else {
         const st = await walletStatus(w.wallet.classicAddress, net);
-        steps.push({ step: 'wallet', ok: st.activated && st.spendableXrp > 0, detail: st.activated ? `${st.address}: ${st.balanceXrp} XRP, ${st.spendableXrp} spendable (reserve ${st.reserveBaseXrp} + ${st.ownedObjects} × ${st.reserveOwnerXrp} XRP)` : `${st.address} is not activated on ${net}`, next: st.activated ? undefined : net === 'mainnet' ? `send it at least ${st.reserveBaseXrp} XRP` : 'cappz-market wallet --fund' });
+        steps.push({ step: 'wallet', ok: st.activated && st.spendableXrp > 0, detail: st.activated ? `${st.address}: ${st.balanceXrp} XRP, ${st.spendableXrp} spendable (reserve ${st.reserveBaseXrp} + ${st.ownedObjects} × ${st.reserveOwnerXrp} XRP)` : `${st.address} is not activated on ${net}`, next: st.activated ? undefined : net === 'mainnet' ? fundingNeed({ network: net, currency: 'XRP', amount: 0, accountExists: false }).steps.join(' ') : 'cappz-market wallet --fund' });
       }
       if (mk.mode === 'live') {
         const s = await session(false);
@@ -204,7 +224,7 @@ export const COMMANDS: Command[] = [
         try { await c.fundWallet(w); } finally { await c.disconnect().catch(() => {}); }
       }
       const st = await walletStatus(w.classicAddress, net);
-      return { ...st, note: 'Reserves are network settings read from the ledger now. Each open escrow, offer or trust line adds one owner reserve until it closes; it is returned then.' };
+      return { ...st, assetsOnThisNetwork: assetsOn(net).map((x) => x.label), fundIt: fundingNeed({ network: net, currency: 'XRP', amount: 0, accountExists: st.activated }).steps, tokens: 'CAPPZ and RLUSD (USD-tokenZ) need a trust line to their issuer first; cappz-market check <your address> shows what is missing.', note: 'Reserves are network settings read from the ledger now. Each open escrow, offer or trust line adds one owner reserve until it closes; it is returned then.' };
     },
   },
   {
@@ -256,15 +276,19 @@ export const COMMANDS: Command[] = [
       const w = await wallet();
       const box = await boxKey();
       const principal = a.principal ? { partyId: String(a.principal) } : a.governance ? { governanceAddress: String(a.governance) } : prior?.principal;
+      // Agents declare a request-signing key (KeyZ): kept here, declared on the profile, renewed before it expires.
+      const ak = kind === 'agent' && mk.mode === 'live' ? await ensureAgentKey() : null;
       const profile: PartyProfile = {
         partyId, kind, name: str(a, 'name'), roles: (list(a.roles).length ? list(a.roles) : prior?.roles ?? ['buyer', 'seller']) as PartyRole[],
         region: checkRegion(str(a, 'region', prior?.region ?? 'TX')), about: str(a, 'about', prior?.about ?? ''),
         capabilities: { categories: list(a.categories).map(checkCategory).length ? list(a.categories) : prior?.capabilities.categories ?? [], canPlantNew: prior?.capabilities.canPlantNew ?? false },
         ...(principal ? { principal } : {}), ...(a.xrplAccount ? { xrplAccount: checkAddress(String(a.xrplAccount)) } : w ? { xrplAccount: w.wallet.classicAddress } : prior?.xrplAccount ? { xrplAccount: prior.xrplAccount } : {}),
         encryptionKey: box.publicKey, ...(a.runtime ? { runtime: String(a.runtime) } : prior?.runtime ? { runtime: prior.runtime } : {}),
+        ...(ak ? { keyDeclaration: ak.declaration } : prior?.keyDeclaration ? { keyDeclaration: prior.keyDeclaration } : {}),
+        ...(prior?.keyRevocations ? { keyRevocations: prior.keyRevocations } : {}), ...(prior?.principalCredential ? { principalCredential: prior.principalCredential } : {}),
       };
       const txs = await M.buildProfile(mk.state, mk.actor(), profile);
-      return commitAndReport(mk, txs, { partyId, xrplAccount: profile.xrplAccount ?? null, next: kind === 'agent' ? `Ask your principal to grant a mandate to ${partyId} at ${marketUrl()}/marketplace?tab=agents, then run cappz-market setup.` : 'cappz-market find "…"' });
+      return commitAndReport(mk, txs, { partyId, xrplAccount: profile.xrplAccount ?? null, signingKey: profile.keyDeclaration ? { keyId: profile.keyDeclaration.publicKey, declaredBy: profile.keyDeclaration.walletAddress, expiresAt: profile.keyDeclaration.expiresAt } : null, next: kind === 'agent' ? `Ask your principal to grant a mandate to ${partyId} at ${marketUrl()}/marketplace?tab=agents, then run cappz-market setup.` : 'cappz-market find "…"' });
     },
   },
   {
@@ -278,6 +302,7 @@ export const COMMANDS: Command[] = [
     async run(a, o) {
       const mk = await loadMarket(o, true);
       const c = contractOf(mk, str(a, 'contract'));
+      const action: 'fund' | 'pay' | 'channel' = contractRail(c) === 'ledger-staged' ? 'pay' : contractRail(c) === 'ledger-channel' ? 'channel' : 'fund';
       const buyer = mk.state.parties.get(c.buyerId);
       if (buyer?.kind !== 'agent') throw new ToolError('Only an agent buyer’s stages need a co-signature.');
       const grantors = new Set(mk.state.mandates.filter((m) => m.agentPartyId === buyer.partyId).map((m) => m.grantedBy));
@@ -289,13 +314,13 @@ export const COMMANDS: Command[] = [
       const milestone = a.milestone === undefined ? (M.currentStage(c)?.index ?? 0) : num(a, 'milestone');
       const seller = mk.state.parties.get(c.sellerId)?.xrplAccount;
       if (!seller) throw new ToolError('The seller has no XRPL account on their profile yet.');
-      const amountDrops = milestoneEscrowLegs(c, milestone, seller).reduce((s, l) => s + BigInt(l.drops), 0n).toString();
-      const terms: CoSignTerms = { network: mk.policy.network as XrplNetwork, contractId: c.contractId, milestone, action: 'fund', amountDrops, expiresAt: new Date(Date.now() + num(a, 'hours', 24) * 3_600_000).toISOString() };
+      const amountDrops = action === 'channel' ? channelCapDrops(c).toString() : (action === 'pay' ? stagePaymentLegs(c, milestone, seller).map((l) => l.units) : milestoneEscrowLegs(c, milestone, seller).map((l) => l.drops)).reduce((s, u) => s + BigInt(u), 0n).toString();
+      const terms: CoSignTerms = { network: mk.policy.network as XrplNetwork, contractId: c.contractId, milestone, action, amountDrops, expiresAt: new Date(Date.now() + num(a, 'hours', 24) * 3_600_000).toISOString() };
       const signed = Wallet.fromSeed(w.seed).sign(coSignTx(w.classicAddress, terms) as never);
       const cs: CoSignature = { terms, txBlob: signed.tx_blob };
       const problems = verifyCoSignature(cs, w.classicAddress, new Date().toISOString());
       if (problems.length) throw new ToolError(`Could not make a valid co-signature: ${problems.join(' ')}`);
-      return { coSigned: `${c.title} — stage ${milestone} (${c.milestones[milestone]?.label ?? ''}): ${Number(amountDrops) / 1e6} XRP on ${terms.network}`, validUntil: terms.expiresAt, coSignature: cs, next: `Give the agent the coSignature JSON: cappz-market fund ${c.contractId} --co-signature '<json>' (or a file). Nothing was submitted to the ledger.` };
+      return { coSigned: `${c.title} — stage ${milestone} (${c.milestones[milestone]?.label ?? ''}): ${formatMoney(fromMinor(Number(amountDrops), c.total.currency), c.total.currency)} on ${terms.network}`, validUntil: terms.expiresAt, coSignature: cs, next: `Give the agent the coSignature JSON: cappz-market ${action === 'pay' ? 'release' : 'fund'} ${c.contractId} --co-signature '<json>' (or a file). Nothing was submitted to the ledger.` };
     },
   },
   {
@@ -308,9 +333,10 @@ export const COMMANDS: Command[] = [
       { name: 'maxContract', type: 'number', description: 'Most per contract (default 100).' },
       { name: 'maxDay', type: 'number', description: 'Most per day (default 3 × max-contract).' },
       { name: 'askAbove', type: 'number', description: 'Above this value the agent needs your co-signature.' },
-      { name: 'currency', type: 'string', description: 'XRP (default) or USD: the mandate covers deals in this currency only.' },
+      { name: 'currency', type: 'string', description: 'XRP (default), CAPPZ, USD-tokenZ/1 (RLUSD) or USD: the mandate covers deals in this asset only (grant one per asset).' },
       { name: 'days', type: 'number', description: 'Valid for this many days (default 30).' },
       { name: 'revoke', type: 'string', description: 'Revoke this mandate id instead (see setup or show <agent>).' },
+      { name: 'bindKey', type: 'boolean', description: 'Bind the mandate to the agent’s declared signing key: its approval requests must then be signed by that key.' },
     ],
     async run(a, o) {
       const mk = await loadMarket(o, true);
@@ -321,14 +347,16 @@ export const COMMANDS: Command[] = [
       const agentId = str(a, 'agent');
       const agent = mk.state.parties.get(agentId);
       if (!agent || agent.kind !== 'agent') throw new ToolError(`No agent party ${agentId} on the ${mk.network} market.`, 'The agent runs cappz-market profile --kind agent first (on this network).');
-      const BUY = ['marketplace.order.place', 'marketplace.request.post', 'marketplace.offer.award', 'marketplace.escrow.fund', 'marketplace.milestone.affirm', 'marketplace.escrow.release'];
-      const SELL = ['marketplace.listing.publish', 'marketplace.offer.submit', 'marketplace.milestone.evidence'];
+      const BUY = ['marketplace.order.place', 'marketplace.request.post', 'marketplace.offer.award', 'marketplace.escrow.fund', 'marketplace.milestone.affirm', 'marketplace.escrow.release', 'marketplace.stage.pay', 'marketplace.channel.open', 'marketplace.channel.close'];
+      const SELL = ['marketplace.listing.publish', 'marketplace.offer.submit', 'marketplace.milestone.evidence', 'marketplace.channel.settle', 'marketplace.channel.close'];
       const act = str(a, 'actions', 'buy');
       const verbs = act === 'buy' ? BUY : act === 'sell' ? SELL : act === 'both' ? [...BUY, ...SELL] : list(act);
       const currency = currencyOf(a); const per = num(a, 'maxContract', 100);
       const limits = { verbs, categories: list(a.categories).map(checkCategory), maxPerContract: money(per, currency), maxPerDay: money(num(a, 'maxDay', per * 3), currency), approvalAbove: a.askAbove !== undefined ? money(num(a, 'askAbove'), currency) : null, expiresAt: new Date(Date.parse(mk.now()) + num(a, 'days', 30) * 86_400_000).toISOString() };
-      const r = await M.buildMandate(mk.state, mk.actor(), agentId, limits);
-      return commitAndReport(mk, r.txs, { mandateId: r.mandateId, agent: agentId, limits, next: `The agent can act now on ${mk.network}: it runs cappz-market setup${mk.network === 'testnet' ? '' : ` --network ${mk.network}`}` });
+      if (a.bindKey && !agent.keyDeclaration) throw new ToolError(`${agent.name} declares no signing key yet.`, 'The agent runs cappz-market profile (it declares one), then grant again with --bind-key.');
+      const boundKey = a.bindKey ? agent.keyDeclaration!.publicKey : undefined;
+      const r = await M.buildMandate(mk.state, mk.actor(), agentId, limits, boundKey ? { boundKey } : {});
+      return commitAndReport(mk, r.txs, { mandateId: r.mandateId, agent: agentId, limits, boundKey: boundKey ?? null, next: `The agent can act now on ${mk.network}: it runs cappz-market setup${mk.network === 'testnet' ? '' : ` --network ${mk.network}`}` });
     },
   },
   {
@@ -380,7 +408,7 @@ export const COMMANDS: Command[] = [
     async run(_a, o) {
       const mk = await loadMarket(o);
       if (!mk.partyId) throw new ToolError('Sign in to see your deals.', 'cappz-market login');
-      const mine = mk.state.contracts.filter((c) => c.buyerId === mk.partyId || c.sellerId === mk.partyId).map((c) => dealCard(c, mk.partyId));
+      const mine = mk.state.contracts.filter((c) => c.buyerId === mk.partyId || c.sellerId === mk.partyId || (!!c.evaluatorId && c.evaluatorId === mk.partyId)).map((c) => dealCard(c, mk.partyId));
       mine.sort((x, y) => Number(y.waitingOnYou) - Number(x.waitingOnYou));
       return { deals: mine, waitingOnYou: mine.filter((d) => d.waitingOnYou).length, next: mine.find((d) => d.waitingOnYou)?.nextAction.action ?? (mine.length ? 'Nothing waits on you.' : 'No deals yet: buy, or win a bid.') };
     },
@@ -394,13 +422,14 @@ export const COMMANDS: Command[] = [
       { name: 'price', type: 'number', description: 'Price per unit.', required: true },
       { name: 'unit', type: 'string', description: 'Unit (job, hour, each, lb…). Default: the category’s first unit.' },
       { name: 'quantity', type: 'number', description: 'How many units are available (default 1).' },
-      { name: 'currency', type: 'string', description: 'XRP (default; escrowed on the ledger) or USD (paid in the web app).' },
+      { name: 'currency', type: 'string', description: 'XRP (default; escrowed per stage), CAPPZ or USD-tokenZ/1 (RLUSD; paid on the ledger per accepted stage), or USD (card or bank in the web app).' },
       { name: 'kind', type: 'string', description: 'sale, rent, service or production-contract (default: the category’s first).' },
       { name: 'description', type: 'string', description: 'Details buyers need.' },
       { name: 'delivery', type: 'string', description: 'online, ship, pickup or on-site (default online for agents/digital, else ship).' },
       { name: 'leadDays', type: 'number', description: 'Days from order to delivery (default 7).' },
       { name: 'region', type: 'string', description: 'State code (default your profile’s).' },
       { name: 'endpoint', type: 'string', description: 'Paid agents: the https address buyers (and cappz-market hire) call.' },
+      { name: 'metered', type: 'boolean', description: 'XRP only: sell metered use (unit = query, MB, call…; price per unit). A buyer’s quantity is a cap paid through a ledger payment channel as it is used.' },
     ],
     async run(a, o) {
       const mk = await loadMarket(o, true); const me = mk.state.parties.get(mk.partyId!);
@@ -415,6 +444,7 @@ export const COMMANDS: Command[] = [
         unit: str(a, 'unit', cat.units[0]), pricePerUnit: money(num(a, 'price'), currencyOf(a)), quantity: num(a, 'quantity', 1),
         region: checkRegion(str(a, 'region', me.region)), delivery: str(a, 'delivery', root === 'agents' || root === 'digital' || root === 'relay' ? 'online' : 'ship') as ListingContent['delivery'],
         leadDays: num(a, 'leadDays', 7), attributes: a.endpoint ? { endpoint: String(a.endpoint) } : {},
+        ...(a.metered ? { metered: true } : {}),
       };
       const txs = await M.buildListing(mk.state, mk.actor(), listing);
       return commitAndReport(mk, txs, { listingId: listing.listingId, next: 'Buyers order with: cappz-market buy ' + listing.listingId + ' — watch with cappz-market deals' });
@@ -430,7 +460,7 @@ export const COMMANDS: Command[] = [
       { name: 'unit', type: 'string', description: 'Unit (default: the category’s first).' },
       { name: 'by', type: 'string', description: 'Needed by, YYYY-MM-DD (default 30 days from now).' },
       { name: 'maxPrice', type: 'number', description: 'Highest price per unit you accept (omit for open price).' },
-      { name: 'currency', type: 'string', description: 'XRP (default) or USD.' },
+      { name: 'currency', type: 'string', description: 'XRP (default), CAPPZ, USD-tokenZ/1 (RLUSD) or USD.' },
       { name: 'description', type: 'string', description: 'Specs, quality, format.' },
       { name: 'region', type: 'string', description: 'State code (default your profile’s).' },
     ],
@@ -475,10 +505,11 @@ export const COMMANDS: Command[] = [
       { name: 'request', type: 'string', description: 'Your request id.', required: true, positional: true },
       { name: 'bid', type: 'string', description: 'The bid (offer) id.', required: true, positional: true },
       { name: 'quantity', type: 'number', description: 'Award part of the bid.' },
+      { name: 'evaluator', type: 'string', description: 'A third party (never the seller) who may accept milestones besides you; you still pay.' },
     ],
     async run(a, o) {
       const mk = await loadMarket(o, true);
-      const r = await M.buildAward(mk.state, mk.actor(), str(a, 'request'), str(a, 'bid'), a.quantity === undefined ? undefined : num(a, 'quantity'));
+      const r = await M.buildAward(mk.state, mk.actor(), str(a, 'request'), str(a, 'bid'), a.quantity === undefined ? undefined : num(a, 'quantity'), a.evaluator ? str(a, 'evaluator') : undefined);
       return commitAndReport(mk, r.txs, { contractId: r.contractId, next: `cappz-market fund ${r.contractId}` });
     },
   },
@@ -488,11 +519,32 @@ export const COMMANDS: Command[] = [
     params: [
       { name: 'listing', type: 'string', description: 'Listing id.', required: true, positional: true },
       { name: 'quantity', type: 'number', description: 'Units (default 1).' },
+      { name: 'evaluator', type: 'string', description: 'A third party (never the seller) who may accept milestones besides you; you still pay.' },
     ],
     async run(a, o) {
       const mk = await loadMarket(o, true);
-      const r = await M.buildOrder(mk.state, mk.actor(), str(a, 'listing'), num(a, 'quantity', 1));
+      const r = await M.buildOrder(mk.state, mk.actor(), str(a, 'listing'), num(a, 'quantity', 1), undefined, a.evaluator ? str(a, 'evaluator') : undefined);
       return commitAndReport(mk, r.txs, { contractId: r.contractId, next: `cappz-market fund ${r.contractId}` });
+    },
+  },
+  {
+    name: 'subcontract',
+    summary: 'Seller: hand part of a contract’s work to another party as a child contract. Same asset and rail, within the parent’s unreleased value; you are its buyer and fund each stage only after the parent milestone it serves is released to you. Fees apply to the child like any contract.',
+    params: [
+      { name: 'parent', type: 'string', description: 'The contract you sell on.', required: true, positional: true },
+      { name: 'to', type: 'string', description: 'The subcontractor’s party id.', required: true },
+      { name: 'title', type: 'string', description: 'What the subcontractor delivers.', required: true },
+      { name: 'price', type: 'number', description: 'Price per unit, in the parent’s asset.', required: true },
+      { name: 'quantity', type: 'number', description: 'Units (default 1).' },
+      { name: 'unit', type: 'string', description: 'Unit (default: the parent’s).' },
+      { name: 'serves', type: 'number', description: 'The parent milestone index this work serves; the child stage is due with it.', required: true },
+      { name: 'evaluator', type: 'string', description: 'A third party (never the subcontractor) who may accept the child’s milestones besides you.' },
+    ],
+    async run(a, o) {
+      const mk = await loadMarket(o, true);
+      const parent = contractOf(mk, str(a, 'parent'));
+      const r = await M.buildSubcontract(mk.state, mk.actor(), parent.contractId, { subcontractorId: str(a, 'to'), title: str(a, 'title'), quantity: num(a, 'quantity', 1), pricePerUnit: money(num(a, 'price'), parent.total.currency), serves: num(a, 'serves'), ...(a.unit ? { unit: str(a, 'unit') } : {}), ...(a.evaluator ? { evaluatorId: str(a, 'evaluator') } : {}) });
+      return commitAndReport(mk, r.txs, { contractId: r.contractId, parent: parent.contractId, next: `When the parent milestone ${num(a, 'serves')} is released to you: cappz-market fund ${r.contractId}` });
     },
   },
   {
@@ -510,11 +562,31 @@ export const COMMANDS: Command[] = [
       if (c.buyerId !== mk.partyId) throw new ToolError('Only the buyer funds a contract.');
       const coSignature = await readCoSignature(a['co-signature']);
       const stage = M.currentStage(c) ?? (() => { throw new ToolError('Every stage is paid.'); })();
+      const gate = subcontractGate(mk.state.contracts, c, stage.index);
+      if (gate) throw new ToolError(gate, c.parentContractId ? `Check the parent: cappz-market show ${c.parentContractId}` : undefined);
       if (mk.mode === 'demo') return commitAndReport(mk, await M.buildFund(mk.state, mk.actor(), c.contractId, stage.need, { rail: 'demo' }), { stage: c.milestones[stage.index].label, amount: stage.need, next: 'The seller delivers evidence next; then cappz-market release ' + c.contractId });
       if (c.total.currency === 'USD') {
         if (!a.reference) throw new ToolError('USD stages are paid by card or bank in the web app.', `Open ${marketUrl()}/marketplace?tab=deals, or record a payment you already made with --reference.`);
         return commitAndReport(mk, await M.buildFund(mk.state, mk.actor(), c.contractId, stage.need, { rail: 'usd-reference', reference: str(a, 'reference') }), { note: 'Recorded by reference: not verifiable on a ledger.' });
       }
+      if (contractRail(c) === 'ledger-channel') {
+        // Metered: open one payment channel for the cap. Claims are signed with this wallet's own key (its public key is the channel's), so nothing new is kept.
+        if (c.channel) throw new ToolError(`The channel is already open (${c.channel.channelId}).`, `Sign claims as you use the service: cappz-market claim ${c.contractId} --units N`);
+        const buyer = mk.state.parties.get(c.buyerId)?.xrplAccount; const seller = mk.state.parties.get(c.sellerId)?.xrplAccount;
+        if (!seller) throw new ToolError('The seller has no XRPL account on their profile yet.', 'Ask them to add one; then fund.');
+        const { w, net, st } = await signingWallet(mk);
+        if (buyer !== w.classicAddress) throw new ToolError(`Your profile’s XRPL account is ${buyer ?? 'missing'}, but this wallet is ${w.classicAddress}.`, 'Run cappz-market profile --name "…" to put this wallet on your profile.');
+        const need = xrpNeededForStage(c.total.amount, 1);
+        if (st.spendableXrp < need) throw new ToolError(`The channel needs about ${need} XRP spendable (the ${c.total.amount} XRP cap + one owner reserve while it is open + network fees); you have ${st.spendableXrp}.`, fundingSummary(fundingNeed({ network: net, currency: 'XRP', amount: Math.max(0, Math.round((need - st.spendableXrp) * 1e6) / 1e6), accountExists: st.activated })));
+        const create = prepareChannelCreate(c, buyer, seller, w.publicKey, mk.now());
+        const approvals: string[] = [];
+        const lt = await signAndSubmit(seedSigner(w.seed!), create, net, await approvedSigning(net, c.contractId, 0, approvals, coSignature, await requestHookFor(mk)));
+        try {
+          const txs = await M.buildOpenChannel(mk.state, mk.actor(coSignature ? coSignerOf(mk, c, coSignature) : undefined), c.contractId, mk.policy, lt);
+          return commitAndReport(mk, txs, { channel: channelIdOf(lt), cap: `${c.quantity} ${c.unit} (${formatMoney(c.total.amount, 'XRP')})`, ledgerTx: lt.hash, approvedIntents: approvals, returnsToYouAfter: 'the channel expires within 30 days; anything unredeemed comes back', next: `As you use the service: cappz-market claim ${c.contractId} --units <total used so far>, and give the seller the claim it prints.` });
+        } catch (e) { throw new ToolError(`${(e as Error).message} The channel is on the ledger: ${lt.hash}.`, `Record it with: cappz-market call marketplace.channel.open --input '{"contractId":"${c.contractId}","txHash":"${lt.hash}"}'`); }
+      }
+      if (contractRail(c) === 'ledger-staged') throw new ToolError(`${assetLabel(c.total.currency)} deals hold nothing: each stage is paid on the ledger when you accept it.`, `Wait for the seller's evidence, then: cappz-market release ${c.contractId}`);
       if (c.ledgerEscrows.some((e) => e.milestone === stage.index)) throw new ToolError(`“${c.milestones[stage.index].label}” is already escrowed.`, 'Wait for the seller’s evidence, then release.');
       const buyer = mk.state.parties.get(c.buyerId)?.xrplAccount; const seller = mk.state.parties.get(c.sellerId)?.xrplAccount;
       if (!seller) throw new ToolError('The seller has no XRPL account on their profile yet.', 'Ask them to add one; then fund.');
@@ -523,12 +595,12 @@ export const COMMANDS: Command[] = [
       const secret = newEscrowSecret();
       const legs = await prepareStageEscrows(c, stage.index, buyer, seller, secret, mk.now());
       const need = xrpNeededForStage(stage.amount, legs.length);
-      if (st.spendableXrp < need) throw new ToolError(`This stage needs about ${need} XRP spendable (${stage.amount} XRP + ${legs.length} × ${st.reserveOwnerXrp} XRP reserve while the escrows are open + network fees); you have ${st.spendableXrp}.`, net === 'mainnet' ? `Send XRP to ${w.classicAddress}.` : 'cappz-market wallet --fund');
+      if (st.spendableXrp < need) throw new ToolError(`This stage needs about ${need} XRP spendable (${stage.amount} XRP + ${legs.length} × ${st.reserveOwnerXrp} XRP reserve while the escrows are open + network fees); you have ${st.spendableXrp}.`, fundingSummary(fundingNeed({ network: net, currency: 'XRP', amount: Math.max(0, Math.round((need - st.spendableXrp) * 1e6) / 1e6), accountExists: st.activated })));
       await rememberSecret(c.contractId, stage.index, secret);
       const box = await boxKey();
       const sealedSecret = (await sealTo(box.publicKey, { contractId: c.contractId, milestone: stage.index, secret })) as unknown as Record<string, unknown>;
       const signed: string[] = []; const approvals: string[] = [];
-      const deps = await approvedSigning(net, c.contractId, stage.index, approvals, coSignature);
+      const deps = await approvedSigning(net, c.contractId, stage.index, approvals, coSignature, await requestHookFor(mk));
       try {
         const lts = await signAndSubmitAll(seedSigner(w.seed!), legs.map((l) => l.tx), net, (_n, lt) => signed.push(lt.hash), deps);
         const checks = legs.map((p, i) => ({ milestone: p.milestone, condition: p.condition, sealedSecret, lt: lts[i] }));
@@ -560,10 +632,22 @@ export const COMMANDS: Command[] = [
     },
   },
   {
-    name: 'release',
-    summary: 'Buyer: accept the current stage’s evidence and pay it out of escrow (XRP: reveals the stage secret on the ledger).',
-    money: true,
+    name: 'accept',
+    summary: 'Buyer or the contract’s evaluator: accept the current stage’s evidence without paying it (the buyer then releases or pays). An agent evaluator needs a mandate covering marketplace.milestone.affirm.',
     params: [{ name: 'contract', type: 'string', description: 'Contract id.', required: true, positional: true }],
+    async run(a, o) {
+      const mk = await loadMarket(o, true);
+      const c = contractOf(mk, str(a, 'contract'));
+      const stage = M.currentStage(c) ?? (() => { throw new ToolError('Every stage is paid.'); })();
+      return commitAndReport(mk, await M.buildAffirm(mk.state, mk.actor(), c.contractId, stage.index), { stage: c.milestones[stage.index].label, next: `The buyer pays it: cappz-market release ${c.contractId}` });
+    },
+  },
+  {
+    name: 'release',
+    summary: 'Buyer: accept the current stage’s evidence and pay it — out of escrow for XRP (reveals the stage secret on the ledger), directly on the ledger for CAPPZ and RLUSD (USD-tokenZ) deals.',
+    money: true,
+    params: [{ name: 'contract', type: 'string', description: 'Contract id.', required: true, positional: true },
+      { name: 'co-signature', type: 'string', description: 'Agents paying a token stage above their mandate threshold: the grantor’s co-signature (cappz-market cosign <contract>).' }],
     async run(a, o) {
       let mk = await loadMarket(o, true); guardMainnet(this, mk, o);
       let c = contractOf(mk, str(a, 'contract'));
@@ -571,6 +655,26 @@ export const COMMANDS: Command[] = [
       const done: string[] = [];
       if (c.milestoneStates[stage.index].state === 'evidenced') { const t = await M.buildAffirm(mk.state, mk.actor(), c.contractId, stage.index); await mk.commit(t); done.push(...t.map((x) => x.eventType)); mk = await loadMarket(o, true); c = contractOf(mk, c.contractId); }
       if (c.milestoneStates[stage.index].state !== 'affirmed') throw new ToolError(`“${c.milestones[stage.index].label}” has no evidence to accept yet (state ${c.milestoneStates[stage.index].state}).`, 'Wait for the seller: cappz-market deals');
+      if (contractRail(c) === 'ledger-staged') {
+        const gate = subcontractGate(mk.state.contracts, c, stage.index);
+        if (gate) throw new ToolError(gate, c.parentContractId ? `Check the parent: cappz-market show ${c.parentContractId}` : undefined);
+        // Issued tokens (CAPPZ, USD-tokenZ): pay the accepted stage directly — seller net and each fee leg — each approved, then checked on the ledger.
+        const buyer = mk.state.parties.get(c.buyerId)?.xrplAccount; const seller = mk.state.parties.get(c.sellerId)?.xrplAccount;
+        if (!seller) throw new ToolError('The seller has no XRPL account on their profile yet.', 'Ask them to add one; then release.');
+        const { w, net } = await signingWallet(mk);
+        if (buyer !== w.classicAddress) throw new ToolError(`Your profile’s XRPL account is ${buyer ?? 'missing'}, but this wallet is ${w.classicAddress}.`, 'Run cappz-market profile --name "…" to put this wallet on your profile.');
+        const legs = prepareStagePayments(c, stage.index, buyer, seller, net);
+        const coSignature = await readCoSignature(a['co-signature']);
+        const approvals: string[] = []; const paid: string[] = [];
+        try {
+          const lts = await signAndSubmitAll(seedSigner(w.seed!), legs.map((l) => l.tx), net, (_n, lt) => paid.push(lt.hash), await approvedSigning(net, c.contractId, stage.index, approvals, coSignature, await requestHookFor(mk)));
+          const txs = await M.buildPayStageOnLedger(mk.state, mk.actor(coSignature ? coSignerOf(mk, c, coSignature) : undefined), c.contractId, stage.index, mk.policy, lts);
+          return commitAndReport(mk, txs, { accepted: done, stage: c.milestones[stage.index].label, paid: formatMoney(stage.amount, c.total.currency), ledgerTxs: lts.map((x) => x.hash), approvedIntents: approvals, next: stage.index + 1 < c.milestones.length ? `The seller delivers the next stage; then: cappz-market release ${c.contractId}` : `Done. Review the seller: cappz-market review ${c.contractId} --rating 5 --text "…"` });
+        } catch (err) {
+          const need = fundingNeed({ network: net, currency: c.total.currency, amount: stage.amount, accountExists: true });
+          throw new ToolError(`${(err as Error).message}${paid.length ? ` Payments already on the ledger: ${paid.join(', ')}.` : ''}`, paid.length ? `Record them with: cappz-market call marketplace.stage.pay --input '{"contractId":"${c.contractId}","milestone":${stage.index},"txHashes":[${paid.map((h) => `"${h}"`).join(',')}]}'` : `If the wallet lacks ${assetLabel(c.total.currency)}: ${fundingSummary(need)}`);
+        }
+      }
       const e = c.ledgerEscrows.find((x) => x.milestone === stage.index);
       if (!e) return commitAndReport(mk, await M.buildRelease(mk.state, mk.actor(), c.contractId, stage.index), { accepted: done, stage: c.milestones[stage.index].label, next: stage.index + 1 < c.milestones.length ? `Fund the next stage: cappz-market fund ${c.contractId}` : `Done. Review the seller: cappz-market review ${c.contractId} --rating 5 --text "…"` });
       const box = await boxKey();
@@ -579,9 +683,91 @@ export const COMMANDS: Command[] = [
       const { w, net } = await signingWallet(mk);
       const finishes = [e.sequence, ...e.feeEscrows.map((f) => f.sequence)].map((q) => prepareEscrowFinish(w.classicAddress, w.classicAddress, q, e.condition, secret));
       const approvals: string[] = [];
-      const lts = await signAndSubmitAll(seedSigner(w.seed!), finishes, net, undefined, await approvedSigning(net, c.contractId, stage.index, approvals));
+      const lts = await signAndSubmitAll(seedSigner(w.seed!), finishes, net, undefined, await approvedSigning(net, c.contractId, stage.index, approvals, undefined, await requestHookFor(mk)));
       const txs = await M.buildSettleOnLedger(mk.state, mk.actor(), c.contractId, stage.index, lts[0], mk.policy, lts.slice(1));
       return commitAndReport(mk, txs, { accepted: done, stage: c.milestones[stage.index].label, ledgerTxs: lts.map((x) => x.hash), approvedIntents: approvals, next: stage.index + 1 < c.milestones.length ? `Fund the next stage: cappz-market fund ${c.contractId}` : `Done. Review the seller: cappz-market review ${c.contractId} --rating 5 --text "…"` });
+    },
+  },
+  {
+    name: 'claim',
+    summary: 'Buyer of a metered deal: sign a payment-channel claim for the units used so far (the total, not the increase) with your wallet key, off the ledger and free. Give the printed claim to the seller; they redeem it with cappz-market redeem.',
+    params: [
+      { name: 'contract', type: 'string', description: 'Contract id.', required: true, positional: true },
+      { name: 'units', type: 'number', description: 'Total units used so far (up to the cap).', required: true },
+    ],
+    async run(a, o) {
+      const mk = await loadMarket(o, true);
+      const c = contractOf(mk, str(a, 'contract'));
+      if (c.buyerId !== mk.partyId) throw new ToolError('Only the buyer signs claims.');
+      const ch = c.channel; if (!ch || ch.closed) throw new ToolError(ch ? 'The channel is closed.' : 'The channel is not open yet.', `Open it with: cappz-market fund ${c.contractId}`);
+      const units = num(a, 'units');
+      if (!(units > 0) || units > c.quantity) throw new ToolError(`Units are the total used so far: more than 0, at most the cap of ${c.quantity} ${c.unit}.`);
+      const drops = BigInt(Math.round(units * Number(unitPriceDrops(c))));
+      if (drops > BigInt(ch.capDrops)) throw new ToolError(`That is above the channel cap (${ch.capDrops} drops).`);
+      if (drops <= BigInt(ch.releasedDrops)) throw new ToolError(`The seller already redeemed ${ch.unitsUsed} ${c.unit}; a claim is for the total used, so it must be more than that.`);
+      const w = await requireWallet();
+      if (w.publicKey.toUpperCase() !== ch.publicKey.toUpperCase()) throw new ToolError('This wallet’s key is not the channel’s claim key.', 'Sign claims on the computer (wallet) that opened the channel.');
+      const signature = signChannelClaim(ch.channelId, drops, w.privateKey);
+      if (!verifyChannelClaim(ch.channelId, drops, signature, ch.publicKey)) throw new ToolError('The claim did not verify against the channel key.');
+      return { claim: { contractId: c.contractId, channelId: ch.channelId, balanceDrops: drops.toString(), units, signature, publicKey: ch.publicKey }, worth: formatMoney(Number(drops) / 1e6, 'XRP'), next: 'Give the claim JSON to the seller (any channel you both use). Nothing was submitted; later claims replace earlier ones.' };
+    },
+  },
+  {
+    name: 'redeem',
+    summary: 'Seller of a metered deal: redeem the buyer’s latest claim on the ledger (PaymentChannelClaim), pay the fee on the increase from your account (a channel pays only you), and record both. --close also closes the channel, returning the unused rest to the buyer.',
+    money: true,
+    params: [
+      { name: 'contract', type: 'string', description: 'Contract id.', required: true, positional: true },
+      { name: 'claim', type: 'string', description: 'The claim JSON (or a file of it) the buyer printed with cappz-market claim.', required: true },
+      { name: 'close', type: 'boolean', description: 'Close the channel in the same transaction.' },
+    ],
+    async run(a, o) {
+      const mk = await loadMarket(o, true); guardMainnet(this, mk, o);
+      const c = contractOf(mk, str(a, 'contract'));
+      if (c.sellerId !== mk.partyId) throw new ToolError('Only the seller redeems claims.');
+      const ch = c.channel; if (!ch || ch.closed) throw new ToolError(ch ? 'The channel is closed.' : 'The buyer has not opened the channel yet.');
+      let claim: { channelId?: string; balanceDrops?: string; signature?: string };
+      try { const v = a.claim; const text = typeof v === 'string' ? (v.trim().startsWith('{') ? v : await readFile(resolve(v), 'utf8')) : JSON.stringify(v); const j = JSON.parse(text) as { claim?: typeof claim } & typeof claim; claim = j.claim ?? j; }
+      catch { throw new ToolError('--claim must be the JSON (or a file of it) that cappz-market claim printed.'); }
+      if (!claim?.signature || !claim.balanceDrops || String(claim.channelId ?? '').toUpperCase() !== ch.channelId.toUpperCase()) throw new ToolError('--claim must be the JSON cappz-market claim printed for this contract’s channel.');
+      const balance = BigInt(claim.balanceDrops);
+      if (!verifyChannelClaim(ch.channelId, balance, claim.signature, ch.publicKey)) throw new ToolError('The claim signature is not the buyer’s claim for that amount on this channel.');
+      if (balance <= BigInt(ch.releasedDrops)) throw new ToolError(`Nothing new: ${ch.releasedDrops} drops are already redeemed.`);
+      const { w, net } = await signingWallet(mk);
+      const seller = mk.state.parties.get(c.sellerId)?.xrplAccount;
+      if (seller !== w.classicAddress) throw new ToolError(`Your profile’s XRPL account is ${seller ?? 'missing'}, but this wallet is ${w.classicAddress}.`);
+      const approvals: string[] = [];
+      const claimLt = await signAndSubmit(seedSigner(w.seed!), prepareChannelClaim(w.classicAddress, ch.channelId, balance, claim.signature, ch.publicKey, !!a.close), net, await approvedSigning(net, c.contractId, 0, approvals, undefined, await requestHookFor(mk)));
+      // The fee legs are plain Payments from the seller to the collection account or DARC recipients (not counterparty money), checked on the ledger when recorded.
+      const fees = prepareChannelFeePayments(c, w.classicAddress, BigInt(ch.releasedDrops), balance, net);
+      const paid: string[] = [];
+      try {
+        const feeLts = await signAndSubmitAll(seedSigner(w.seed!), fees.map((f) => f.tx), net, (_n, lt) => paid.push(lt.hash));
+        const txs = await M.buildChannelSettle(mk.state, mk.actor(), c.contractId, mk.policy, claimLt, feeLts);
+        await mk.commit(txs);
+        const recorded = txs.map((t) => t.eventType);
+        if (a.close) { const m2 = await loadMarket(o, true); const ct = await M.buildCloseChannel(m2.state, m2.actor(), c.contractId, m2.policy, claimLt); await m2.commit(ct); recorded.push(...ct.map((t) => t.eventType)); }
+        return { ok: true, market: mk.mode, recorded, redeemed: formatMoney(Number(balance - BigInt(ch.releasedDrops)) / 1e6, 'XRP'), feeLegs: fees.map((f) => `${f.units} drops → ${f.label}`), ledgerTxs: [claimLt.hash, ...feeLts.map((x) => x.hash)], approvedIntents: approvals, next: a.close ? `Done. Review the buyer: cappz-market review ${c.contractId} --rating 5 --text "…"` : `Redeem later claims the same way; close when done: cappz-market close ${c.contractId}` };
+      } catch (e) {
+        throw new ToolError(`${(e as Error).message} Redeemed on the ledger: ${claimLt.hash}${paid.length ? `; fee payments: ${paid.join(', ')}` : ''}.`, `Pay any missing fee leg, then record: cappz-market call marketplace.channel.settle --input '{"contractId":"${c.contractId}","txHash":"${claimLt.hash}","feeTxHashes":[${paid.map((h) => `"${h}"`).join(',')}]}'`);
+      }
+    },
+  },
+  {
+    name: 'close',
+    summary: 'Either party of a metered deal: close the payment channel on the ledger and record it; the unused rest returns to the buyer. The seller’s close is immediate; the buyer’s takes effect after the settle delay (or at once after the channel expires) — run it again then.',
+    money: true,
+    params: [{ name: 'contract', type: 'string', description: 'Contract id.', required: true, positional: true }],
+    async run(a, o) {
+      const mk = await loadMarket(o, true); guardMainnet(this, mk, o);
+      const c = contractOf(mk, str(a, 'contract'));
+      if (mk.partyId !== c.buyerId && mk.partyId !== c.sellerId) throw new ToolError('Only the buyer or seller closes the channel.');
+      const ch = c.channel; if (!ch || ch.closed) throw new ToolError(ch ? 'The channel is already closed.' : 'The channel is not open.');
+      const { w, net } = await signingWallet(mk);
+      const approvals: string[] = [];
+      const lt = await signAndSubmit(seedSigner(w.seed!), prepareChannelClose(w.classicAddress, ch.channelId), net, await approvedSigning(net, c.contractId, 0, approvals, undefined, await requestHookFor(mk)));
+      if (payChannelNode(lt, ch.channelId)?.kind !== 'DeletedNode') return { ok: true, closing: true, ledgerTx: lt.hash, approvedIntents: approvals, note: `The ledger scheduled the close: the seller has the settle delay (${ch.settleDelay ?? '?'} s) to redeem the last claim.`, next: `Run cappz-market close ${c.contractId} again after that, or record a later close with: cappz-market call marketplace.channel.close --input '{"contractId":"${c.contractId}","txHash":"<hash>"}'` };
+      return commitAndReport(mk, await M.buildCloseChannel(mk.state, mk.actor(), c.contractId, mk.policy, lt), { ledgerTx: lt.hash, approvedIntents: approvals, next: `Review the other side: cappz-market review ${c.contractId} --rating 5 --text "…"` });
     },
   },
   {
@@ -616,8 +802,9 @@ export const COMMANDS: Command[] = [
     money: true,
     params: [
       { name: 'target', type: 'string', description: 'The XRPL address (r…) you will pay, or a marketplace party id (p-…).', required: true, positional: true },
-      { name: 'amount', type: 'number', description: 'What you intend to send, in XRP: also checks you can afford it with escrow reserves.' },
+      { name: 'amount', type: 'number', description: 'What you intend to send (in XRP, or in --currency): also checks you can afford it with escrow reserves.' },
       { name: 'legs', type: 'number', description: 'Escrow legs the payment will use (default 1).' },
+      { name: 'currency', type: 'string', description: 'CAPPZ or USD-tokenZ/1 (RLUSD): also checks both trust lines, the issuer\'s freeze and authorization settings, and whether the token can be escrowed.' },
     ],
     async run(a, o) {
       const d = await getDiscovery(); const svc = d.services?.counterpartyCheck;
@@ -625,7 +812,8 @@ export const COMMANDS: Command[] = [
       const net = marketNetwork(o);
       if (!svc.networks.includes(net)) throw new ToolError(`The counterparty check runs on ${svc.networks.join(' and ')}, not ${net}.`);
       const w = await requireWallet(); const target = str(a, 'target');
-      const input = { ...(target.startsWith('r') ? { address: target } : { party: target }), payer: w.classicAddress, ...(a.amount !== undefined ? { amountXrp: num(a, 'amount') } : {}), ...(a.legs !== undefined ? { escrowLegs: num(a, 'legs') } : {}) };
+      const cur = a.currency !== undefined ? currencyOf(a) : 'XRP';
+      const input = { ...(target.startsWith('r') ? { address: target } : { party: target }), payer: w.classicAddress, ...(a.amount !== undefined ? (cur === 'XRP' ? { amountXrp: num(a, 'amount') } : { currency: cur, amount: num(a, 'amount') }) : cur !== 'XRP' ? { currency: cur } : {}), ...(a.legs !== undefined ? { escrowLegs: num(a, 'legs') } : {}) };
       const out = join(homeDir(), 'checks');
       const r = await commandOf('hire')!.run({ url: `${svc.url}/${net}`, input: JSON.stringify(input), max: svc.priceXrp, out, timeout: 3 }, o) as { results?: Array<{ file: string; verified: boolean }>; payments?: string[]; paid?: string; next?: string };
       const file = r.results?.[0]?.file;
@@ -654,9 +842,18 @@ export const COMMANDS: Command[] = [
     ],
     async run(a, o) {
       const base = str(a, 'url').replace(/\/$/, ''); const max = num(a, 'max'); const out = resolve(str(a, 'out', 'cappz-results'));
-      const http = async (path: string, init?: RequestInit, raw = false) => { const r = await fetch(base + path, init); return { status: r.status, headers: r.headers, body: !raw && r.headers.get('content-type')?.includes('json') ? await r.json() : new Uint8Array(await r.arrayBuffer()) }; };
-      const card = (await http('/agent')).body as { name: string; price: string; currency: string; network: XrplNetwork; stages: unknown[] };
-      if (card.currency !== 'XRP' && card.currency !== 'CAPPZ') throw new ToolError(`Unexpected currency ${card.currency}.`);
+      // Sign each call with this party's declared key when there is one (the agent may check it against the market's profile).
+      const ak = await agentKey(); const s = ak ? await session(false).catch(() => null) : null;
+      const signer = ak && s ? { partyId: await partyIdForAccount(s.userId), declaration: ak.declaration, secretKeyHex: ak.secretKey } : null;
+      const http = async (path: string, init?: RequestInit, raw = false) => {
+        const signed = signer ? await signAgentRequest({ method: init?.method ?? 'GET', url: base + path, body: typeof init?.body === 'string' ? init.body : undefined }, signer) : {};
+        const r = await fetch(base + path, { ...init, headers: { ...(init?.headers as Record<string, string> | undefined), ...signed } }); return { status: r.status, headers: r.headers, body: !raw && r.headers.get('content-type')?.includes('json') ? await r.json() : new Uint8Array(await r.arrayBuffer()) }; };
+      const card = (await http('/agent')).body as { name: string; price: string; currency: string; issuer?: string | null; network: XrplNetwork; stages: unknown[] };
+      const cardAsset = assetCodeOf(card.currency);
+      if (!cardAsset || cardAsset === 'USD') throw new ToolError(`Unexpected currency ${card.currency}: paid agents are paid in XRP, CAPPZ or USD-tokenZ/1 (RLUSD) on the ledger.`);
+      // An issued token must come from the issuer this market knows for it on that network — never from one the agent names.
+      const knownToken = cardAsset === 'XRP' ? null : tokenSpecFor(cardAsset, card.network);
+      if (knownToken && card.issuer && card.issuer !== knownToken.issuer) throw new ToolError(`${card.name} asks for ${assetLabel(cardAsset)} from issuer ${card.issuer}, not the known issuer ${knownToken.issuer}. Not paying.`);
       if (Number(card.price) > max) throw new ToolError(`${card.name} costs ${card.price} ${card.currency} per job; your max is ${max}.`, 'Raise --max if the person you act for agrees.');
       if (card.network === 'mainnet' && !o.yes) throw new ToolError(`${card.name} is paid in real ${card.currency} on mainnet.`, 'Confirm with the person you act for, then repeat with --yes.');
       const w = await requireWallet();
@@ -688,7 +885,11 @@ export const COMMANDS: Command[] = [
           if (spent + amount > max + 1e-9) throw new ToolError(`Stage ${v.pay.stage} asks ${amount}; paying it would pass your max of ${max} (spent ${spent}).`);
           const st = await walletStatus(w.classicAddress, v.pay.network);
           if (card.currency === 'XRP' && st.spendableXrp < amount + 0.001) throw new ToolError(`Need ${amount} XRP spendable, have ${st.spendableXrp}.`, v.pay.network === 'mainnet' ? `Send XRP to ${w.classicAddress}.` : 'cappz-market wallet --fund');
-          const lt = await signAndSubmit(seedSigner(w.seed!), { ...v.pay.preparedTx, Account: w.classicAddress }, v.pay.network);
+          const ptx = v.pay.preparedTx;
+          if (ptx.TransactionType !== 'Payment' || ['SendMax', 'Paths', 'DeliverMin'].some((k) => ptx[k] !== undefined) || (Number(ptx.Flags ?? 0) & 0x00020000)) throw new ToolError(`${card.name} prepared a payment with paths, SendMax or partial-payment flags. Not paying.`);
+          const amt = ptx.Amount as string | { currency: string; issuer: string; value: string };
+          if (knownToken ? (typeof amt !== 'object' || amt.issuer !== knownToken.issuer || amt.currency.toUpperCase() !== knownToken.hex.toUpperCase() || Number(amt.value) !== amount) : (typeof amt !== 'string' || Number(amt) !== Math.round(amount * 1e6))) throw new ToolError(`${card.name} prepared a payment that is not ${amount} ${assetLabel(cardAsset)}${knownToken ? ` from issuer ${knownToken.issuer}` : ''}. Not paying.`);
+          const lt = await signAndSubmit(seedSigner(w.seed!), { ...ptx, Account: w.classicAddress }, v.pay.network);
           await http(`/jobs/${jobId}/payments`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ txHash: lt.hash }) });
           spent += amount; paid.push(lt.hash); paidStage.set(v.pay.stage, { hash: lt.hash, at: Date.now() });
           continue;

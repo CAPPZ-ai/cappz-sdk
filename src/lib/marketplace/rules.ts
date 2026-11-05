@@ -9,6 +9,7 @@
  */
 import { categoryOf } from './catalog';
 import { MAX_STAGE_DAYS, stageAmountsUnits } from './stageMath';
+import type { ContractView } from './types';
 import type { MandateContent, MilestonePlan, MilestoneTerm, Money, SupplyOfferContent, SupplyRequestContent, TokenClassification } from './types';
 
 export class MarketRuleError extends Error {}
@@ -78,6 +79,7 @@ export function splitIntoStages(ms: MilestoneTerm[], start: string): MilestoneTe
         dueBy: last ? m.dueBy : addDays(prev, Math.round((span * j) / k)),
         evidence: last ? m.evidence : `Progress toward “${m.label}”: photos, receipts or a short report`,
         delivery: last && m.delivery,
+        ...(m.servesMilestone !== undefined ? { servesMilestone: m.servesMilestone } : {}),
       });
     }
     prev = m.dueBy;
@@ -171,8 +173,30 @@ export function checkMandate(mandates: MandateContent[], agentPartyId: string, v
   return { ok: false, reason: `No mandate allows ${verb}${categoryId ? ` in ${categoryId}` : ''}.`, needsApproval: false };
 }
 
+/** The key of an agent's value committed per UTC day, per asset (a daily limit is in one asset; mixing assets would add XRP to dollars). */
+export const committedKey = (partyId: string, at: string, currency: string | null) => `${partyId}|${at.slice(0, 10)}${currency ? `|${currency}` : ''}`;
+
 export const contractTotal = (pricePerUnit: Money, quantity: number): Money => ({ amount: Math.round(pricePerUnit.amount * quantity * 100) / 100, currency: pricePerUnit.currency });
 /** Cent-exact milestone amounts; the last milestone absorbs rounding so the parts always sum to the total. */
 export function milestoneAmounts(total: number, ms: MilestoneTerm[]): number[] {
   return stageAmountsUnits(Math.round(total * 100), ms.map((m) => m.share)).map((c) => c / 100);
+}
+
+/**
+ * Subcontract funding gate: a child stage is funded or paid only after the parent milestone it serves
+ * (`servesMilestone`) was released, so the main contractor pays out only what the parent paid it and is never more
+ * than one stage exposed. The parent comes from the replayed ConstituentIncluded link (`parentContractId`); a
+ * subcontract without one fails closed. Returns the refusal, or null when the stage may be funded.
+ */
+export function subcontractGate(contracts: readonly ContractView[], c: ContractView, milestone: number): string | null {
+  if (c.source.kind !== 'subcontract') return null;
+  if (!c.parentContractId) return 'This subcontract has no replayed link to a parent contract (ConstituentIncluded), so none of its stages can be funded.';
+  const parent = contracts.find((x) => x.contractId === c.parentContractId);
+  if (!parent) return `The parent contract ${c.parentContractId} is not on this market.`;
+  const serves = c.milestones[milestone]?.servesMilestone;
+  if (serves === undefined) return `Stage ${milestone + 1} of this subcontract names no parent milestone it serves.`;
+  const pm = parent.milestoneStates[serves];
+  if (!pm) return `The parent contract has no milestone ${serves}.`;
+  if (pm.state !== 'released') return `Stage “${c.milestones[milestone].label}” is funded after the parent milestone “${parent.milestones[serves].label}” is released (it is ${pm.state}): the main contractor pays from what the parent releases.`;
+  return null;
 }

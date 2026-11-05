@@ -7,7 +7,8 @@
  * PermissionGranted/Revoked for agent mandates, MilestoneAffirmed,
  * DeliveryApproved/Rejected, PaymentConfirmed, SettlementRailDeclared for the
  * settlement-network policy, PriceSheetPublished and FeeCharged from the fees
- * category for the fee schedule and charged fees); the rest is declared under
+ * category for the fee schedule and charged fees, ConstituentIncluded for the
+ * parent → subcontract edge); the rest is declared under
  * the `marketplace` MDM category. Requester sends XRequested, decider replies.
  */
 import { createAppLedger, type AppTx, type AppTxLike } from '../apps/appLedger';
@@ -28,6 +29,8 @@ export type MarketplaceEventType =
   | 'PermissionGranted' | 'PermissionRevoked'
   | 'MilestoneAffirmed' | 'DeliveryApproved' | 'DeliveryRejected' | 'PaymentConfirmed' | 'SettlementRailDeclared'
   | 'PriceSheetPublished' | 'FeeCharged'
+  /** Generic ontology edge (MDMEventTxRegistry): parent contract → its subcontract slot (contentClass 'subcontract'). */
+  | 'ConstituentIncluded'
   | typeof MARKETPLACE_DECLARED_EVENTS[number];
 
 export type MarketTx = AppTx<MarketplaceEventType>;

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "ai.cappz/cappz-market",
+  "title": "CAPPZ Marketplace",
+  "description": "Trade on the CAPPZ Marketplace from your agent: find, sell, buy, escrow on XRPL, keys stay local.",
+  "version": "15.31.0",
+  "websiteUrl": "https://cappz.ai/marketplace?tab=agents",
+  "repository": {
+    "url": "https://github.com/CAPPZ-ai/cappz-sdk",
+    "source": "github",
+    "subfolder": "packages/cappz-market"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@cappz/market",
+      "version": "15.31.0",
+      "runtimeHint": "npx",
+      "transport": { "type": "stdio" },
+      "packageArguments": [
+        { "type": "positional", "value": "mcp", "description": "Run as an MCP server over stdio (same as: node cappz-market.mjs mcp)." }
+      ],
+      "environmentVariables": [
+        { "name": "CAPPZ_NETWORK", "description": "Which market: devnet, testnet (default) or mainnet (real XRP).", "isRequired": false, "isSecret": false, "default": "testnet" },
+        { "name": "CAPPZ_HOME", "description": "Folder where keys are kept on this computer (default ~/.cappz/market, files 0600).", "isRequired": false, "isSecret": false },
+        { "name": "XRPL_SEED", "description": "Your own XRPL wallet seed (else the wallet kept in CAPPZ_HOME). Never sent anywhere.", "isRequired": false, "isSecret": true },
+        { "name": "CAPPZ_EMAIL", "description": "Marketplace account email (publishing needs a signed-in account).", "isRequired": false, "isSecret": false },
+        { "name": "CAPPZ_PASSWORD", "description": "Marketplace account password.", "isRequired": false, "isSecret": true },
+        { "name": "CAPPZ_MARKET_URL", "description": "Marketplace whose /.well-known/cappz-market.json is used (default https://cappz.ai).", "isRequired": false, "isSecret": false }
+      ]
+    }
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "singleFile": {
+        "download": "https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/packages/cappz-market/dist/cappz-market.mjs",
+        "run": "node cappz-market.mjs mcp",
+        "requires": "Node 20+"
+      },
+      "discovery": "https://cappz.ai/.well-known/cappz-market.json"
+    }
+  }
+}

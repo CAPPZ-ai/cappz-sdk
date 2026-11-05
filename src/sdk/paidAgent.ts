@@ -1,4 +1,4 @@
-/** Paid agents: run an agent on your own device and get paid in XRP or CAPPZ, stage by stage (deposit, milestones, completion). */
+/** Paid agents: run an agent on your own device and get paid in XRP, CAPPZ or USD-tokenZ/1 (RLUSD), stage by stage (deposit, milestones, completion). */
 export {
   SCHEDULE_PRESETS, MAX_AUTO_RETRIES, offerProblems, defineAgentOffer, stageAmounts, toMicro, fromMicro,
   destinationTagFor, paymentRequest, checkPayment, replayJob, memoryJobStore, xrplLedgerReader, createPaidAgent,

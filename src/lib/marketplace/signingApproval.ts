@@ -9,7 +9,9 @@
  * and milestone exist and are actionable, the signer is the buyer on the
  * buyer's profile, the destination, amount, condition, hold and memo match
  * the deal's terms, the fee is capped, the transaction expires, and an agent
- * buyer is within its mandate (with co-signature above its threshold).
+ * buyer is within its mandate (with co-signature above its threshold). A
+ * subcontract stage is approved only after the parent milestone it serves was
+ * released (rules.subcontractGate).
  *
  * The approval is signed (Ed25519, domain-separated from check reports) over
  * the canonical JSON of the decision, which carries the SHA-256 of the
@@ -29,12 +31,21 @@ import { decode, deriveAddress, verifySignature } from 'xrpl';
 import type { XrplNetwork } from '../xrpl/ledgerCheck';
 import type { MarketState } from './replay';
 import type { ContractView } from './types';
-import { checkMandate, milestoneAmounts } from './rules';
-import { milestoneEscrowLegs, RIPPLE_EPOCH } from './settlement';
+import { checkMandate, committedKey, milestoneAmounts, subcontractGate } from './rules';
+import { MAX_CHANNEL_SETTLE_DELAY, MIN_CHANNEL_SETTLE_DELAY, TF_CLOSE, channelCapDrops, contractRail, milestoneEscrowLegs, RIPPLE_EPOCH, stagePaymentLegs, verifyChannelClaim } from './settlement';
+import { assetLabel } from './paymentAssets';
+import { ledgerAmount } from './ledgerPayments';
 import { HOLD_LIMIT_DAYS } from './stageMath';
 import { canonicalJson } from './counterpartyCheck';
+import { NOT_SIGNED, requestAuthDecision, type RequestAuth, type RequestAuthState, type RequestSignHook } from './agentRequestAuth';
 
-export type ApprovalAction = 'fund' | 'release' | 'refund';
+/**
+ * fund/release/refund: XRP escrow legs (EscrowCreate/Finish/Cancel). pay: a stage paid directly on the ledger in an
+ * issued token (Payment, rail ledger-staged). channel: the buyer opening a metered deal's payment channel
+ * (PaymentChannelCreate, rail ledger-channel). claim: a PaymentChannelClaim on that channel — the seller redeeming a
+ * buyer-signed claim (optionally closing), or either party closing it.
+ */
+export type ApprovalAction = 'fund' | 'release' | 'refund' | 'pay' | 'channel' | 'claim';
 
 export interface SigningIntent {
   network: XrplNetwork;
@@ -44,6 +55,11 @@ export interface SigningIntent {
   tx: Record<string, unknown>;
   /** Agent buyers above their mandate's approval threshold: the grantor's signed co-signature of this stage. */
   coSignature?: CoSignature;
+  /**
+   * v15-31-00: how the request asking for this approval was signed (agentRequestAuth.ts), verified by the service.
+   * Recorded in the approval; required to be `verified-bound` only when the buyer's mandate is bound to a key.
+   */
+  requestAuth?: RequestAuth;
 }
 
 // ─── Co-signature: the mandate's grantor signs the stage, with their own XRPL key ───
@@ -54,7 +70,8 @@ export interface SigningIntent {
 // anyone can check it was the grantor's profile account, by its master key, that agreed — not a name typed in.
 
 export const CO_SIGN_MEMO_TYPE = 'cappz/co-signature';
-export interface CoSignTerms { network: XrplNetwork; contractId: string; milestone: number; action: 'fund'; amountDrops: string; expiresAt: string }
+/** `amountDrops` is the stage's full amount in the asset's smallest units (drops for XRP, micro-units for issued tokens). */
+export interface CoSignTerms { network: XrplNetwork; contractId: string; milestone: number; action: 'fund' | 'pay' | 'channel'; amountDrops: string; expiresAt: string }
 export interface CoSignature { terms: CoSignTerms; txBlob: string }
 
 export const coSignStatement = (t: CoSignTerms) => ['CAPPZ co-signature v1', `network: ${t.network}`, `contract: ${t.contractId}`, `milestone: ${t.milestone}`, `action: ${t.action}`, `amount-drops: ${t.amountDrops}`, `expires: ${t.expiresAt}`].join('\n');
@@ -63,6 +80,14 @@ const utf8Hex = (s: string) => hex(new TextEncoder().encode(s)).toUpperCase();
 /** The unsigned AccountSet a grantor signs (and never submits) to co-sign a stage. */
 export function coSignTx(account: string, t: CoSignTerms): Record<string, unknown> {
   return { TransactionType: 'AccountSet', Account: account, Fee: '0', Sequence: 0, LastLedgerSequence: 1, Memos: [{ Memo: { MemoType: utf8Hex(CO_SIGN_MEMO_TYPE), MemoData: utf8Hex(coSignStatement(t)) } }] };
+}
+
+/** The terms a grantor co-signs for one stage of an agent's deal — the same terms the approval checks (shared by the CLI and the web app). */
+export function coSignTermsFor(c: ContractView, milestone: number, sellerAccount: string, network: XrplNetwork, expiresAt: string): CoSignTerms {
+  const rail = contractRail(c);
+  const action: CoSignTerms['action'] = rail === 'ledger-staged' ? 'pay' : rail === 'ledger-channel' ? 'channel' : 'fund';
+  const amountDrops = action === 'channel' ? channelCapDrops(c).toString() : (action === 'pay' ? stagePaymentLegs(c, milestone, sellerAccount).map((l) => l.units) : milestoneEscrowLegs(c, milestone, sellerAccount).map((l) => l.drops)).reduce((n, u) => n + BigInt(u), 0n).toString();
+  return { network, contractId: c.contractId, milestone: action === 'channel' ? 0 : milestone, action, amountDrops, expiresAt };
 }
 
 /** Problems with a co-signature as `account`'s agreement to `cs.terms` (empty = valid). */
@@ -109,6 +134,8 @@ export interface SigningApproval {
   nonce: string;
   issuedAt: string;
   expiresAt: string;
+  /** v15-31-00: the request-auth state the service saw (absent on approvals from callers that pass none). */
+  requestAuth?: { state: RequestAuthState; partyId: string | null; keyId?: string; because: string };
 }
 
 export interface SignedApproval { approval: SigningApproval; signature: { alg: 'Ed25519'; publicKey: string; value: string } }
@@ -129,7 +156,14 @@ const ALLOWED: Record<string, readonly string[]> = {
   EscrowCreate: ['TransactionType', 'Account', 'Destination', 'Amount', 'Condition', 'CancelAfter', 'Memos', 'Fee', 'Sequence', 'LastLedgerSequence', 'Flags', 'NetworkID'],
   EscrowFinish: ['TransactionType', 'Account', 'Owner', 'OfferSequence', 'Condition', 'Fulfillment', 'Fee', 'Sequence', 'LastLedgerSequence', 'Flags', 'NetworkID'],
   EscrowCancel: ['TransactionType', 'Account', 'Owner', 'OfferSequence', 'Fee', 'Sequence', 'LastLedgerSequence', 'Flags', 'NetworkID'],
+  // No SendMax, Paths, DeliverMin or DestinationTag: a stage payment delivers exactly the leg, directly.
+  Payment: ['TransactionType', 'Account', 'Destination', 'Amount', 'Memos', 'Fee', 'Sequence', 'LastLedgerSequence', 'Flags', 'NetworkID'],
+  // No DestinationTag or SourceTag: the channel names the deal by its memo; no Expiration (CancelAfter bounds it).
+  PaymentChannelCreate: ['TransactionType', 'Account', 'Destination', 'Amount', 'SettleDelay', 'PublicKey', 'CancelAfter', 'Memos', 'Fee', 'Sequence', 'LastLedgerSequence', 'Flags', 'NetworkID'],
+  PaymentChannelClaim: ['TransactionType', 'Account', 'Channel', 'Balance', 'Amount', 'Signature', 'PublicKey', 'Fee', 'Sequence', 'LastLedgerSequence', 'Flags', 'NetworkID'],
 };
+/** Flags each type may carry beyond none/tfFullyCanonicalSig: a claim may close the channel (tfClose); nothing may renew it. */
+const EXTRA_FLAGS: Record<string, number> = { PaymentChannelClaim: TF_CLOSE };
 
 const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 const unhex = (h: string) => new Uint8Array((h.match(/../g) ?? []).map((x) => parseInt(x, 16)));
@@ -164,12 +198,12 @@ export async function evaluateSigningIntent(state: MarketState, intent: SigningI
   const no = (code: string, message: string) => { r.push({ code, message }); };
   const tx = intent.tx ?? {};
   const type = String(tx.TransactionType ?? '');
-  const action: ApprovalAction | null = type === 'EscrowCreate' ? 'fund' : type === 'EscrowFinish' ? 'release' : type === 'EscrowCancel' ? 'refund' : null;
-  if (!action) return { approved: false, reasons: [{ code: 'tx-type', message: `Only EscrowCreate, EscrowFinish and EscrowCancel are approved here, not ${type || 'an unknown type'}.` }] };
+  const action: ApprovalAction | null = type === 'EscrowCreate' ? 'fund' : type === 'EscrowFinish' ? 'release' : type === 'EscrowCancel' ? 'refund' : type === 'Payment' ? 'pay' : type === 'PaymentChannelCreate' ? 'channel' : type === 'PaymentChannelClaim' ? 'claim' : null;
+  if (!action) return { approved: false, reasons: [{ code: 'tx-type', message: `Only EscrowCreate, EscrowFinish, EscrowCancel, stage Payments and payment-channel transactions are approved here, not ${type || 'an unknown type'}.` }] };
 
   const extra = Object.keys(tx).filter((k) => !SIGNING_FIELDS.has(k) && !ALLOWED[type].includes(k));
   if (extra.length) no('tx-extra-fields', `The transaction carries fields a ${type} for this deal never needs: ${extra.join(', ')}.`);
-  if (tx.Flags !== undefined && Number(tx.Flags) !== 0 && Number(tx.Flags) !== 0x80000000) no('tx-flags', 'Unexpected transaction flags.');
+  if (tx.Flags !== undefined && (Number(tx.Flags) & ~(0x80000000 | (EXTRA_FLAGS[type] ?? 0))) !== 0) no('tx-flags', 'Unexpected transaction flags.');
   const fee = Number(tx.Fee);
   if (!Number.isInteger(fee) || fee <= 0) no('fee-missing', 'Fee must be set (autofill the transaction before asking for approval).');
   else if (fee > MAX_FEE_DROPS) no('fee-cap', `Fee ${fee} drops is above the ${MAX_FEE_DROPS}-drop cap.`);
@@ -179,12 +213,16 @@ export async function evaluateSigningIntent(state: MarketState, intent: SigningI
 
   const contract: ContractView | undefined = state.contracts.find((x) => x.contractId === intent.contractId);
   if (!contract) return { approved: false, reasons: [...r, { code: 'no-contract', message: `No contract ${intent.contractId} on the ${intent.network} market.` }] };
-  if (contract.total.currency !== 'XRP') no('not-xrp', 'This contract is priced in USD; it does not settle by XRPL escrow.');
+  const rail = contractRail(contract);
+  const channelAction = action === 'channel' || action === 'claim';
+  if (action === 'pay' ? rail !== 'ledger-staged' : channelAction ? rail !== 'ledger-channel' : rail !== 'ledger-escrow') no(action === 'pay' ? 'not-staged' : channelAction ? 'not-channel' : 'not-xrp', `This contract is priced in ${assetLabel(contract.total.currency)} and settles on ${rail}; ${action === 'pay' ? 'it is not paid stage by stage on the ledger' : channelAction ? 'it is not a metered deal paid through a ledger channel' : 'it does not settle by XRPL escrow'}.`);
   const buyer = state.parties.get(contract.buyerId); const seller = state.parties.get(contract.sellerId);
   const buyerAccount = buyer?.xrplAccount ?? null; const sellerAccount = seller?.xrplAccount ?? null;
   if (!buyerAccount) no('buyer-no-account', 'The buyer has no XRPL account on their profile.');
   if (!sellerAccount) no('seller-no-account', 'The seller has no XRPL account on their profile.');
-  if (buyerAccount && tx.Account !== buyerAccount) no('not-buyer', `Signed by ${String(tx.Account)}, not the buyer's profile account ${buyerAccount}.`);
+  // A claim is signed by the seller (redeeming) or either party (closing); everything else by the buyer.
+  if (action === 'claim') { if (tx.Account !== buyerAccount && tx.Account !== sellerAccount) no('not-party', `Signed by ${String(tx.Account)}, neither party's profile account.`); }
+  else if (buyerAccount && tx.Account !== buyerAccount) no('not-buyer', `Signed by ${String(tx.Account)}, not the buyer's profile account ${buyerAccount}.`);
 
   const ms = contract.milestoneStates[intent.milestone];
   if (!ms) return { approved: false, reasons: [...r, { code: 'no-milestone', message: `Contract ${contract.contractId} has no milestone ${intent.milestone}.` }] };
@@ -196,11 +234,114 @@ export async function evaluateSigningIntent(state: MarketState, intent: SigningI
   let destination: string | null = null; let amountDrops: string | null = null;
   let mandateNote: string | null = null; let coSignedBy: string | null = null;
 
-  if (action === 'fund') {
+  if (action === 'channel') {
+    // Open a metered deal's channel: exactly the cap, to the seller, held at most one billing cycle.
+    if (contract.state === 'cancelled' || contract.state === 'completed') no('contract-closed', `The contract is ${contract.state}.`);
+    if (openDispute || contract.state === 'disputed') no('disputed', 'The contract has an open dispute; nothing is funded until it is decided.');
+    if (intent.milestone !== 0) no('not-current-stage', 'A metered deal has one stage (milestone 0).');
+    if (contract.channel) no('already-funded', `The channel is already open (${contract.channel.channelId}).`);
+    destination = String(tx.Destination ?? ''); amountDrops = typeof tx.Amount === 'string' ? tx.Amount : null;
+    const cap = channelCapDrops(contract).toString();
+    if (amountDrops === null || !/^\d+$/.test(amountDrops)) no('amount-not-xrp', 'Amount must be XRP drops (a string of digits): ledger channels carry XRP only.');
+    else if (amountDrops !== cap) no('cap-mismatch', `The channel must hold exactly the contract cap, ${cap} drops, not ${amountDrops}.`);
+    if (sellerAccount && destination !== sellerAccount) no('destination', `The channel pays ${destination || '?'}, not the seller's profile account ${sellerAccount}.`);
+    if (typeof tx.PublicKey !== 'string' || !/^(ED[0-9A-F]{64}|0[23][0-9A-F]{64})$/i.test(tx.PublicKey)) no('public-key', 'PublicKey must be the 33-byte key that will sign claims.');
+    const sd = Number(tx.SettleDelay);
+    if (!Number.isInteger(sd) || sd < MIN_CHANNEL_SETTLE_DELAY || sd > MAX_CHANNEL_SETTLE_DELAY) no('settle-delay', `SettleDelay must be ${MIN_CHANNEL_SETTLE_DELAY}–${MAX_CHANNEL_SETTLE_DELAY} seconds, so the seller can redeem the last claim before a close.`);
+    const cancelAfter = Number(tx.CancelAfter);
+    const nowRipple = Math.floor(Date.parse(now) / 1000) - RIPPLE_EPOCH;
+    if (!Number.isInteger(cancelAfter)) no('no-cancel-after', 'CancelAfter must be set so an unused remainder returns to the buyer.');
+    else if (cancelAfter <= nowRipple) no('cancel-after-past', 'CancelAfter is in the past.');
+    else if (cancelAfter > nowRipple + (HOLD_LIMIT_DAYS + 1) * 86_400) no('hold-too-long', `CancelAfter holds the channel longer than the ${HOLD_LIMIT_DAYS}-day limit.`);
+    if (!memoNames(tx, contract.contractId, 0)) no('memo', 'The memo must name this contract (stage 0).');
+    if (buyer?.kind === 'agent') {
+      const today = state.committedByDay.get(committedKey(buyer.partyId, now, contract.total.currency)) ?? 0;
+      const m = checkMandate(state.mandates, buyer.partyId, 'marketplace.channel.open', { amount: contract.total.amount, currency: contract.total.currency }, contract.categoryId, now, today);
+      mandateNote = m.reason;
+      if (!m.ok) no('mandate', `Agent ${buyer.name}: ${m.reason}`);
+      else if (m.needsApproval) {
+        const grantors = [...new Set(state.mandates.filter((x) => x.agentPartyId === buyer.partyId).map((x) => x.grantedBy))];
+        const cs = intent.coSignature;
+        if (!cs) no('co-signature', `Agent ${buyer.name}: ${m.reason} — ask ${grantors.join(' or ')} to co-sign this channel (cappz-market cosign ${contract.contractId}).`);
+        else {
+          const t = cs.terms;
+          const termProblems = [t.network !== intent.network && 'network', t.contractId !== contract.contractId && 'contract', t.milestone !== 0 && 'milestone', t.action !== 'channel' && 'action', t.amountDrops !== cap && 'amount'].filter(Boolean);
+          const signer = grantors.find((g) => { const acct = state.parties.get(g)?.xrplAccount; return !!acct && verifyCoSignature(cs, acct, now).length === 0; });
+          if (termProblems.length) no('co-signature', `The co-signature is for a different ${termProblems.join(', ')}.`);
+          else if (!signer) no('co-signature', `The co-signature is not a valid signature by ${grantors.join(' or ')} (their profile XRPL account).`);
+          else coSignedBy = signer;
+        }
+      }
+    }
+  } else if (action === 'claim') {
+    // A claim on this deal's open channel: a redemption (Balance) only by the seller, above what is recorded, within
+    // the cap, carrying the buyer's valid claim signature; a close (tfClose) by either party.
+    const ch = contract.channel;
+    if (!ch) no('not-funded', 'The channel is not open.');
+    else if (ch.closed) no('already-settled', 'The channel is already closed.');
+    if (ch && String(tx.Channel ?? '').toUpperCase() !== ch.channelId.toUpperCase()) no('channel', 'The claim is for a different channel.');
+    const closing = (Number(tx.Flags ?? 0) & TF_CLOSE) !== 0;
+    if (tx.Balance === undefined) {
+      if (!closing) no('no-balance', 'A claim either redeems a Balance or closes the channel (tfClose).');
+      if (tx.Amount !== undefined || tx.Signature !== undefined) no('tx-extra-fields', 'A close carries no Amount or Signature.');
+    } else {
+      const b = typeof tx.Balance === 'string' && /^\d+$/.test(tx.Balance) ? BigInt(tx.Balance) : null;
+      if (sellerAccount && tx.Account !== sellerAccount) no('not-seller', 'Only the seller redeems a claim.');
+      if (b === null) no('amount-not-xrp', 'Balance must be XRP drops (a string of digits).');
+      else if (ch) {
+        if (b <= BigInt(ch.releasedDrops)) no('nothing-new', `Balance ${b} drops is not above the ${ch.releasedDrops} already redeemed.`);
+        if (b > BigInt(ch.capDrops)) no('over-cap', `Balance ${b} drops is above the cap of ${ch.capDrops}.`);
+        if (tx.Amount !== undefined && String(tx.Amount) !== String(tx.Balance)) no('amount', 'Amount must equal Balance (the claim redeemed).');
+        if (typeof tx.PublicKey !== 'string' || tx.PublicKey.toUpperCase() !== ch.publicKey.toUpperCase()) no('public-key', 'PublicKey must be the channel\'s claim key.');
+        if (typeof tx.Signature !== 'string' || !verifyChannelClaim(ch.channelId, b, tx.Signature, ch.publicKey)) no('claim-signature', 'The claim signature is not the buyer\'s claim for this Balance on this channel.');
+        destination = sellerAccount; amountDrops = (b - BigInt(ch.releasedDrops)).toString();
+      }
+    }
+  } else if (action === 'pay') {
+    if (openDispute || contract.state === 'disputed') no('disputed', 'The contract has an open dispute; an operator rules first.');
+    if (!current || current.index !== intent.milestone) no('not-current-stage', `Milestone ${intent.milestone} is not the stage to pay now${current ? ` (stage ${current.index} is)` : ''}.`);
+    if (ms.state !== 'affirmed') no('not-accepted', `Accept the stage before paying it (state ${ms.state}).`);
+    // Subcontracts: paid only after the parent milestone this stage serves was released (one stage exposed at most).
+    { const gate = subcontractGate(state.contracts, contract, intent.milestone); if (gate) no('parent-not-released', gate); }
+    if (tx.Flags !== undefined && (Number(tx.Flags) & 0x00020000)) no('partial-payment', 'Partial payments are refused: a stage payment delivers the whole leg.');
+    destination = String(tx.Destination ?? '');
+    const amt = tx.Amount as unknown;
+    if (sellerAccount && rail === 'ledger-staged') {
+      const legs = stagePaymentLegs(contract, intent.milestone, sellerAccount);
+      let want: unknown[] = [];
+      try { want = legs.map((l) => ledgerAmount(BigInt(l.units), contract.total.currency, intent.network)); } catch (e) { no('asset-unavailable', (e as Error).message); }
+      const i = legs.findIndex((l, k) => l.account === destination && canonicalJson(want[k]) === canonicalJson(amt));
+      if (i < 0) no('leg-mismatch', `No leg of milestone ${intent.milestone} pays ${canonicalJson(amt)} to ${destination || '?'}; the deal's legs are ${legs.map((l, k) => `${canonicalJson(want[k])} → ${l.account} (${l.label})`).join(', ')}.`);
+      else amountDrops = legs[i].units;
+    }
+    if (!memoNames(tx, contract.contractId, intent.milestone)) no('memo', 'The memo must name this contract and milestone.');
+    if (buyer?.kind === 'agent') {
+      const amount = milestoneAmounts(contract.total.amount, contract.milestones)[intent.milestone];
+      const today = state.committedByDay.get(committedKey(buyer.partyId, now, contract.total.currency)) ?? 0;
+      const m = checkMandate(state.mandates, buyer.partyId, 'marketplace.stage.pay', { amount, currency: contract.total.currency }, contract.categoryId, now, today);
+      mandateNote = m.reason;
+      if (!m.ok) no('mandate', `Agent ${buyer.name}: ${m.reason}`);
+      else if (m.needsApproval) {
+        const stageUnits = sellerAccount ? stagePaymentLegs(contract, intent.milestone, sellerAccount).reduce((a, l) => a + BigInt(l.units), 0n).toString() : null;
+        const grantors = [...new Set(state.mandates.filter((x) => x.agentPartyId === buyer.partyId).map((x) => x.grantedBy))];
+        const cs = intent.coSignature;
+        if (!cs) no('co-signature', `Agent ${buyer.name}: ${m.reason} — ask ${grantors.join(' or ')} to co-sign this stage (cappz-market cosign ${contract.contractId}).`);
+        else {
+          const t = cs.terms;
+          const termProblems = [t.network !== intent.network && 'network', t.contractId !== contract.contractId && 'contract', t.milestone !== intent.milestone && 'milestone', t.action !== 'pay' && 'action', t.amountDrops !== stageUnits && 'amount'].filter(Boolean);
+          const signer = grantors.find((g) => { const acct = state.parties.get(g)?.xrplAccount; return !!acct && verifyCoSignature(cs, acct, now).length === 0; });
+          if (termProblems.length) no('co-signature', `The co-signature is for a different ${termProblems.join(', ')}.`);
+          else if (!signer) no('co-signature', `The co-signature is not a valid signature by ${grantors.join(' or ')} (their profile XRPL account).`);
+          else coSignedBy = signer;
+        }
+      }
+    }
+  } else if (action === 'fund') {
     if (contract.state === 'cancelled' || contract.state === 'completed') no('contract-closed', `The contract is ${contract.state}.`);
     if (openDispute || contract.state === 'disputed') no('disputed', 'The contract has an open dispute; nothing is funded until it is decided.');
     if (!current || current.index !== intent.milestone) no('not-current-stage', `Milestone ${intent.milestone} is not the stage to fund now${current ? ` (stage ${current.index} is)` : ''}.`);
     if (escrow) no('already-funded', `Milestone ${intent.milestone} is already escrowed (${escrow.txHash}).`);
+    { const gate = subcontractGate(state.contracts, contract, intent.milestone); if (gate) no('parent-not-released', gate); }
     destination = String(tx.Destination ?? ''); amountDrops = typeof tx.Amount === 'string' ? tx.Amount : null;
     if (amountDrops === null || !/^\d+$/.test(amountDrops)) no('amount-not-xrp', 'Amount must be XRP drops (a string of digits).');
     if (sellerAccount) {
@@ -217,7 +358,7 @@ export async function evaluateSigningIntent(state: MarketState, intent: SigningI
     // Agent buyers: the mandate in force now, for this stage's value.
     if (buyer?.kind === 'agent') {
       const amount = milestoneAmounts(contract.total.amount, contract.milestones)[intent.milestone];
-      const today = state.committedByDay.get(`${buyer.partyId}|${now.slice(0, 10)}`) ?? 0;
+      const today = state.committedByDay.get(committedKey(buyer.partyId, now, contract.total.currency)) ?? 0;
       const m = checkMandate(state.mandates, buyer.partyId, 'marketplace.escrow.fund', { amount, currency: contract.total.currency }, contract.categoryId, now, today);
       mandateNote = m.reason;
       if (!m.ok) no('mandate', `Agent ${buyer.name}: ${m.reason}`);
@@ -252,6 +393,13 @@ export async function evaluateSigningIntent(state: MarketState, intent: SigningI
     }
   }
 
+  // v15-31-00: a buyer whose mandate is bound to a signing key acts only through requests signed by that key.
+  const auth = intent.requestAuth ?? NOT_SIGNED;
+  // The binding is checked for the party that acts: the seller when it redeems a channel claim, otherwise the buyer.
+  const actingParty = action === 'claim' && tx.Account === sellerAccount ? contract.sellerId : contract.buyerId;
+  const ra = requestAuthDecision(state, actingParty, auth, now);
+  if (ra.decision === 'refuse') no('request-auth', `Agent ${state.parties.get(actingParty)?.name ?? actingParty}: ${ra.reason}. Sign the request with the declared key (cappz-market signs it when its agent key is on this computer).`);
+
   if (r.length) return { approved: false, reasons: r };
   const issuedAt = now;
   return {
@@ -259,9 +407,10 @@ export async function evaluateSigningIntent(state: MarketState, intent: SigningI
     approval: {
       v: 1, kind: 'cappz-signing-approval', network: intent.network, contractId: contract.contractId, milestone: intent.milestone, action,
       txHash: await intentHash(tx), account: String(tx.Account), destination, amountDrops, lastLedgerSequence: lls,
-      actorPartyId: contract.buyerId, mandate: mandateNote, coSignedBy,
+      actorPartyId: actingParty, mandate: mandateNote, coSignedBy,
       contractState: contract.state, contractBecause: contract.because,
       nonce, issuedAt, expiresAt: new Date(Date.parse(now) + APPROVAL_TTL_MS).toISOString(),
+      ...(intent.requestAuth ? { requestAuth: { state: auth.state, partyId: auth.partyId, ...(auth.keyId ? { keyId: auth.keyId } : {}), because: auth.because } } : {}),
     },
   };
 }
@@ -294,12 +443,17 @@ export async function verifyApproval(signed: SignedApproval, tx: Record<string, 
  * A SigningDeps.approve hook: before each escrow transaction is signed, ask the approval service to approve these
  * exact bytes and verify the signed answer against the published key. Throws (nothing is signed) on any refusal.
  */
-export function approvalHook(opts: { serviceUrl: string; publicKey: string; network: XrplNetwork; contractId: string; milestone: number; coSignature?: CoSignature; onApproved?: (a: SignedApproval) => void; fetcher?: typeof fetch }): (prepared: Record<string, unknown>) => Promise<void> {
+export function approvalHook(opts: { serviceUrl: string; publicKey: string; network: XrplNetwork; contractId: string; milestone: number; coSignature?: CoSignature; onApproved?: (a: SignedApproval) => void; fetcher?: typeof fetch;
+  /** v15-31-00: sign the /authorize request (RFC 9421) with the agent's declared key (agentRequestAuth.agentRequestHook). */
+  signRequest?: RequestSignHook }): (prepared: Record<string, unknown>) => Promise<void> {
   const f = opts.fetcher ?? fetch;
   return async (prepared) => {
     let res: Response;
+    const url = `${opts.serviceUrl.replace(/\/$/, '')}/${opts.network}/authorize`;
+    const payload = JSON.stringify({ contractId: opts.contractId, milestone: opts.milestone, tx: prepared, ...(opts.coSignature ? { coSignature: opts.coSignature } : {}) });
+    const signed = opts.signRequest ? await opts.signRequest({ method: 'POST', url, body: payload }) : {};
     try {
-      res = await f(`${opts.serviceUrl.replace(/\/$/, '')}/${opts.network}/authorize`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ contractId: opts.contractId, milestone: opts.milestone, tx: prepared, ...(opts.coSignature ? { coSignature: opts.coSignature } : {}) }) });
+      res = await f(url, { method: 'POST', headers: { 'content-type': 'application/json', ...signed }, body: payload });
     } catch (e) { throw new Error(`The signing-approval service could not be reached (${(e as Error).message}); nothing was signed.`); }
     const body = (await res.json().catch(() => ({}))) as { approved?: boolean; reasons?: ApprovalReason[]; error?: string } & Partial<SignedApproval>;
     if (!body.approved) throw new Error(`Not approved for signing: ${(body.reasons ?? []).map((r) => r.message).join(' ') || body.error || `HTTP ${res.status}`} Nothing was signed.`);

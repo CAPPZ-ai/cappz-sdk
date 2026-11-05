@@ -35,5 +35,17 @@
       "Chooses the right network (testnet to validate, mainnet only when going live)",
       "Confirms with setup on the agent side that the mandate is active"
     ]
+  },
+  {
+    "skills": [
+      "signing-up-for-cappz"
+    ],
+    "query": "Set yourself up as my buying agent; I want you to pay in XRP and in RLUSD, and only you should be able to act under the mandate.",
+    "files": [],
+    "expected_behavior": [
+      "Creates the agent profile (which declares its signing key on a live market) before asking for the mandate",
+      "Asks the principal for one mandate per asset (XRP and USD-tokenZ/1), each with per-contract and per-day limits",
+      "Suggests --bind-key on each mandate (or the web equivalent) and leaves granting to the principal as a human step"
+    ]
   }
 ]

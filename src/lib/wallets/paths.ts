@@ -357,6 +357,19 @@ export function transportTypeAddress(typeId: string): string {
   return cappzConfigPath('transports', typeId);
 }
 
+/**
+ * 15.31.0: MDM account of one payment asset (src/lib/marketplace/paymentAssets.ts). Ids are CAPPZ-assigned and
+ * vendor-neutral; a family's members are HD children (`usd-tokenz/1`).
+ */
+export function paymentAssetAddress(assetId: string): string {
+  return cappzConfigPath('payment-assets', ...assetId.split('/'));
+}
+
+/** 15.31.0: MDM account of one payment rail (how an asset settles); the provider behind a rail is adapter metadata. */
+export function paymentRailAddress(railId: string): string {
+  return cappzConfigPath('payment-rails', railId);
+}
+
 /** v15-09-00: one configured carrier of a Replicator channel, cross-referencing its transport type. */
 export function channelTransportAddress(channelAddr: string, transportId: string): string {
   return `${channelAddr}/transports/${transportId}`;
