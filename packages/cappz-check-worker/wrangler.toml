@@ -18,7 +18,7 @@ database_id = "cbf70970-3ad3-4d7b-be20-598552dddb7e"
 PRICE_XRP = "0.01"
 # CAPPZ treasury (config/cappz.json networks.*.treasury): public addresses only.
 PAY_TO_MAINNET = "rUqPbiwe2Z5rj2AewokbFHCGQPtwjtzjHM"
-PAY_TO_TESTNET = "rpR95n1iFkTqpoy1e878f4Z1pVHVtWKMNQ"
+PAY_TO_TESTNET = "rnQ3gydd9kTdx6gHKzhNHSKHSq6whzdiMe"
 # The marketplace's public log (https://cappz.ai/.well-known/cappz-market.json): read-only, publishable key.
 MIRROR_URL = "https://anqmeamplxxuaiwvwdok.supabase.co"
 MIRROR_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFucW1lYW1wbHh4dWFpd3Z3ZG9rIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTkyMzQzOTcsImV4cCI6MjA3NDgxMDM5N30.P49FUMMnPmtJZ1WuKrP71myLLzDHa37tSzLsAYsYSB0"
