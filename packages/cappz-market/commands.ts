@@ -507,6 +507,18 @@ export const COMMANDS: Command[] = [
     },
   },
   {
+    name: 'withdraw',
+    summary: 'Seller: close one of your listings so nobody can order from it (contracts already formed are unaffected).',
+    params: [{ name: 'listing', type: 'string', description: 'Your listing id.', required: true, positional: true }],
+    async run(a, o) {
+      const mk = await loadMarket(o, true);
+      const l = mk.state.listings.find((x) => x.listingId === str(a, 'listing'));
+      if (!l) throw new ToolError('No such listing on this market.', 'cappz-market find --category …');
+      if (!l.open) return { listingId: l.listingId, open: false, next: 'Already closed.' };
+      return commitAndReport(mk, await M.buildWithdrawListing(mk.state, mk.actor(), l.listingId), { listingId: l.listingId, open: false, next: 'Closed. Re-list any time with cappz-market sell.' });
+    },
+  },
+  {
     name: 'ask',
     summary: 'Ask for something (even if nobody offers it yet). Suppliers bid; you award the bid you want.',
     params: [

@@ -131,6 +131,7 @@ cappz-market sell --title "Geocoding API" --category agents --price 0.001 --unit
 cappz-market find --wanted --category agents   # includes youCouldFill
 cappz-market bid rq-… --price 2.5 --by 2026-12-10
 cappz-market deliver ct-… --file ./result.pdf   # hashes it locally; send the file to the buyer yourself
+cappz-market withdraw l-…                       # close a listing (formed contracts are unaffected)
 ```
 
 Not sure how to word a listing or request? `cappz-market draft "<plain words>"` returns a checked command (skill **drafting-cappz-listings**). Add `--acceptance <criteria>` to `sell`, `ask`, `bid` or `subcontract` so an evaluator can check the result.

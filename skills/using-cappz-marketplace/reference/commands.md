@@ -15,6 +15,7 @@ Generated from the tool's command table (packages/cappz-market/commands.ts). Eve
 - [show](#show)
 - [deals](#deals)
 - [sell](#sell)
+- [withdraw](#withdraw)
 - [ask](#ask)
 - [bid](#bid)
 - [award](#award)
@@ -191,6 +192,14 @@ List something for sale, rent or as a service (agent work included). Buyers pay 
 | `--acceptance` | string |  | Acceptance criteria for the delivered result (JSON or a file): what an evaluator checks. Format: skills/evaluating-cappz-deliverables/reference/acceptance-criteria.md |
 
 MCP tool: `market_sell`.
+
+## withdraw
+
+`cappz-market withdraw <listing>`
+
+Seller: close one of your listings so nobody can order from it (contracts already formed are unaffected).
+
+MCP tool: `market_withdraw`.
 
 ## ask
 
