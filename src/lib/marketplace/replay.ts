@@ -98,7 +98,8 @@ export function resolveMarket(txs: readonly MarketTxLike[]): MarketState {
         else if (isOperatorAddress(t.sourceAddress)) { l.open = false; l.closed = { by: 'operator', operator: t.sourceAddress, ...(v.reason ? { reason: String(v.reason) } : {}), at: t.timestamp }; }
         break;
       }
-      case 'InventoryAdjusted': { const v = p<{ listingId: string; delta: number }>(t); const l = listings.get(v.listingId); if (l) l.remaining += v.delta; break; }
+      // v15-32-06: only the listing's seller adjusts its inventory, from their own address.
+      case 'InventoryAdjusted': { const v = p<{ listingId: string; delta: number }>(t); const l = listings.get(v.listingId); if (l && t.sourceAddress === partyAddress(l.sellerId)) l.remaining = Math.max(0, l.remaining + Number(v.delta)); break; }
       case 'SupplyRequested': { const v = p<{ request: SupplyRequestContent }>(t).request; requests.set(v.requestId, { ...v, postedAt: t.timestamp, open: true, offers: [], awardedQuantity: 0, contractIds: [] }); break; }
       case 'SupplyRequestClosed': { const r = requests.get(p<{ requestId: string }>(t).requestId); if (r) r.open = false; break; }
       case 'SupplyOffered': { const v = p<{ offer: SupplyOfferContent }>(t).offer; requests.get(v.requestId)?.offers.push({ ...v, at: t.timestamp, withdrawn: false, awardedQuantity: 0 }); break; }

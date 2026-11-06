@@ -39,7 +39,7 @@ import { agentRequestHook, signAgentRequest, type RequestSignHook } from '../../
 import { acceptanceProblems, type AcceptanceSpec } from '../../src/lib/marketplace/acceptance';
 import { milestonePlanPresets } from '../../src/lib/marketplace/rules';
 import { verdictSha256, verdictSupportsAcceptance, verifyVerdict, type SignedVerdict } from '../../src/lib/marketplace/stageEvaluation';
-import { amendListing, sellerListings } from '../../src/lib/marketplace/sellerListings';
+import { inventoryReason, planListingChange, sellerListings } from '../../src/lib/marketplace/sellerListings';
 
 /**
  * RFC 9421 request signing with this party's declared key, when its profile declares the key kept on this computer
@@ -548,8 +548,10 @@ export const COMMANDS: Command[] = [
         ...(removeAcceptance ? { acceptance: null } : a.acceptance !== undefined ? { acceptance: (await acceptanceArg(a))! } : {}),
       };
       if (!Object.keys(changes).length) throw new ToolError('Nothing to change.', `cappz-market update ${l.listingId} --price … (see --help)`);
-      let next; try { next = amendListing(l, changes); } catch (e) { throw new ToolError((e as Error).message); }
-      return commitAndReport(mk, await M.buildListing(mk.state, mk.actor(), next), { listingId: l.listingId, changed: Object.keys(changes), next: 'Applies to new orders. See it: cappz-market listings' });
+      let plan; try { plan = planListingChange(l, changes); } catch (e) { throw new ToolError((e as Error).message); }
+      const txs = [...(plan.amend ? await M.buildListing(mk.state, mk.actor(), plan.amend) : []), ...(plan.inventoryDelta ? await M.buildInventoryAdjust(mk.state, mk.actor(), l.listingId, plan.inventoryDelta, inventoryReason(l, num(a, 'available'))) : [])];
+      if (!txs.length) return { listingId: l.listingId, changed: [], next: 'Nothing changed: the listing already says that.' };
+      return commitAndReport(mk, txs, { listingId: l.listingId, changed: Object.keys(changes), next: 'Applies to new orders. See it: cappz-market listings' });
     },
   },
   {

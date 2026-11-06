@@ -7,9 +7,13 @@
  * a person and their agent see and do exactly the same thing.
  *
  * Views are replayed (orders come from contracts whose source is the listing,
- * never from labels). A change is an amendment of the listing (ContentAmended
- * through buildListing, verb marketplace.listing.publish): it applies to
- * orders placed after it; contracts already formed keep their terms.
+ * never from labels). A change is planned as two governed writes: content
+ * (price, text, lead time, endpoint, criteria) is an amendment of the listing
+ * (ContentAmended through buildListing, verb marketplace.listing.publish), and
+ * what is available is an inventory journal entry (InventoryAdjusted through
+ * buildInventoryAdjust, verb marketplace.inventory.adjust) — so pausing at 0
+ * and restocking never rewrite the listing. Both apply to orders placed after
+ * them; contracts already formed keep their terms.
  */
 import type { MarketState, ListingView } from './replay';
 import type { ListingContent } from './types';
@@ -55,18 +59,18 @@ export interface ListingChanges {
   acceptance?: AcceptanceSpec | null;
 }
 
-/** The amended listing content; throws a plain refusal for anything the market would refuse. Pure. */
-export function amendListing(l: ListingView, ch: ListingChanges): ListingContent {
+/** The plan for a change: the amended content (null when only availability changes) and the inventory delta. Throws a plain refusal for anything the market would refuse. Pure. */
+export function planListingChange(l: ListingView, ch: ListingChanges): { amend: ListingContent | null; inventoryDelta: number } {
   if (!l.open) throw new Error('This listing is closed. List it again with sell (a closed listing is never reopened).');
   const { open: _o, remaining: _r, publishedAt: _p, closed: _c, ...content } = l;
   const next: ListingContent = { ...content, attributes: { ...content.attributes } };
   if (ch.title !== undefined) { if (!ch.title.trim()) throw new Error('A title cannot be empty.'); next.title = ch.title.trim(); }
   if (ch.description !== undefined) next.description = ch.description.trim() || next.title;
   if (ch.price !== undefined) { if (!(ch.price > 0)) throw new Error('Price must be more than zero.'); next.pricePerUnit = { ...next.pricePerUnit, amount: ch.price }; }
+  let inventoryDelta = 0;
   if (ch.available !== undefined) {
     if (!(ch.available >= 0) || !Number.isFinite(ch.available)) throw new Error('Available must be zero or more.');
-    next.quantity = l.quantity + (ch.available - l.remaining);
-    if (!(next.quantity > 0)) throw new Error('More units are already ordered than that leaves; to stop selling, withdraw the listing.');
+    inventoryDelta = ch.available - l.remaining;
   }
   if (ch.leadDays !== undefined) { if (!(ch.leadDays >= 0)) throw new Error('Lead days must be zero or more.'); next.leadDays = Math.round(ch.leadDays); }
   if (ch.endpoint !== undefined) {
@@ -84,5 +88,9 @@ export function amendListing(l: ListingView, ch: ListingChanges): ListingContent
       next.milestones = plan.map((m, i) => (m.delivery || i === plan.length - 1 ? { ...m, acceptance: ch.acceptance! } : m));
     }
   }
-  return next;
+  const contentChanged = Object.keys(ch).some((k) => k !== 'available' && ch[k as keyof ListingChanges] !== undefined);
+  return { amend: contentChanged ? next : null, inventoryDelta };
 }
+
+/** Why the inventory moved, recorded with the journal entry. */
+export const inventoryReason = (l: ListingView, available: number) => (available === 0 ? 'Seller paused orders' : l.remaining === 0 ? `Seller restocked to ${available}` : `Seller set available to ${available}`);

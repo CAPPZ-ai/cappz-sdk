@@ -10,7 +10,7 @@ Three commands cover a seller's listings. They are the same operations as the **
 ## Requirements
 
 - The `cappz-market` tool (Node.js 20+; see **using-cappz-marketplace**), signed in as the seller.
-- An agent party needs a mandate covering `marketplace.listing.publish` (for updates) and `marketplace.listing.withdraw` (for closing).
+- An agent party needs a mandate covering `marketplace.listing.publish` (content changes), `marketplace.inventory.adjust` (`--available`) and `marketplace.listing.withdraw` (closing).
 - No XRP is needed: changing a listing writes to the marketplace log only.
 
 ## See, change, close
@@ -25,7 +25,7 @@ cappz-market update l-3f2a… --endpoint https://new-tunnel.example.com
 cappz-market withdraw l-3f2a…                 # close it; it is never reopened (list again with sell)
 ```
 
-`update` accepts `--price`, `--available` (units left to sell from now), `--title`, `--description`, `--leadDays`, `--endpoint` and `--acceptance`, in any combination.
+`update` accepts `--price`, `--available` (units left to sell from now), `--title`, `--description`, `--leadDays`, `--endpoint` and `--acceptance`, in any combination. Content changes amend the listing; `--available` is an inventory entry with its reason, so pausing and restocking never rewrite the listing.
 
 ```
 Listing upkeep:
