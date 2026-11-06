@@ -1,4 +1,4 @@
-/** 15.33.0: network promotion — run replay, resume, checks, preflight evidence, issuer-grant dry run. */
+/** 15.33.0–15.34.0: network promotion — run replay, resume, checks, preflight evidence, issuer-grant dry run, config manifest. */
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   PROMOTION_EVENTS as E, replayPromotionRun, stepsToRun, resumeRefusal, cancelRefusal, staleStep, expandPromotionPlan, type PromotionStepSpec, type PromotionTxLike,
@@ -8,6 +8,7 @@ import {
 } from '../lib/network/promotion/promotionChecks';
 import { buildPreflightEvidence, preflightHash, verifyPreflightForStart } from '../lib/network/promotion/preflightEvidence';
 import { planIssuerGrant, LSF_DEFAULT_RIPPLE, TF_CLEAR_NO_RIPPLE, TF_SET_NO_RIPPLE, type LedgerAccountState } from '../lib/network/promotion/issuerGrant';
+import { configManifestAnchor, configManifestHash, describeConfigDiff, diffConfigManifests, hasConfigManifestAnchor, type ConfigManifest } from '../lib/network/promotion/configManifest';
 
 const INST = "m/44'/144'/0'/cappz/admin/bpmn/NetworkPromotion/instances/0'";
 const PLAN: PromotionStepSpec[] = [
@@ -161,5 +162,42 @@ describe('issuer grant dry run', () => {
     expect(plan.ok).toBe(false);
     expect(plan.problems.join(' ')).toMatch(/treasury .* not activated/);
     expect(plan.problems.join(' ')).toMatch(/service needs/);
+  });
+});
+
+describe('config manifest', () => {
+  const m = (network: 'testnet' | 'mainnet', entries: ConfigManifest['entries']): ConfigManifest => ({ network, entries, complete: true, gaps: [] });
+  const testnet = m('testnet', [
+    { key: 'token', scope: 'shared', value: { symbol: 'CAPPZ' }, from: 'config/cappz.json' },
+    { key: 'tokenomics.months', scope: 'shared', value: undefined, from: 'ledger:rT' },
+    { key: 'addresses.issuer', scope: 'network', value: 'rT', from: 'registry' },
+  ]);
+  const mainnet = m('mainnet', [
+    { key: 'token', scope: 'shared', value: { symbol: 'CAPPZ' }, from: 'config/cappz.json' },
+    { key: 'tokenomics.months', scope: 'shared', value: 100, from: 'ledger:rM' },
+    { key: 'addresses.issuer', scope: 'network', value: 'rM', from: 'registry' },
+  ]);
+
+  it('equal shared entries pass, network entries are reported, missing is its own state', () => {
+    const d = diffConfigManifests(testnet, mainnet);
+    expect(d.rows.map((r) => [r.key, r.state])).toEqual([['addresses.issuer', 'network-specific'], ['token', 'equal'], ['tokenomics.months', 'missing-on-source']]);
+    expect(d.blocking).toEqual([]);
+    expect(describeConfigDiff(d, 'testnet', 'mainnet')).toBe('1 shared entries equal; not on testnet: tokenomics.months; 1 network-specific (addresses.issuer)');
+    expect(describeConfigDiff(d, 'testnet', 'testnet')).toMatch(/not on the source \(testnet\): tokenomics\.months/);
+  });
+
+  it('only a shared entry present on both sides with another value blocks', () => {
+    const other = m('mainnet', [{ key: 'token', scope: 'shared', value: { symbol: 'XYZ' }, from: 'x' }]);
+    expect(diffConfigManifests(testnet, other).blocking.map((r) => r.key)).toEqual(['token']);
+  });
+
+  it('the hash ignores provenance and order, and the anchor is idempotent', async () => {
+    const reordered = m('mainnet', [...mainnet.entries].reverse().map((e) => ({ ...e, from: 'elsewhere' })));
+    expect(await configManifestHash(reordered)).toBe(await configManifestHash(mainnet));
+    expect(await configManifestHash(mainnet, 'shared')).not.toBe(await configManifestHash(mainnet));
+    const a = await configManifestAnchor({ source: testnet, target: mainnet, release: 'v1' });
+    expect(a).toMatchObject({ kind: 'ConfigManifestAnchored', source: 'testnet', target: 'mainnet', entries: 3 });
+    expect(hasConfigManifestAnchor([a], a)).toBe(true);
+    expect(hasConfigManifestAnchor([{ ...a, manifest: 'other' }], a)).toBe(false);
   });
 });

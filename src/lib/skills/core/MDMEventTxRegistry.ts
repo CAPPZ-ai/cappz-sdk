@@ -366,7 +366,7 @@ const SUBSTRATE_DOMAIN_EVENTS: Array<{
     category: 'migration',
     segment: 'network-promotion',
     emitters: ['agent', 'wallet'],
-    types: ['NetworkPromotionRequested', 'PromotionPreflightRecorded', 'PromotionStepRequested', 'PromotionStepCompleted', 'PromotionStepFailed', 'SkillClonePromoted'],
+    types: ['NetworkPromotionRequested', 'PromotionPreflightRecorded', 'PromotionStepRequested', 'PromotionStepCompleted', 'PromotionStepFailed', 'SkillClonePromoted', 'ConfigManifestAnchored'],
   },
   {
     // v14-02-00 — fee-based pricing (fees/fee-charging.bpmn, fees/treasury-topup.bpmn,

@@ -9,6 +9,7 @@
 | `promotionChecks.ts` | Platform checks plus checks that apps declare (`registerPromotableApp`). Checks only read. A check that throws counts as `unknown`, and `unknown` on a critical check blocks the run. |
 | `preflightEvidence.ts` | Hashes the preflight result together with the network pair, apps, session and check outcomes. `verifyPreflightForStart` refuses a hash from another session, another pair or set of apps, an evidence set older than 30 minutes, or one taken before the last network switch. |
 | `promotionRun.ts` | Replays one process instance into steps and run state. Nothing stores a status. A failed step leaves the run `stopped`, `stepsToRun` resumes from the first step that has not completed, and rollback is `clean` until the first step marked `reversible="false"`. |
+| `configManifest.ts` | What a promotion carries. The app collects one manifest per network: what it ships (token, exchange rules, requirements) plus what that network's accounts commit to on their own ledger (a release plan, fee tokens). It never holds ledger state the run itself writes, such as issuer flags or trust lines: the issuer-grant dry run owns those. `diffConfigManifests` compares them; see below. |
 | `issuerGrant.ts` | Dry run for a token issuer on a new network: DefaultRipple (and domain) before any holder line, holder lines, NoRipple repair, no-ripple fee lines, and the owner reserve each signer needs. It returns unsigned transactions and never sees a seed. |
 
 ## A run's history
@@ -19,6 +20,7 @@ PromotionStepRequested      instance port out     { stepId, requestId }
 PromotionStepCompleted      reply                 { requestId, evidenceHash, ledgerTxHashes }
 PromotionStepFailed         reply                 { requestId, reason }
 SkillClonePromoted          on the target network, one per app
+ConfigManifestAnchored      on the target network, once per manifest hash
 ProcessInstanceCompleted    the last step completed
 ProcessInstanceCancelled    an operator abandoned the run   { reason, cancelledBy }
 ```
@@ -29,6 +31,17 @@ Two ways out of an unfinished run:
 
 - **Resume** (`resumeRefusal`). This is refused while a step is still waiting for its reply. A step with no reply for 15 minutes (`PROMOTION_STEP_STALE_MS`) is treated as abandoned, for example because the operator's browser closed mid-step, so resume can ask for it again. Step handlers must be idempotent for this to be safe.
 - **Cancel** (`cancelRefusal`). Any open run can be cancelled, and a reason is required. Cancelling closes the run, so it no longer blocks a new promotion. Its history stays, including which irreversible steps already ran.
+
+## The config manifest
+
+A platform's configuration is not a set of memos on one account. Each entry in a manifest has a scope:
+
+- **shared**: must be equal on both networks (the token definition, the tokenomics parameters). The only thing that blocks a run is a shared entry present on both sides with different values (`differs`).
+- **network**: differs by design (addresses, fee-token issuers, the start date of a release plan). It is reported, never compared.
+
+An entry absent on one side is `missing-on-source`, `missing-on-target` or `missing-on-both`. Missing is not equal and not different: it is shown to the operator and does not block.
+
+The run anchors the target manifest on the target network as one `cappz:config:manifest` memo (`configManifestAnchor`): the network pair, the release that collected it, the hash of every entry and the hash of the shared entries. There are no values in the memo, and anyone can recompute both hashes from the same release and the same ledger. Anchoring again with the same hash sends nothing (`hasConfigManifestAnchor`).
 
 ## Targets
 
