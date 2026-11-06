@@ -7,7 +7,7 @@ import {
   registerPlatformCheck, registerPromotableApp, checksFor, runPromotionChecks, checksPassed, resetPromotionRegistry, type PromotionCheck,
 } from '../lib/network/promotion/promotionChecks';
 import { buildPreflightEvidence, preflightHash, verifyPreflightForStart } from '../lib/network/promotion/preflightEvidence';
-import { planIssuerGrant, LSF_DEFAULT_RIPPLE, TF_CLEAR_NO_RIPPLE, TF_SET_NO_RIPPLE, type LedgerAccountState } from '../lib/network/promotion/issuerGrant';
+import { planIssuerGrant, signingAuthority, LSF_DISABLE_MASTER, LSF_DEFAULT_RIPPLE, TF_CLEAR_NO_RIPPLE, TF_SET_NO_RIPPLE, type LedgerAccountState } from '../lib/network/promotion/issuerGrant';
 import { configManifestAnchor, configManifestHash, describeConfigDiff, diffConfigManifests, hasConfigManifestAnchor, type ConfigManifest } from '../lib/network/promotion/configManifest';
 
 const INST = "m/44'/144'/0'/cappz/admin/bpmn/NetworkPromotion/instances/0'";
@@ -199,5 +199,17 @@ describe('config manifest', () => {
     expect(a).toMatchObject({ kind: 'ConfigManifestAnchored', source: 'testnet', target: 'mainnet', entries: 3 });
     expect(hasConfigManifestAnchor([a], a)).toBe(true);
     expect(hasConfigManifestAnchor([{ ...a, manifest: 'other' }], a)).toBe(false);
+  });
+});
+
+describe('signing authority', () => {
+  const acct = { address: 'rAcct', activated: true, flags: 0, regularKey: 'rKey' };
+  it('the master key, unless disabled, or the named regular key; nothing else', () => {
+    expect(signingAuthority(acct, 'rAcct')).toBe('master');
+    expect(signingAuthority(acct, 'rKey')).toBe('regular-key');
+    expect(signingAuthority(acct, 'rOther')).toBeNull();
+    expect(signingAuthority({ ...acct, flags: LSF_DISABLE_MASTER }, 'rAcct')).toBeNull();
+    expect(signingAuthority({ ...acct, regularKey: undefined }, 'rKey')).toBeNull();
+    expect(signingAuthority({ ...acct, activated: false }, 'rKey')).toBeNull();
   });
 });

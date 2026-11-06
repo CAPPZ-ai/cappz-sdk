@@ -43,6 +43,10 @@ An entry absent on one side is `missing-on-source`, `missing-on-target` or `miss
 
 The run anchors the target manifest on the target network as one `cappz:config:manifest` memo (`configManifestAnchor`): the network pair, the release that collected it, the hash of every entry and the hash of the shared entries. There are no values in the memo, and anyone can recompute both hashes from the same release and the same ledger. Anchoring again with the same hash sends nothing (`hasConfigManifestAnchor`).
 
+## Who may sign
+
+A promotion's writes are signed for platform accounts (issuer, treasury, service). `signingAuthority(account, keyAddress)` says which ledger authority lets a key sign for an account: its own master key (unless `lsfDisableMaster`), or the regular key the account named with `SetRegularKey` (`readLedgerAccount` returns it as `regularKey`). A host can then let an operator sign with a key from their own identity (for example a passkey-wrapped key on their device) once the account has named that key, and refuse before asking the wallet when the ledger would reject the signature. The account's seed is used once, by its holder, to name the key, and can clear it again the same way.
+
 ## Targets
 
 A promotion writes to `testnet` (a rehearsal) or `mainnet`. Devnet is not a target, because it resets too often to rehearse on. Validate a run on testnet before you run it on mainnet.

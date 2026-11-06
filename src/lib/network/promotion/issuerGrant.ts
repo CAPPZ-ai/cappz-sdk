@@ -21,6 +21,8 @@ import type { XrplNetwork } from '../../xrpl/ledgerCheck';
 
 export const ASF_DEFAULT_RIPPLE = 8;
 export const LSF_DEFAULT_RIPPLE = 0x00800000;
+/** The account's master key may not sign (only its regular key or signer list can). */
+export const LSF_DISABLE_MASTER = 0x00100000;
 export const TF_SET_NO_RIPPLE = 0x00020000;
 export const TF_CLEAR_NO_RIPPLE = 0x00040000;
 /** Fee margin per planned transaction, in drops. */
@@ -45,6 +47,19 @@ export interface LedgerAccountState {
   balanceDrops: bigint;
   ownerCount: number;
   lines: LedgerLine[];
+  /** The account's regular key (XRPL SetRegularKey): another key the ledger accepts signatures from. 15.35.0. */
+  regularKey?: string;
+}
+
+/**
+ * Which ledger authority lets `keyAddress` sign for `account` (15.35.0): its own master key
+ * (unless disabled), or the regular key the account named. `null` means the ledger would
+ * reject the signature (tefBAD_AUTH), so nothing should be asked of the wallet.
+ */
+export function signingAuthority(account: Pick<LedgerAccountState, 'address' | 'activated' | 'flags' | 'regularKey'>, keyAddress: string): 'master' | 'regular-key' | null {
+  if (!account.activated) return null;
+  if (keyAddress === account.address) return account.flags & LSF_DISABLE_MASTER ? null : 'master';
+  return account.regularKey && account.regularKey === keyAddress ? 'regular-key' : null;
 }
 
 export interface IssuerGrantInput {
@@ -162,7 +177,7 @@ type Fetcher = typeof fetch;
 
 export async function readLedgerAccount(network: XrplNetwork, address: string, fetcher?: Fetcher): Promise<LedgerAccountState> {
   try {
-    const info = await xrplRpc<{ account_data: { Flags?: number; Domain?: string; Balance: string; OwnerCount?: number } }>(
+    const info = await xrplRpc<{ account_data: { Flags?: number; Domain?: string; Balance: string; OwnerCount?: number; RegularKey?: string } }>(
       network, 'account_info', { account: address, ledger_index: 'validated' }, fetcher,
     );
     const lines = await xrplRpc<{ lines: LedgerLine[] }>(network, 'account_lines', { account: address, ledger_index: 'validated' }, fetcher);
@@ -170,6 +185,7 @@ export async function readLedgerAccount(network: XrplNetwork, address: string, f
     return {
       address, activated: true, flags: d.Flags ?? 0, domainHex: d.Domain,
       balanceDrops: BigInt(d.Balance), ownerCount: d.OwnerCount ?? 0, lines: lines.lines ?? [],
+      ...(d.RegularKey ? { regularKey: d.RegularKey } : {}),
     };
   } catch (e) {
     if (e instanceof XrplRpcError && e.code === 'actNotFound') {
