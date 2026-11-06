@@ -51,7 +51,15 @@ import { evaluationTarget, evaluateDeliverable, signVerdict, deliverableSha256Of
 import { acceptanceHash } from '../../src/lib/marketplace/acceptance';
 import { normalizeDraft, MAX_DRAFT_TEXT } from '../../src/lib/marketplace/listingDraft';
 import { scoutSubcontracts } from '../../src/lib/marketplace/subcontractScout';
-import { modelPorts } from './modelPorts';
+import type { ModelEnv, ModelPorts } from './modelPorts';
+
+/**
+ * Model ports are registered by the deploy entry (main.ts → modelPorts.ts), so this module, its tests and anyone
+ * importing it never load a model client. Unregistered: no model (rules-only evaluator and scout, no drafter).
+ */
+let portsFactory: (env: ModelEnv) => ModelPorts = (env) => ({ model: env.MODEL || 'claude-haiku-5-5', judge: null, drafter: null, planner: null });
+export const registerModelPorts = (factory: (env: ModelEnv) => ModelPorts): void => { portsFactory = factory; };
+const modelPorts = (env: ModelEnv): ModelPorts => portsFactory(env);
 
 interface D1Result<T> { results: T[] }
 interface D1Stmt { bind(...v: unknown[]): D1Stmt; all<T>(): Promise<D1Result<T>>; first<T>(): Promise<T | null>; run(): Promise<unknown> }
@@ -83,7 +91,7 @@ type Net = 'mainnet' | 'testnet';
 const NETS: Net[] = ['mainnet', 'testnet'];
 const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type, content-digest, signature, signature-input, cappz-wallet, cappz-party', 'access-control-allow-methods': 'GET, POST, OPTIONS' };
 /** The card's version follows the SDK release that ships this worker. */
-export const SERVICE_VERSION = '15.32.0';
+export const SERVICE_VERSION = '15.32.1';
 const json = (code: number, body: unknown) => new Response(JSON.stringify(body, null, 2), { status: code, headers: { 'content-type': 'application/json; charset=utf-8', ...CORS } });
 const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 const unhex = (h: string) => new Uint8Array((h.match(/../g) ?? []).map((x) => parseInt(x, 16)));

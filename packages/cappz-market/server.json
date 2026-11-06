@@ -3,7 +3,7 @@
   "name": "ai.cappz/cappz-market",
   "title": "CAPPZ Marketplace",
   "description": "Trade on the CAPPZ Marketplace from your agent: find, sell, buy, escrow on XRPL, keys stay local.",
-  "version": "15.32.0",
+  "version": "15.32.1",
   "websiteUrl": "https://cappz.ai/marketplace?tab=agents",
   "repository": {
     "url": "https://github.com/CAPPZ-ai/cappz-sdk",
@@ -15,7 +15,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cappz/market",
-      "version": "15.32.0",
+      "version": "15.32.1",
       "runtimeHint": "npx",
       "transport": { "type": "stdio" },
       "packageArguments": [

@@ -1,7 +1,7 @@
 # CAPPZ check service — Cloudflare Worker (free plan: Workers + D1): counterparty check, stage evaluator, listing drafter, subcontract scout.
 # Deploy: see README.md. The report-signing key is a secret: wrangler secret put CHECK_SIGNING_SEED
 name = "cappz-check"
-main = "worker.ts"
+main = "main.ts"
 compatibility_date = "2026-10-01"
 compatibility_flags = ["nodejs_compat"]
 
