@@ -359,6 +359,16 @@ const SUBSTRATE_DOMAIN_EVENTS: Array<{
     types: ['ContentNotarized', 'NotarizationCancelled'],
   },
   {
+    // 15.33.0 — network promotion (lib/network/promotion): the admin requests,
+    // preflight evidence is recorded off the target network, each BPMN step is a
+    // port crossing (Requested → Completed | Failed by requestId), and a promoted
+    // skill clone is announced on the target network.
+    category: 'migration',
+    segment: 'network-promotion',
+    emitters: ['agent', 'wallet'],
+    types: ['NetworkPromotionRequested', 'PromotionPreflightRecorded', 'PromotionStepRequested', 'PromotionStepCompleted', 'PromotionStepFailed', 'SkillClonePromoted'],
+  },
+  {
     // v14-02-00 — fee-based pricing (fees/fee-charging.bpmn, fees/treasury-topup.bpmn,
     // auth/mcp-oauth-consent.bpmn). Balances are replayed from these TXs (AP-12);
     // ServiceInitiated/Paused/Resumed/Halted govern a replica's billable lifetime
