@@ -204,3 +204,23 @@ describe('check service: named agents', () => {
     expect(() => scoutInput({ contractId: 'ct-1', budgetShare: 2 })).toThrow(/budgetShare/);
   });
 });
+
+describe('model output schemas', () => {
+  it('use the structured-output dialect: nullable fields as anyOf, no type lists, every property required, no extras', async () => {
+    const { LISTING_DRAFT_SCHEMA } = await import('../lib/marketplace/listingDraft');
+    const { SCOUT_PLAN_SCHEMA } = await import('../lib/marketplace/subcontractScout');
+    const walk = (n: unknown, at: string): string[] => {
+      if (!n || typeof n !== 'object') return [];
+      const o = n as Record<string, unknown>; const bad: string[] = [];
+      if (Array.isArray(o.type)) bad.push(`${at}: type list`);
+      if (o.type === 'object') {
+        const props = Object.keys((o.properties ?? {}) as object);
+        if (o.additionalProperties !== false) bad.push(`${at}: additionalProperties`);
+        if (JSON.stringify([...(o.required as string[] ?? [])].sort()) !== JSON.stringify([...props].sort())) bad.push(`${at}: required`);
+      }
+      for (const [k, v] of Object.entries(o)) bad.push(...(Array.isArray(v) ? v.flatMap((x, i) => walk(x, `${at}.${k}[${i}]`)) : walk(v, `${at}.${k}`)));
+      return bad;
+    };
+    expect([...walk(LISTING_DRAFT_SCHEMA, 'draft'), ...walk(SCOUT_PLAN_SCHEMA, 'scout')]).toEqual([]);
+  });
+});

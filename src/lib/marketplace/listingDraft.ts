@@ -36,6 +36,10 @@ export interface RawDraft {
   questions: string[];
 }
 
+/** Nullable fields as anyOf (the structured-output schema dialect rejects an enum containing null under a type list). */
+const NUM_OR_NULL = { anyOf: [{ type: 'number' }, { type: 'null' }] } as const;
+const STR_OR_NULL = { anyOf: [{ type: 'string' }, { type: 'null' }] } as const;
+
 /** JSON schema for structured output (strict: every property required, no extras). */
 export const LISTING_DRAFT_SCHEMA = {
   type: 'object', additionalProperties: false,
@@ -46,17 +50,17 @@ export const LISTING_DRAFT_SCHEMA = {
     categoryId: { type: 'string', enum: CATEGORIES.map((c) => c.id) },
     kind: { type: 'string', enum: ['sale', 'rent', 'service', 'production-contract'] },
     unit: { type: 'string' },
-    quantity: { type: ['number', 'null'] },
-    price: { type: ['number', 'null'] },
-    currency: { type: ['string', 'null'], enum: ['XRP', 'CAPPZ', 'USD-tokenZ/1', 'USD', null] },
+    quantity: NUM_OR_NULL,
+    price: NUM_OR_NULL,
+    currency: { anyOf: [{ type: 'string', enum: ['XRP', 'CAPPZ', 'USD-tokenZ/1', 'USD'] }, { type: 'null' }] },
     description: { type: 'string' },
-    leadDays: { type: ['number', 'null'] },
-    neededInDays: { type: ['number', 'null'] },
-    region: { type: ['string', 'null'] },
+    leadDays: NUM_OR_NULL,
+    neededInDays: NUM_OR_NULL,
+    region: STR_OR_NULL,
     metered: { type: 'boolean' },
     acceptance: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['id', 'kind', 'values', 'min', 'max', 'question'], properties: {
       id: { type: 'string' }, kind: { type: 'string', enum: ['media-type', 'size', 'json', 'words', 'sections', 'contains', 'excludes', 'rubric'] },
-      values: { type: 'array', items: { type: 'string' } }, min: { type: ['number', 'null'] }, max: { type: ['number', 'null'] }, question: { type: ['string', 'null'] },
+      values: { type: 'array', items: { type: 'string' } }, min: NUM_OR_NULL, max: NUM_OR_NULL, question: STR_OR_NULL,
     } } },
     questions: { type: 'array', items: { type: 'string' } },
   },
