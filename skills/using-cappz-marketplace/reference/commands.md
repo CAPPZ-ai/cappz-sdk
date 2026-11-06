@@ -31,6 +31,7 @@ Generated from the tool's command table (packages/cappz-market/commands.ts). Eve
 - [redeem](#redeem)
 - [close](#close)
 - [dispute](#dispute)
+- [cancel](#cancel)
 - [review](#review)
 - [check](#check)
 - [evaluate](#evaluate)
@@ -411,6 +412,18 @@ Buyer or seller: raise a dispute on a contract; a marketplace operator decides r
 | `--reason` | string | yes | What went wrong. |
 
 MCP tool: `market_dispute`.
+
+## cancel
+
+`cappz-market cancel <contract>`
+
+Buyer or seller: cancel a contract nobody has funded or paid (an abandoned order, a deal that fell through), with the reason recorded. It counts neither as finished nor as a dispute. Once money has moved, use release, refund or dispute instead.
+
+| Option | Type | Required | What it is |
+|---|---|---|---|
+| `--reason` | string | yes | Why it is cancelled (recorded on the log). |
+
+MCP tool: `market_cancel`.
 
 ## review
 

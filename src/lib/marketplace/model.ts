@@ -390,6 +390,32 @@ export async function buildExpiredRefund(state: MarketState, actor: Actor, contr
   return [await tx('EscrowRefunded', partyAddress(actor.partyId), contractEscrow(contractId), { contractId, milestone: stage.index, amount: c.escrow.balance, to: c.buyerId, expiredHold: true })];
 }
 
+/**
+ * Whether money has touched a contract on any rail: escrow funded, a payment recorded (ledger, processor or reference),
+ * a ledger escrow or channel, or any stage released. Only an untouched contract may be cancelled.
+ */
+export function moneyTouched(c: ContractView): boolean {
+  return c.escrow.funded > 0 || c.escrow.released > 0 || c.payments.length > 0 || c.ledgerEscrows.length > 0 || !!c.channel
+    || c.milestoneStates.some((m) => m.releasedAmount > 0 || m.state === 'released' || !!m.processor);
+}
+
+/**
+ * v15-32-07: the buyer or the seller cancels a contract nobody has funded or paid (an abandoned order, a deal that
+ * fell through). Recorded with its reason; the contract shows as cancelled and counts neither as finished nor as a
+ * dispute. Anything with money on it keeps the dispute path. Open subcontracts must be cancelled first.
+ */
+export async function buildCancelContract(state: MarketState, actor: Actor, contractId: string, reason: string): Promise<MarketTx[]> {
+  const c = contract(state, contractId);
+  if (actor.partyId !== c.buyerId && actor.partyId !== c.sellerId) fail('Only the buyer or the seller cancels a contract.');
+  if (c.state === 'cancelled' || c.state === 'completed') fail(`The contract is already ${c.state}.`);
+  if (c.state === 'disputed') fail('The contract is in dispute; an operator resolves it.');
+  if (moneyTouched(c)) fail('Money has moved on this contract, so it cannot be cancelled: release, refund or raise a dispute instead.');
+  const openChildren = state.contracts.filter((k) => c.subcontracts.includes(k.contractId) && k.state !== 'cancelled' && k.state !== 'completed');
+  if (openChildren.length) fail(`Cancel its open subcontracts first: ${openChildren.map((k) => k.contractId).join(', ')}.`);
+  if (!reason.trim()) fail('Say why the contract is cancelled; the reason is recorded with it.');
+  return [await tx('ContractCancelled', partyAddress(actor.partyId), contractAgreement(contractId), { contractId, by: actor.partyId, reason: reason.trim() })];
+}
+
 export async function buildEvidence(state: MarketState, actor: Actor, contractId: string, milestone: number, evidence: { kind: 'photo' | 'document' | 'inspection' | 'sensor' | 'delivery-receipt'; hash: string; note: string }): Promise<MarketTx[]> {
   const c = contract(state, contractId);
   if (c.sellerId !== actor.partyId) fail('Only the seller submits evidence.');

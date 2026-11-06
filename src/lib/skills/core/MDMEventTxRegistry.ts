@@ -444,7 +444,7 @@ const SUBSTRATE_DOMAIN_EVENTS: Array<{
     emitters: ['agent', 'wallet', 'domain-agent'],
     types: [
       'SupplyRequested', 'SupplyOffered', 'SupplyOfferWithdrawn', 'SupplyAwarded', 'SupplyRequestClosed',
-      'ListingWithdrawn', 'InventoryAdjusted', 'OrderPlaced',
+      'ListingWithdrawn', 'InventoryAdjusted', 'OrderPlaced', 'ContractCancelled',
       'EscrowFunded', 'EscrowReleased', 'EscrowRefunded',
       'MilestoneEvidenced', 'DisputeRaised', 'DisputeResolved', 'ReviewPosted',
       'AssetTokenized', 'TokenTransferred', 'TokenRedeemed', 'AccessKeyDelivered',

@@ -917,6 +917,18 @@ export const COMMANDS: Command[] = [
     },
   },
   {
+    name: 'cancel',
+    summary: 'Buyer or seller: cancel a contract nobody has funded or paid (an abandoned order, a deal that fell through), with the reason recorded. It counts neither as finished nor as a dispute. Once money has moved, use release, refund or dispute instead.',
+    params: [
+      { name: 'contract', type: 'string', description: 'Contract id.', required: true, positional: true },
+      { name: 'reason', type: 'string', description: 'Why it is cancelled (recorded on the log).', required: true },
+    ],
+    async run(a, o) {
+      const mk = await loadMarket(o, true); const c = contractOf(mk, str(a, 'contract'));
+      return commitAndReport(mk, await M.buildCancelContract(mk.state, mk.actor(), c.contractId, str(a, 'reason')), { contractId: c.contractId, state: 'cancelled', next: 'Nothing was funded, so nothing moves. The contract shows as cancelled in cappz-market deals.' });
+    },
+  },
+  {
     name: 'review',
     summary: 'Rate the other side of a finished contract (1–5). Reputation is computed from finished contracts, never typed in.',
     params: [

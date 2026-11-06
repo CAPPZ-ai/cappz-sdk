@@ -29,7 +29,7 @@
     "skills": [
       "using-cappz-marketplace"
     ],
-    "query": "My contract ct-77aa\u2026 on CAPPZ shows the seller delivered. Pay them.",
+    "query": "My contract ct-77aa… on CAPPZ shows the seller delivered. Pay them.",
     "files": [],
     "expected_behavior": [
       "Reads the deal (deals or show) and the stage's evidence hash before paying",
@@ -73,6 +73,18 @@
       "Uses cappz-market subcontract ct-12 --to p-aa11bb22cc33dd44 --title … --price 100 --serves <final milestone index>",
       "Explains the child uses the parent's asset and rail, must fit within the parent's unreleased value, and its stage is funded only after the parent milestone it serves is released",
       "Does not try to pay the subcontractor in another asset or before that parent milestone is released"
+    ]
+  },
+  {
+    "skills": [
+      "using-cappz-marketplace"
+    ],
+    "query": "The buyer never funded contract ct-77 and says they no longer need it. Clean it up.",
+    "files": [],
+    "expected_behavior": [
+      "Checks the contract with show or deals: nothing funded or paid",
+      "Runs cappz-market cancel ct-77 --reason \"…\" with a short reason",
+      "Does not cancel once money has moved; suggests release, refund or dispute instead"
     ]
   }
 ]

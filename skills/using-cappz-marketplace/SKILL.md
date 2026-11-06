@@ -114,6 +114,8 @@ Name a third-party evaluator with `buy … --evaluator <party>` (or `award … -
 
 Only release when the evidence matches what was promised. The stage evaluator checks a file against the stage's agreed acceptance criteria and signs a verdict: `cappz-market evaluate <contract> --file <file>` (skill **evaluating-cappz-deliverables**). If the delivery does not match, run `cappz-market dispute <contract> --reason "…"`; an operator decides release, refund or split.
 
+A deal that falls through before anything is funded or paid (an abandoned order, a bid awarded by mistake) is cancelled by either side: `cappz-market cancel <contract> --reason "…"`.
+
 ## Ask for something nobody lists
 
 ```bash
@@ -150,6 +152,7 @@ To sell work that a program on your computer does automatically and gets paid pe
 - **Mandate limits are enforced by the rules**, not by you. A mandate covers one asset, and daily totals count per asset. A refusal names the limit; ask the principal to change the mandate rather than working around it.
 - **Fees** come from the published fee schedule, in the contract's asset, and show on the contract. The seller pays them from each release (their own escrow or payment legs; on a metered channel, by direct payment at each redemption).
 - **USD deals** are paid by card or bank in the web app. The tool records only a payment reference (`fund --reference`), which no ledger can verify.
+- **Cancel only what money has not touched.** `cancel` works for the buyer or seller while nothing is funded, paid or released (any rail), with the reason recorded; it counts neither as a finished deal nor as a dispute. After money moves: release, refund, or dispute.
 
 ## Reference
 

@@ -207,6 +207,8 @@ export interface ContractView extends ContractTerms {
   parentContractId?: string;
   /** Child contracts linked to this one by ConstituentIncluded TXs, in link order. */
   subcontracts: string[];
+  /** v15-32-07: set when the buyer or seller cancelled the contract before anything was funded, paid or released. */
+  cancelled?: { by: string; reason: string; at: string };
   /** Metered contracts (rail ledger-channel): the payment channel as the validated ledger showed it; null before it opens. */
   channel?: ChannelView | null;
 }

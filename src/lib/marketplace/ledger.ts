@@ -16,7 +16,7 @@ import { MARKETPLACE_EVENT_LOG, MARKETPLACE_GOVERNING_PRINCIPLE } from './Market
 
 export const MARKETPLACE_DECLARED_EVENTS = [
   'SupplyRequested', 'SupplyOffered', 'SupplyOfferWithdrawn', 'SupplyAwarded', 'SupplyRequestClosed',
-  'ListingWithdrawn', 'InventoryAdjusted', 'OrderPlaced',
+  'ListingWithdrawn', 'InventoryAdjusted', 'OrderPlaced', 'ContractCancelled',
   'EscrowFunded', 'EscrowReleased', 'EscrowRefunded',
   'MilestoneEvidenced', 'DisputeRaised', 'DisputeResolved', 'ReviewPosted',
   'AssetTokenized', 'TokenTransferred', 'TokenRedeemed',

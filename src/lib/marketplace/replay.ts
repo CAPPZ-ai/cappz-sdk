@@ -116,7 +116,7 @@ export function resolveMarket(txs: readonly MarketTxLike[]): MarketState {
         if (cls === 'fee-distribution') { const v = p<Omit<FeeDistribution, 'at' | 'by'>>(t); feeDistributions.push({ ...v, at: t.timestamp, by: t.sourceAddress }); break; }
         contractEvent(p<{ contractId: string }>(t).contractId, t); break;
       case 'EscrowFunded': case 'EscrowReleased': case 'EscrowRefunded': case 'MilestoneEvidenced': case 'MilestoneAffirmed':
-      case 'DeliveryApproved': case 'DeliveryRejected': case 'DisputeRaised': case 'DisputeResolved': case 'ReviewPosted':
+      case 'DeliveryApproved': case 'DeliveryRejected': case 'DisputeRaised': case 'DisputeResolved': case 'ReviewPosted': case 'ContractCancelled':
         contractEvent(p<{ contractId: string }>(t).contractId, t); break;
       case 'FeeCharged': { const id = p<{ contractId?: string }>(t).contractId; if (id) contractEvent(id, t); break; }
       // Latest declaration wins (events are replayed in order); earlier schedules stay on the ledger and in contracts formed under them.
@@ -194,6 +194,7 @@ export function contractView(c: ContractTerms, evs: readonly MarketTxLike[], lin
   const disputes: ContractView['disputes'] = []; const reviews: ContractView['reviews'] = []; const payments: ContractView['payments'] = [];
   const ledgerEscrows: ContractView['ledgerEscrows'] = []; const ledgerSettlements: ContractView['ledgerSettlements'] = []; const feeCharges: FeeCharge[] = [];
   let because = 'Contract formed'; let rejected = false;
+  let cancelled: ContractView['cancelled'];
   // Refunds of an expired 30-day hold reopen that stage for funding; they do not cancel the contract.
   let expiredRefunds = 0;
   // Metered deals (rail ledger-channel): one payment channel. Redemptions release part of it without completing the
@@ -278,6 +279,14 @@ export function contractView(c: ContractTerms, evs: readonly MarketTxLike[], lin
       case 'EscrowRefunded': if (ms[n] && ms[n].state !== 'released') ms[n].stage = null;
         if (v.expiredHold === true) expiredRefunds += Number(v.amount);
         escrow.refunded += Number(v.amount); if (v.txHash) ledgerSettlements.push({ milestone: n, kind: 'refund', txHash: String(v.txHash), network: String(v.network) }); because = `Refunded ${v.amount} to buyer${v.txHash ? ' (escrow cancelled on the ledger)' : ''}`; break;
+      case 'ContractCancelled': {
+        // v15-32-07: honoured only from the buyer or seller, while no money has touched the contract.
+        const by = String(v.by ?? '');
+        const party = by === c.buyerId || by === c.sellerId;
+        const untouched = escrow.funded === 0 && escrow.released === 0 && payments.length === 0 && ledgerEscrows.length === 0 && !channel && ms.every((m) => m.releasedAmount === 0 && m.state !== 'released' && !m.processor);
+        if (!cancelled && party && t.sourceAddress === partyAddress(by) && untouched && !disputes.some((d) => !d.resolved)) { cancelled = { by, reason: String(v.reason ?? ''), at: t.timestamp }; because = `Cancelled by ${by === c.buyerId ? 'the buyer' : 'the seller'}: ${cancelled.reason}`; }
+        break;
+      }
       case 'DisputeRaised': disputes.push({ n: disputes.length, by: String(v.by), reason: String(v.reason), resolved: null }); if (ms[n]) ms[n].state = 'disputed'; because = `Dispute raised: ${v.reason}`; break;
       case 'DisputeResolved': { const d = disputes[Number(v.dispute)]; if (d) d.resolved = { resolution: v.resolution as 'release' | 'refund' | 'split', note: String(v.note ?? '') }; if (ms[n] && ms[n].state === 'disputed') ms[n].state = v.resolution === 'refund' ? 'pending' : 'affirmed'; because = `Dispute resolved (${v.resolution})`; break; }
       case 'FeeCharged': feeCharges.push({ milestone: n, currency: v.currency as FeeCharge['currency'], feeUnits: Number(v.feeUnits), sheetId: String(v.sheetId), settlement: v.settlement as FeeCharge['settlement'], legs: (v.legs as FeeCharge['legs']) ?? [], owed: (v.owed as FeeCharge['owed']) ?? [], collector: (v.collector as FeeCharge['collector']) ?? null, ...(v.reference ? { reference: String(v.reference) } : {}) }); break;
@@ -288,7 +297,10 @@ export function contractView(c: ContractTerms, evs: readonly MarketTxLike[], lin
   const allReleased = ms.every((m) => m.state === 'released');
   const open = disputes.some((d) => !d.resolved);
   const staged = contractRail(c) === 'ledger-staged';
-  const state = allReleased ? 'completed' : open ? 'disputed' : (channelRail ? channel?.closed === true : escrow.refunded - expiredRefunds > 1e-9 && escrow.balance <= 0 && escrow.released < c.total.amount) ? 'cancelled' : escrow.funded === 0 && !staged ? 'awaiting-funding' : 'in-progress';
+  // Money always wins: a cancellation stands only if nothing was funded, paid or released by the end of the log
+  // (so an entry that sorts before a funding cannot cancel a contract that has money on it).
+  if (cancelled && (escrow.funded > 0 || escrow.released > 0 || payments.length > 0 || ledgerEscrows.length > 0 || channel || ms.some((m) => m.releasedAmount > 0 || m.state === 'released' || m.processor))) { cancelled = undefined; because = 'A cancellation was set aside: money has moved on this contract'; }
+  const state = cancelled ? 'cancelled' : allReleased ? 'completed' : open ? 'disputed' : (channelRail ? channel?.closed === true : escrow.refunded - expiredRefunds > 1e-9 && escrow.balance <= 0 && escrow.released < c.total.amount) ? 'cancelled' : escrow.funded === 0 && !staged ? 'awaiting-funding' : 'in-progress';
   const next = ms.find((m) => m.state !== 'released');
   const nextAction: ContractView['nextAction'] = state === 'completed' ? { by: null, action: reviews.length < 2 ? 'Leave a review' : 'Done' }
     : state === 'cancelled' ? { by: null, action: 'Cancelled' }
@@ -302,6 +314,6 @@ export function contractView(c: ContractTerms, evs: readonly MarketTxLike[], lin
     : next.state === 'evidenced' ? { by: 'buyer', action: `Review evidence and accept “${c.milestones[next.index].label}”${c.evaluatorId ? ` (or the evaluator ${c.evaluatorId} accepts)` : ''}` }
     : staged ? { by: 'buyer', action: `Pay ${formatMoney(amounts[next.index], c.total.currency)} on the ledger for “${c.milestones[next.index].label}” (seller net and fee legs)` }
     : { by: 'buyer', action: `Release ${amounts[next.index]} ${c.total.currency} for “${c.milestones[next.index].label}”` };
-  return { ...c, ledgerEscrows, ledgerSettlements, channel, state, because: state === 'awaiting-funding' && because === 'Contract formed' ? (channelRail ? 'Contract formed; the buyer opens a payment channel for the cap' : 'Contract formed; nothing funded yet') : staged && because === 'Contract formed' ? 'Contract formed; each stage is paid on the ledger when accepted' : because, escrow, milestoneStates: ms, disputes, reviews, payments, nextAction, feeCharges,
+  return { ...c, ...(cancelled ? { cancelled } : {}), ledgerEscrows, ledgerSettlements, channel, state, because: state === 'awaiting-funding' && because === 'Contract formed' ? (channelRail ? 'Contract formed; the buyer opens a payment channel for the cap' : 'Contract formed; nothing funded yet') : staged && because === 'Contract formed' ? 'Contract formed; each stage is paid on the ledger when accepted' : because, escrow, milestoneStates: ms, disputes, reviews, payments, nextAction, feeCharges,
     ...(links.parentContractId ? { parentContractId: links.parentContractId } : {}), subcontracts: links.subcontracts ?? [] };
 }

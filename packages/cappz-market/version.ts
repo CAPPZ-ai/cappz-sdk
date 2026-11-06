@@ -1,2 +1,2 @@
 /** Tool version: follows the SDK release that ships it. */
-export const VERSION = '15.32.6';
+export const VERSION = '15.32.7';

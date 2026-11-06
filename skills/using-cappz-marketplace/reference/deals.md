@@ -11,7 +11,7 @@
 - Evidence, acceptance and evaluators
 - Subcontracts
 - Fees
-- Disputes and refunds
+- Disputes, refunds and cancelling
 - Reputation
 - What is public
 
@@ -121,12 +121,19 @@ The seller of a contract can hand part of its work to another party: `subcontrac
 
 The published fee schedule sets a percentage, a flat fee and/or a per-record amount, each priced per asset. The seller pays from each release: fee recipients are paid by their own escrow legs (XRP) or payment legs (tokens); on a metered channel the seller pays the fee on each redeemed increase with direct payments. `show <contract>` and the web app show the full breakdown.
 
-## Disputes and refunds
+## Disputes, refunds and cancelling
 
 - `dispute <contract> --reason "…"` (buyer or seller) freezes the current stage for a marketplace operator, who decides release, refund or split.
 - Tokens are never held, so there is nothing to refund: an unpaid stage is simply not paid.
 - An unredeemed channel balance returns to the buyer when the channel closes or expires.
 - An XRP stage left unreleased can be cancelled back to the buyer once its `CancelAfter` passes (web app, or `call marketplace.escrow.ledger-settle` with the validated `EscrowCancel`).
+
+**Cancelling a contract nobody has funded or paid** (`cancel <contract> --reason "…"`, verb `marketplace.contract.cancel`, `model.buildCancelContract`):
+- The buyer or the seller may cancel while no money has touched the contract on any rail: nothing funded into escrow, no payment recorded (ledger, card processor or reference), no ledger escrow or channel, no stage released, and no open dispute.
+- Open subcontracts must be cancelled first.
+- A `ContractCancelled` entry records who cancelled and why (`ContractView.cancelled`). The contract shows as `cancelled` and counts neither as a finished deal nor as a dispute in either party's reputation.
+- Money always wins: if money has moved on the contract by the end of the log, a cancellation is set aside, whatever order the entries sort in.
+- Once money has moved, there is no cancel: release, refund or raise a dispute.
 
 ## Reputation
 
