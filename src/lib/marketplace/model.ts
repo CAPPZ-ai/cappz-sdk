@@ -18,7 +18,7 @@ import {
 import { subcontractAddress } from './MarketplacePaths';
 import type { MarketState } from './replay';
 import { subcontractGate } from './rules';
-import { MarketRuleError, checkMandate, classifyToken, committedKey, contractTotal, defaultMilestones, milestoneAmounts, milestonesFromPlan, splitIntoStages, validateMilestones, validateOffer, validateRequest, validateStageWindows } from './rules';
+import { MarketRuleError, checkAcceptance, checkMandate, classifyToken, committedKey, contractTotal, defaultMilestones, milestoneAmounts, milestonesFromPlan, splitIntoStages, validateMilestones, validateOffer, validateRequest, validateStageWindows } from './rules';
 import { HOLD_LIMIT_DAYS, MAX_STAGE_DAYS, holdUntil } from './stageMath';
 import type { ContractTerms, ContractView, ListingContent, MandateLimits, MilestoneTerm, Money, PartyProfile, SupplyOfferContent, SupplyRequestContent, TokenClassification, TokenContent } from './types';
 import { prepareTokenIssuance } from './xrpl';
@@ -185,6 +185,7 @@ export async function buildRequest(state: MarketState, actor: Actor, request: Su
   party(state, actor.partyId);
   if (request.buyerId !== actor.partyId) fail('You can only request as yourself.');
   validateRequest(request, actor.at);
+  checkAcceptance(request.acceptance);
   assertAsset(actor, request.maxPricePerUnit);
   const note = guard(state, actor, 'marketplace.request.post', request.maxPricePerUnit ? contractTotal(request.maxPricePerUnit, request.quantity) : null, request.categoryId);
   return [await tx('SupplyRequested', partyAddress(actor.partyId), requestAddress(request.requestId), { request, ...note })];
@@ -252,6 +253,8 @@ export interface SubcontractInput {
   milestones?: Array<Omit<MilestoneTerm, 'index'> & { servesMilestone: number }>;
   /** The parent seller (the child's buyer) may name an evaluator for the child too. */
   evaluatorId?: string;
+  /** v15-32-00: acceptance criteria for the single default stage (used when `milestones` is absent). */
+  acceptance?: MilestoneTerm['acceptance'];
 }
 
 /**
@@ -283,8 +286,9 @@ export async function buildSubcontract(state: MarketState, actor: Actor, parentC
   const remaining = Math.round((parent.total.amount - parent.escrow.released - committed) * 100) / 100;
   if (total.amount > remaining + 1e-9) fail(`The subcontract (${total.amount} ${total.currency}) exceeds what is left of the parent: ${remaining} ${total.currency} unreleased after open subcontracts.`);
   if (!input.milestones && input.serves === undefined) fail('Say which parent milestone the subcontract serves.');
-  const planned = input.milestones ?? [(() => { const pm = parent.milestones[input.serves!] ?? fail(`The parent has no milestone ${input.serves}.`); return { label: input.title.trim(), share: 1, dueBy: pm.dueBy, evidence: `Delivered to the main contractor for “${pm.label}”`, delivery: true, servesMilestone: pm.index }; })()];
+  const planned = input.milestones ?? [(() => { const pm = parent.milestones[input.serves!] ?? fail(`The parent has no milestone ${input.serves}.`); return { label: input.title.trim(), share: 1, dueBy: pm.dueBy, evidence: `Delivered to the main contractor for “${pm.label}”`, delivery: true, servesMilestone: pm.index, ...(input.acceptance ? { acceptance: input.acceptance } : {}) }; })()];
   const ms: MilestoneTerm[] = planned.map((m, i) => ({ ...m, index: i }));
+  ms.forEach((m) => checkAcceptance(m.acceptance));
   ms.forEach((m, i) => {
     if (!Number.isInteger(m.servesMilestone)) fail(`Stage ${i + 1} must name the parent milestone it serves.`);
     const pm = parent.milestones[m.servesMilestone!] ?? fail(`The parent has no milestone ${m.servesMilestone}.`);
@@ -383,7 +387,10 @@ export async function buildEvidence(state: MarketState, actor: Actor, contractId
   return [await tx('MilestoneEvidenced', partyAddress(actor.partyId), target, { contractId, milestone, ...evidence })];
 }
 
-export async function buildAffirm(state: MarketState, actor: Actor, contractId: string, milestone: number): Promise<MarketTx[]> {
+/** v15-32-00 `basis`: the signed verdict an acceptance rests on, cited by hash and its HD address (stageEvaluation.ts) — an explicit link, never inferred. */
+export interface AffirmBasis { verdictSha256: string; verdictAddress: string; verdict: 'pass' }
+
+export async function buildAffirm(state: MarketState, actor: Actor, contractId: string, milestone: number, basis?: AffirmBasis): Promise<MarketTx[]> {
   const c = contract(state, contractId);
   // The buyer, or the evaluator named at formation (an agent evaluator within its mandate). The buyer still pays.
   const role = c.buyerId === actor.partyId ? 'buyer' : c.evaluatorId && c.evaluatorId === actor.partyId ? 'evaluator' : null;
@@ -391,7 +398,8 @@ export async function buildAffirm(state: MarketState, actor: Actor, contractId: 
   if (c.milestoneStates[milestone]?.state !== 'evidenced') fail('There is no new evidence to accept for that milestone.');
   const note = role === 'evaluator' ? guard(state, actor, 'marketplace.milestone.affirm', null, c.categoryId) : {};
   const delivery = c.milestones[milestone].delivery;
-  return [await tx(delivery ? 'DeliveryApproved' : 'MilestoneAffirmed', partyAddress(actor.partyId), delivery ? contractDelivery(contractId, milestone) : contractMilestone(contractId, milestone), { contractId, milestone, by: actor.partyId, role, ...note })];
+  if (basis && (!/^[0-9a-f]{64}$/.test(basis.verdictSha256) || basis.verdict !== 'pass' || !basis.verdictAddress.startsWith(`${contractMilestone(contractId, milestone)}/verdicts/`))) fail('An acceptance can cite only a passing verdict on this milestone (its SHA-256 and address).');
+  return [await tx(delivery ? 'DeliveryApproved' : 'MilestoneAffirmed', partyAddress(actor.partyId), delivery ? contractDelivery(contractId, milestone) : contractMilestone(contractId, milestone), { contractId, milestone, by: actor.partyId, role, ...note, ...(basis ? { basis } : {}) })];
 }
 
 export async function buildRejectDelivery(state: MarketState, actor: Actor, contractId: string, milestone: number, reason: string): Promise<MarketTx[]> {

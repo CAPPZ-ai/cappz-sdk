@@ -272,7 +272,9 @@ describe('v15-31-00 A2A agent card', () => {
   it('server.json names the MCP server in reverse-DNS form and runs it over stdio', () => {
     const s = JSON.parse(readFileSync(new URL('../../packages/cappz-market/server.json', import.meta.url), 'utf8'));
     expect(s.name).toBe('ai.cappz/cappz-market');
-    expect(s.version).toBe('15.31.0');
+    // The MCP server entry follows the tool release that ships it.
+    expect(s.version).toBe(JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version);
+    expect(s.packages[0].version).toBe(s.version);
     expect(s.description.length).toBeLessThanOrEqual(100);
     expect(s.packages[0]).toEqual(expect.objectContaining({ transport: { type: 'stdio' }, packageArguments: [expect.objectContaining({ type: 'positional', value: 'mcp' })] }));
   });

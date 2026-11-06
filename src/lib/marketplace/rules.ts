@@ -10,10 +10,13 @@
 import { categoryOf } from './catalog';
 import { MAX_STAGE_DAYS, stageAmountsUnits } from './stageMath';
 import type { ContractView } from './types';
+import { acceptanceProblems, acceptanceHash, type AcceptanceSpec } from './acceptance';
 import type { MandateContent, MilestonePlan, MilestoneTerm, Money, SupplyOfferContent, SupplyRequestContent, TokenClassification } from './types';
 
 export class MarketRuleError extends Error {}
 const fail = (msg: string): never => { throw new MarketRuleError(msg); };
+/** v15-32-00: acceptance criteria, when given, must be usable — refused with every problem named. */
+export const checkAcceptance = (spec: AcceptanceSpec | undefined): void => { if (spec === undefined) return; const p = acceptanceProblems(spec); if (p.length) fail(`Acceptance criteria rejected: ${p.join(' ')}`); };
 const isDate = (s: string) => Number.isFinite(Date.parse(s));
 const days = (a: string, b: string) => Math.round((Date.parse(b) - Date.parse(a)) / 86_400_000);
 const addDays = (iso: string, n: number) => new Date(Date.parse(iso) + n * 86_400_000).toISOString().slice(0, 10);
@@ -36,6 +39,8 @@ export function validateOffer(o: SupplyOfferContent, r: SupplyRequestContent, no
   if (!(o.pricePerUnit.amount > 0)) fail('Price must be more than zero.');
   if (!isDate(o.deliveryDate)) fail('Choose a delivery date.');
   if (o.plan.newPlanting && !r.allowNewPlanting) fail('This buyer did not ask for new plantings.');
+  o.milestones.forEach((m) => checkAcceptance(m.acceptance));
+  if (r.acceptance) { const d = o.milestones.find((m) => m.delivery); if (!d?.acceptance || acceptanceHash(d.acceptance) !== acceptanceHash(r.acceptance)) warn.push('The request states acceptance criteria; this bid’s delivery milestone does not carry the same criteria, so an evaluator would have none agreed to check.'); }
   if (r.maxPricePerUnit && o.pricePerUnit.currency === r.maxPricePerUnit.currency && o.pricePerUnit.amount > r.maxPricePerUnit.amount) warn.push(`Price is above the buyer's limit (${r.maxPricePerUnit.amount} ${r.maxPricePerUnit.currency}/${r.unit}).`);
   if (o.quantity < r.quantity) warn.push(`Covers ${o.quantity} of ${r.quantity} ${r.unit} — the buyer can split the award.`);
   if (days(o.deliveryDate, r.neededBy) < 0) warn.push('Delivers after the needed-by date.');
@@ -80,6 +85,8 @@ export function splitIntoStages(ms: MilestoneTerm[], start: string): MilestoneTe
         evidence: last ? m.evidence : `Progress toward “${m.label}”: photos, receipts or a short report`,
         delivery: last && m.delivery,
         ...(m.servesMilestone !== undefined ? { servesMilestone: m.servesMilestone } : {}),
+        // The agreed criteria describe the finished milestone, so they stay on its last stage only.
+        ...(last && m.acceptance ? { acceptance: m.acceptance } : {}),
       });
     }
     prev = m.dueBy;
@@ -101,7 +108,8 @@ export function validateStageWindows(ms: MilestoneTerm[], start: string): void {
 export function milestonesFromPlan(plan: MilestonePlan[], start: string): MilestoneTerm[] {
   if (plan.some((m, i) => !(m.dueInDays >= 0) || (i > 0 && m.dueInDays < plan[i - 1].dueInDays))) fail('Milestone due days must start at 0 or later and never go backwards.');
   if (plan.some((m) => !m.label.trim())) fail('Give every milestone a name.');
-  const ms = plan.map((m, i) => ({ index: i, label: m.label.trim(), share: m.share, dueBy: addDays(start, m.dueInDays), evidence: m.evidence, delivery: m.delivery }));
+  plan.forEach((m) => checkAcceptance(m.acceptance));
+  const ms = plan.map((m, i) => ({ index: i, label: m.label.trim(), share: m.share, dueBy: addDays(start, m.dueInDays), evidence: m.evidence, delivery: m.delivery, ...(m.acceptance ? { acceptance: m.acceptance } : {}) }));
   validateMilestones(ms);
   if (ms.slice(0, -1).some((m) => m.delivery)) fail('Only the last milestone is the delivery.');
   return splitIntoStages(ms, start);

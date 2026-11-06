@@ -1,4 +1,4 @@
-# cappz-check — CAPPZ counterparty check on a Cloudflare Worker
+# cappz-check — CAPPZ check service on a Cloudflare Worker
 
 A paid agent (the `@cappz/sdk/paidAgent` protocol) that checks an XRPL address or a CAPPZ marketplace party before someone pays it, and returns a signed ok / warn / stop report. It costs 0.01 XRP per check, paid to the CAPPZ treasury. Agents use it with `cappz-market check`; the guide is [skills/checking-xrpl-counterparties](../../skills/checking-xrpl-counterparties/SKILL.md).
 
@@ -13,6 +13,31 @@ A paid agent (the `@cappz/sdk/paidAgent` protocol) that checks an XRPL address o
   - `GET /.well-known/agent-card.json` (and `/<net>/.well-known/agent-card.json`): the service's signed A2A agent card.
   - `GET /<net>/reputation/<partyId>` (free): a signed reputation attestation (`src/lib/marketplace/reputationAttestation.ts`).
 
+## Stage evaluator, listing drafter, subcontract scout (15.32.0)
+
+Three more paid agents on the same worker, each with its own card, price and pay-to address (`AGENT_PAY_TO_MAINNET` / `AGENT_PAY_TO_TESTNET`; the testnet address must be an activated testnet account):
+
+| Route | What | Price (`PRICE_*_XRP`) | Guide |
+|---|---|---|---|
+| `/<net>/evaluate` | A signed pass / fail / needs-human verdict on a delivered file against the milestone's agreed acceptance criteria. Body `{"input": {"contractId", "milestone"?, "acceptance"?}, "file": "<base64>"}`; the file is hashed, checked and not stored. Refusals (not the evidence, nothing to evaluate) cost nothing. | 0.05 XRP | [skills/evaluating-cappz-deliverables](../../skills/evaluating-cappz-deliverables/SKILL.md) |
+| `/<net>/draft` | Plain words → a checked `cappz-market sell` / `ask` command. Input `{"text", "intent"?, "region"?}`. | 0.02 XRP | [skills/drafting-cappz-listings](../../skills/drafting-cappz-listings/SKILL.md) |
+| `/<net>/scout` | Work packages, candidates and `subcontract` commands for a contract. Input `{"contractId", "budgetShare"?, "need"?}`. | 0.05 XRP | [skills/scouting-cappz-subcontractors](../../skills/scouting-cappz-subcontractors/SKILL.md) |
+
+Each answers `/agent`, `/health`, `POST /jobs`, `/jobs/<id>`, `/jobs/<id>/payments`, `/jobs/<id>/stages/0/result`, like the check. Jobs are partitioned per agent in D1 (`<network>:<agent>`).
+
+**Model.** Rubric questions, drafts and scout plans use `MODEL` (default `claude-haiku-5-5`, low effort, structured output) with the key as a secret: `wrangler secret put ANTHROPIC_API_KEY`. Larger models (`claude-sonnet-5-5`, `claude-opus-5-5`) also get the server-side refusal fallback. Without a key, the evaluator runs rule criteria only (rubric questions → needs-human), the scout plans one package per open milestone, and the drafter answers 503 before any job opens. Model answers never bind: `src/lib/marketplace/{stageEvaluation,listingDraft,subcontractScout}.ts` check every one.
+
+**Cost per job** (assumptions: `claude-haiku-5-5` at $0.10 / $0.50 per million input / output tokens; XRP at $2.50; Workers and D1 on the free plan):
+
+| Agent | Model tokens (worst case) | Model cost | Price | Price in USD |
+|---|---|---|---|---|
+| evaluate, rules only | none | $0 | 0.05 XRP | $0.125 |
+| evaluate with rubric | ≤ 10k in (40,000-character cap) + ~1k out | ≤ $0.0015 | 0.05 XRP | $0.125 |
+| draft | ~2.5k in + ~1k out | ~$0.0008 | 0.02 XRP | $0.05 |
+| scout | ~1k in + ~1k out | ~$0.0006 | 0.05 XRP | $0.125 |
+
+The stable instructions and catalog are prompt-cached. The price pays for the model, the ledger reads and the operator's time; prices are configuration (`PRICE_*_XRP`) and change only for jobs opened after the change.
+
 ## Deploy
 
 ```bash
@@ -21,6 +46,7 @@ wrangler d1 create cappz-check                       # put the database_id in wr
 wrangler d1 execute cappz-check --remote --file=schema.sql
 wrangler deploy
 python3 -c 'import secrets;print(secrets.token_hex(32))' | wrangler secret put CHECK_SIGNING_SEED
+wrangler secret put ANTHROPIC_API_KEY                # optional: rubric questions, drafts, scout plans
 curl https://<worker>/key                            # publish this publicKey in /.well-known/cappz-market.json
 ```
 

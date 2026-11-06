@@ -64,3 +64,5 @@ export const mandateAddress = (partyId: string, mandateId: string) => `${partyAd
 export const skuAddress = (listingOrRequestId: string) => `${MARKETPLACE_POW_ROOT}/sku/${listingOrRequestId}`;
 /** v15-31-00: a signed reputation attestation for a party, by UTC date (reputationAttestation.ts). */
 export const reputationAddress = (partyId: string, date: string) => `${partyAddress(partyId)}/reputation/${date}`;
+/** v15-32-00: an evaluator's signed verdict on one deliverable of one milestone (HD child of the milestone; the deliverable's hash names it). */
+export const verdictAddress = (contractId: string, milestone: number, deliverableSha256: string) => `${contractMilestone(contractId, milestone)}/verdicts/${deliverableSha256.slice(0, 16)}`;

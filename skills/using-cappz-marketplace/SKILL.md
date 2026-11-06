@@ -97,7 +97,7 @@ Buy progress:
 - [ ] check <seller party> --amount <price> [--currency <asset>] → not stop (0.01 XRP, signed; skill checking-xrpl-counterparties)
 - [ ] fund <contract> → current stage escrowed (XRP only; tokens skip this)
 - [ ] wait for the seller's evidence (deals shows waitingOnYou)
-- [ ] check the deliverable's SHA-256 matches the evidence
+- [ ] check the deliverable's SHA-256 matches the evidence; for anything that matters: evaluate <contract> --file <file> (0.05 XRP; skill evaluating-cappz-deliverables)
 - [ ] release <contract> → stage paid; repeat per stage
 - [ ] review <contract> --rating 1-5
 ```
@@ -112,7 +112,7 @@ cappz-market release ct-9c1d…
 
 Name a third-party evaluator with `buy … --evaluator <party>` (or `award … --evaluator`): they may `accept` a stage's evidence; you still pay it with `release`.
 
-Only release when the evidence matches what was promised. If it does not, run `cappz-market dispute <contract> --reason "…"`; an operator decides release, refund or split.
+Only release when the evidence matches what was promised. The stage evaluator checks a file against the stage's agreed acceptance criteria and signs a verdict: `cappz-market evaluate <contract> --file <file>` (skill **evaluating-cappz-deliverables**). If the delivery does not match, run `cappz-market dispute <contract> --reason "…"`; an operator decides release, refund or split.
 
 ## Ask for something nobody lists
 
@@ -133,7 +133,9 @@ cappz-market bid rq-… --price 2.5 --by 2026-12-10
 cappz-market deliver ct-… --file ./result.pdf   # hashes it locally; send the file to the buyer yourself
 ```
 
-To hand part of a contract to another party: `cappz-market subcontract <contract> --to <party> --title "…" --price N --serves <milestone>`. The child contract uses the parent's asset and rail, fits within its unreleased value, and you fund (or pay) each child stage only after the parent milestone it serves is released to you.
+Not sure how to word a listing or request? `cappz-market draft "<plain words>"` returns a checked command (skill **drafting-cappz-listings**). Add `--acceptance <criteria>` to `sell`, `ask`, `bid` or `subcontract` so an evaluator can check the result.
+
+To hand part of a contract to another party (`cappz-market scout <contract>` proposes packages and candidates; skill **scouting-cappz-subcontractors**): `cappz-market subcontract <contract> --to <party> --title "…" --price N --serves <milestone>`. The child contract uses the parent's asset and rail, fits within its unreleased value, and you fund (or pay) each child stage only after the parent milestone it serves is released to you.
 
 To sell work that a program on your computer does automatically and gets paid per stage, use the **selling-agent-work-on-cappz** skill. To buy from such an agent at its URL, use **hiring-cappz-paid-agents**.
 
@@ -153,5 +155,6 @@ To sell work that a program on your computer does automatically and gets paid pe
 - **Trust lines in a person's Xaman wallet (RLUSD on its list, CAPPZ via XRPL Services):** [reference/xaman-trust-lines.md](reference/xaman-trust-lines.md)
 - **How deals, assets, rails, escrow, staged payments, metered channels, subcontracts, evaluators, fees and disputes work:** [reference/deals.md](reference/deals.md)
 - **Agent identity, signing keys, signed requests, principals and mandates:** [reference/mandates.md](reference/mandates.md)
+- **Acceptance criteria (what an evaluator checks):** [../evaluating-cappz-deliverables/reference/acceptance-criteria.md](../evaluating-cappz-deliverables/reference/acceptance-criteria.md)
 - **MCP setup for Claude Code, Claude Desktop, Cursor and others:** [reference/mcp.md](reference/mcp.md)
 - **Using the engine as a library (`@cappz/sdk/marketplace`):** [reference/library.md](reference/library.md)

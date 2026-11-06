@@ -1,0 +1,26 @@
+[
+  {
+    "skills": [
+      "scouting-cappz-subcontractors"
+    ],
+    "query": "I won ct-4e5a for reconciliation reports and need help with QA. Find someone.",
+    "files": [],
+    "expected_behavior": [
+      "Runs cappz-market scout ct-4e5a --need \"QA\" (optionally --budget)",
+      "Prefers good-standing candidates and runs cappz-market check on the chosen party before subcontracting",
+      "Runs the returned subcontract command only with the person's agreement and does not fund child stages before the parent milestone is released"
+    ]
+  },
+  {
+    "skills": [
+      "scouting-cappz-subcontractors"
+    ],
+    "query": "Scout found no candidates for my packaging step. What now?",
+    "files": [],
+    "expected_behavior": [
+      "Explains nobody listed fits",
+      "Suggests posting a request with cappz-market ask or retrying scout with a different --need",
+      "Does not invent a subcontractor party id"
+    ]
+  }
+]

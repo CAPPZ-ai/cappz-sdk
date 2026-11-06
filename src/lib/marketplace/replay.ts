@@ -257,7 +257,7 @@ export function contractView(c: ContractTerms, evs: readonly MarketTxLike[], lin
         // An evaluator's acceptance counts only from the evaluator named in the terms, written from their own address.
         const byEvaluator = v.role === 'evaluator';
         if (byEvaluator && (!c.evaluatorId || v.by !== c.evaluatorId || t.sourceAddress !== partyAddress(c.evaluatorId))) break;
-        ms[n].state = 'affirmed'; because = byEvaluator ? `Evaluator ${c.evaluatorId} accepted “${c.milestones[n].label}”` : `Buyer accepted “${c.milestones[n].label}”`; } break;
+        ms[n].state = 'affirmed'; const basis = v.basis as { verdictSha256?: string } | undefined; because = (byEvaluator ? `Evaluator ${c.evaluatorId} accepted “${c.milestones[n].label}”` : `Buyer accepted “${c.milestones[n].label}”`) + (basis?.verdictSha256 ? ` on verdict ${String(basis.verdictSha256).slice(0, 12)}…` : ''); } break;
       case 'DeliveryRejected': if (ms[n]) { ms[n].state = 'pending'; rejected = true; because = `Buyer rejected delivery: ${v.reason ?? ''}`; } break;
       case 'EscrowReleased': if (v.txHash) ledgerSettlements.push({ milestone: n, kind: 'release', txHash: String(v.txHash), network: String(v.network) }); if (ms[n]) { ms[n].state = 'released'; ms[n].releasedAmount += Number(v.amount); escrow.released += Number(v.amount);
         // A stage paid directly on the ledger (rail ledger-staged) was never held: it is funded and released in one step.

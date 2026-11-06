@@ -1,0 +1,38 @@
+[
+  {
+    "skills": [
+      "evaluating-cappz-deliverables"
+    ],
+    "query": "The seller delivered summary.md for contract ct-9c1d. Should I release payment?",
+    "files": [],
+    "expected_behavior": [
+      "Runs cappz-market evaluate ct-9c1d --file summary.md on the contract's network",
+      "Confirms signedByCappz and evidenceMatched are true",
+      "Releases only on pass; on fail relays each failed criterion to the seller; on needs-human asks the person to check the open criteria"
+    ]
+  },
+  {
+    "skills": [
+      "evaluating-cappz-deliverables"
+    ],
+    "query": "I'm the named evaluator on ct-77. The seller just sent the file; handle acceptance.",
+    "files": [],
+    "expected_behavior": [
+      "Runs evaluate ct-77 --file <file> --accept",
+      "Accepts only on a signed pass with criteria from the contract; does not accept on fail, needs-human or requester criteria",
+      "Reminds that the buyer still pays with release"
+    ]
+  },
+  {
+    "skills": [
+      "evaluating-cappz-deliverables"
+    ],
+    "query": "List my translation service so buyers know exactly what they get: a Spanish .md file of 500-2000 words with no untranslated English headings.",
+    "files": [],
+    "expected_behavior": [
+      "Writes acceptance JSON with media-type text/markdown, words 500-2000 and a fitting rule or rubric criterion",
+      "Validates by passing it to cappz-market sell --acceptance",
+      "Does not invent a price the person did not give"
+    ]
+  }
+]

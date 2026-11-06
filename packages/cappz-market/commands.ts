@@ -36,6 +36,9 @@ import type { ContractView, Currency, ListingContent, PartyKind, PartyProfile, P
 import type { ListingView, MarketState, RequestView } from '../../src/lib/marketplace/replay';
 import { ToolError, agentKey, agentSigningKey, boxKey, ensureAgentKey, getDiscovery, homeDir, loadMarket, marketNetwork, marketUrl, newWallet, partyIdForAccount, recallSecret, rememberSecret, requireWallet, resetDemo, session, signIn, wallet, walletStatus, type GlobalOptions, type Market } from './context';
 import { agentRequestHook, signAgentRequest, type RequestSignHook } from '../../src/lib/marketplace/agentRequestAuth';
+import { acceptanceProblems, type AcceptanceSpec } from '../../src/lib/marketplace/acceptance';
+import { milestonePlanPresets } from '../../src/lib/marketplace/rules';
+import { verdictSha256, verdictSupportsAcceptance, verifyVerdict, type SignedVerdict } from '../../src/lib/marketplace/stageEvaluation';
 
 /**
  * RFC 9421 request signing with this party's declared key, when its profile declares the key kept on this computer
@@ -110,6 +113,17 @@ const currencyOf = (a: Record<string, unknown>): Currency => { const c = assetCo
 const date = (s: string) => { if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new ToolError(`Dates are YYYY-MM-DD, got “${s}”.`); return s; };
 const inDays = (from: string, d: number) => new Date(Date.parse(from) + d * 86_400_000).toISOString().slice(0, 10);
 const price = (m: { amount: number; currency: string }, unit: string) => `${m.amount} ${m.currency}/${unit}`;
+/** --acceptance: inline JSON or a file of it; checked before anything is published. */
+async function acceptanceArg(a: Record<string, unknown>): Promise<AcceptanceSpec | undefined> {
+  if (a.acceptance === undefined || a.acceptance === '') return undefined;
+  const raw = typeof a.acceptance === 'object' ? a.acceptance : (() => { const t = String(a.acceptance).trim(); return t.startsWith('{') ? t : null; })();
+  let spec: unknown;
+  try { spec = typeof raw === 'object' && raw !== null ? raw : JSON.parse(raw ?? await readFile(String(a.acceptance), 'utf8')); } catch { throw new ToolError('--acceptance is JSON ({"version": 1, "criteria": […]}) or a file of it.'); }
+  const p = acceptanceProblems(spec);
+  if (p.length) throw new ToolError(`Acceptance criteria rejected: ${p.join(' ')}`, 'Format: skills/evaluating-cappz-deliverables/reference/acceptance-criteria.md');
+  return spec as AcceptanceSpec;
+}
+const ACCEPTANCE_PARAM: Param = { name: 'acceptance', type: 'string', description: 'Acceptance criteria for the delivered result (JSON or a file): what an evaluator checks. Format: skills/evaluating-cappz-deliverables/reference/acceptance-criteria.md' };
 /** SHA-256 of raw bytes, hex — what deliverables and paid-agent results are checked against. */
 const sha256Bytes = async (b: Uint8Array) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', b as BufferSource)), (x) => x.toString(16).padStart(2, '0')).join('');
 
@@ -465,6 +479,7 @@ export const COMMANDS: Command[] = [
       { name: 'region', type: 'string', description: 'State code (default your profile’s).' },
       { name: 'endpoint', type: 'string', description: 'Paid agents: the https address buyers (and cappz-market hire) call.' },
       { name: 'metered', type: 'boolean', description: 'XRP only: sell metered use (unit = query, MB, call…; price per unit). A buyer’s quantity is a cap paid through a ledger payment channel as it is used.' },
+      ACCEPTANCE_PARAM,
     ],
     async run(a, o) {
       const mk = await loadMarket(o, true); const me = mk.state.parties.get(mk.partyId!);
@@ -481,6 +496,12 @@ export const COMMANDS: Command[] = [
         leadDays: num(a, 'leadDays', 7), attributes: a.endpoint ? { endpoint: String(a.endpoint) } : {},
         ...(a.metered ? { metered: true } : {}),
       };
+      const acceptance = await acceptanceArg(a);
+      if (acceptance) {
+        if (a.metered) throw new ToolError('A metered listing has no stages to accept; drop --acceptance or --metered.');
+        // Pay on delivery, with the criteria on the delivery milestone (copied into every order's terms).
+        listing.milestones = milestonePlanPresets(listing.leadDays)['on-delivery'].plan.map((m) => ({ ...m, acceptance }));
+      }
       const txs = await M.buildListing(mk.state, mk.actor(), listing);
       return commitAndReport(mk, txs, { listingId: listing.listingId, next: 'Buyers order with: cappz-market buy ' + listing.listingId + ' — watch with cappz-market deals' });
     },
@@ -498,6 +519,7 @@ export const COMMANDS: Command[] = [
       { name: 'currency', type: 'string', description: 'XRP (default), CAPPZ, USD-tokenZ/1 (RLUSD) or USD.' },
       { name: 'description', type: 'string', description: 'Specs, quality, format.' },
       { name: 'region', type: 'string', description: 'State code (default your profile’s).' },
+      ACCEPTANCE_PARAM,
     ],
     async run(a, o) {
       const mk = await loadMarket(o, true); const me = mk.state.parties.get(mk.partyId!);
@@ -509,6 +531,7 @@ export const COMMANDS: Command[] = [
         neededBy: date(str(a, 'by', inDays(mk.now(), 30))), region: checkRegion(str(a, 'region', me.region)), deliveryRadiusMiles: null,
         allowNewPlanting: rootCategoryOf(cat.id) === 'crops', contractType: 'spot', attributes: {},
       };
+      const acceptance = await acceptanceArg(a); if (acceptance) req.acceptance = acceptance;
       const txs = await M.buildRequest(mk.state, mk.actor(), req);
       return commitAndReport(mk, txs, { requestId: req.requestId, next: `Bids arrive on it: cappz-market show ${req.requestId}, then cappz-market award ${req.requestId} <bid id>` });
     },
@@ -522,6 +545,7 @@ export const COMMANDS: Command[] = [
       { name: 'quantity', type: 'number', description: 'Units you supply (default: all still needed).' },
       { name: 'by', type: 'string', description: 'Delivery date YYYY-MM-DD (default: the request’s date).' },
       { name: 'message', type: 'string', description: 'A note to the buyer.' },
+      { ...ACCEPTANCE_PARAM, description: 'Acceptance criteria for your delivery (default: the request’s own, when it states them).' },
     ],
     async run(a, o) {
       const mk = await loadMarket(o, true);
@@ -529,6 +553,8 @@ export const COMMANDS: Command[] = [
       const currency = r.maxPricePerUnit?.currency ?? currencyOf(a);
       const by = date(str(a, 'by', r.neededBy));
       const offer: SupplyOfferContent = { offerId: M.newId('of'), requestId: r.requestId, sellerId: mk.partyId!, pricePerUnit: money(num(a, 'price'), currency), quantity: num(a, 'quantity', r.quantity - r.awardedQuantity), deliveryDate: by, plan: { newPlanting: false, notes: '' }, milestones: defaultMilestones('spot', mk.now().slice(0, 10), by), message: str(a, 'message', '') };
+      const acceptance = (await acceptanceArg(a)) ?? r.acceptance;
+      if (acceptance) offer.milestones = offer.milestones.map((m) => (m.delivery ? { ...m, acceptance } : m));
       const out = await M.buildOffer(mk.state, mk.actor(), offer);
       return commitAndReport(mk, out.txs, { bidId: offer.offerId, warnings: out.warnings, next: 'If the buyer awards it, a contract appears in cappz-market deals.' });
     },
@@ -574,11 +600,12 @@ export const COMMANDS: Command[] = [
       { name: 'unit', type: 'string', description: 'Unit (default: the parent’s).' },
       { name: 'serves', type: 'number', description: 'The parent milestone index this work serves; the child stage is due with it.', required: true },
       { name: 'evaluator', type: 'string', description: 'A third party (never the subcontractor) who may accept the child’s milestones besides you.' },
+      ACCEPTANCE_PARAM,
     ],
     async run(a, o) {
       const mk = await loadMarket(o, true);
       const parent = contractOf(mk, str(a, 'parent'));
-      const r = await M.buildSubcontract(mk.state, mk.actor(), parent.contractId, { subcontractorId: str(a, 'to'), title: str(a, 'title'), quantity: num(a, 'quantity', 1), pricePerUnit: money(num(a, 'price'), parent.total.currency), serves: num(a, 'serves'), ...(a.unit ? { unit: str(a, 'unit') } : {}), ...(a.evaluator ? { evaluatorId: str(a, 'evaluator') } : {}) });
+      const r = await M.buildSubcontract(mk.state, mk.actor(), parent.contractId, { subcontractorId: str(a, 'to'), title: str(a, 'title'), quantity: num(a, 'quantity', 1), pricePerUnit: money(num(a, 'price'), parent.total.currency), serves: num(a, 'serves'), ...(a.unit ? { unit: str(a, 'unit') } : {}), ...(a.evaluator ? { evaluatorId: str(a, 'evaluator') } : {}), ...(await acceptanceArg(a).then((x) => (x ? { acceptance: x } : {}))) });
       return commitAndReport(mk, r.txs, { contractId: r.contractId, parent: parent.contractId, next: `When the parent milestone ${num(a, 'serves')} is released to you: cappz-market fund ${r.contractId}` });
     },
   },
@@ -669,12 +696,23 @@ export const COMMANDS: Command[] = [
   {
     name: 'accept',
     summary: 'Buyer or the contract’s evaluator: accept the current stage’s evidence without paying it (the buyer then releases or pays). An agent evaluator needs a mandate covering marketplace.milestone.affirm.',
-    params: [{ name: 'contract', type: 'string', description: 'Contract id.', required: true, positional: true }],
+    params: [{ name: 'contract', type: 'string', description: 'Contract id.', required: true, positional: true },
+      { name: 'verdict', type: 'string', description: 'A signed verdict file from cappz-market evaluate: the acceptance cites it (required to be a pass on the contract’s agreed criteria for the current evidence).' }],
     async run(a, o) {
       const mk = await loadMarket(o, true);
       const c = contractOf(mk, str(a, 'contract'));
       const stage = M.currentStage(c) ?? (() => { throw new ToolError('Every stage is paid.'); })();
-      return commitAndReport(mk, await M.buildAffirm(mk.state, mk.actor(), c.contractId, stage.index), { stage: c.milestones[stage.index].label, next: `The buyer pays it: cappz-market release ${c.contractId}` });
+      let basis: M.AffirmBasis | undefined;
+      if (a.verdict) {
+        const svc = (await getDiscovery()).services?.stageEvaluator;
+        if (!svc) throw new ToolError(`${marketUrl()} does not publish a stage evaluator key to check the verdict against.`);
+        const signed = JSON.parse(await readFile(str(a, 'verdict'), 'utf8')) as SignedVerdict;
+        const ok = verdictSupportsAcceptance(mk.state, signed, svc.publicKey);
+        if (!ok.ok) throw new ToolError(`Not accepting on this verdict: ${ok.because}`);
+        if (signed.verdict.contractId !== c.contractId || signed.verdict.milestone !== stage.index) throw new ToolError('The verdict is for another contract or stage.');
+        basis = { verdictSha256: verdictSha256(signed), verdictAddress: signed.verdict.address, verdict: 'pass' };
+      }
+      return commitAndReport(mk, await M.buildAffirm(mk.state, mk.actor(), c.contractId, stage.index, basis), { stage: c.milestones[stage.index].label, ...(basis ? { onVerdict: basis.verdictSha256 } : {}), next: `The buyer pays it: cappz-market release ${c.contractId}` });
     },
   },
   {
@@ -861,6 +899,88 @@ export const COMMANDS: Command[] = [
         signedByCappz: signatureOk, hashMatched: r.results?.[0]?.verified ?? false, paid: r.paid, report: file,
         next: !signatureOk ? 'Do not rely on this report: its signature does not match the published CAPPZ key.' : rep.verdict === 'stop' ? 'Do not pay: fix or ask about the stop reasons first.' : rep.verdict === 'warn' ? 'Paying is possible; weigh the warnings (or ask the person you act for).' : 'OK to proceed.',
       };
+    },
+  },
+  {
+    name: 'evaluate',
+    summary: 'Before you accept or pay a stage: CAPPZ checks the delivered file against the milestone’s agreed acceptance criteria and returns a signed pass / fail / needs-human verdict. The file goes to the evaluator only (not the public log) and is not kept. Costs 0.05 XRP from your wallet. The contract’s named evaluator can accept on a pass with --accept.',
+    money: true,
+    params: [
+      { name: 'contract', type: 'string', description: 'Contract id.', required: true, positional: true },
+      { name: 'file', type: 'string', description: 'The delivered file (its SHA-256 must be the seller’s published evidence).', required: true },
+      { name: 'milestone', type: 'number', description: 'Stage index (default: the stage with new evidence).' },
+      { ...ACCEPTANCE_PARAM, description: 'Only when the contract has no agreed criteria for the stage: your own (the verdict says they came from you).' },
+      { name: 'accept', type: 'boolean', description: 'You are the contract’s named evaluator: on a pass with the agreed criteria, accept the stage citing the verdict (the buyer still pays).' },
+    ],
+    async run(a, o) {
+      const svc = (await getDiscovery()).services?.stageEvaluator;
+      if (!svc) throw new ToolError(`${marketUrl()} does not offer a stage evaluator.`);
+      const net = marketNetwork(o);
+      if (!svc.networks.includes(net)) throw new ToolError(`The stage evaluator runs on ${svc.networks.join(' and ')}, not ${net}.`);
+      const bytes = new Uint8Array(await readFile(str(a, 'file')));
+      const acceptance = await acceptanceArg(a);
+      const base = `${svc.url}/${net}/${svc.path}`;
+      const body = JSON.stringify({ input: { contractId: str(a, 'contract'), ...(a.milestone !== undefined ? { milestone: num(a, 'milestone') } : {}), ...(acceptance ? { acceptance } : {}) }, file: Buffer.from(bytes).toString('base64') });
+      const res = await fetch(`${base}/jobs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+      const opened = await res.json().catch(() => ({})) as { job?: { jobId: string }; error?: string; notes?: string[] };
+      if (!res.ok || !opened.job) throw new ToolError(`The evaluator refused: ${opened.error ?? res.status}. Nothing was charged.`);
+      const r = await commandOf('hire')!.run({ url: base, job: opened.job.jobId, max: svc.priceXrp, out: join(homeDir(), 'verdicts'), timeout: 3 }, o) as { results?: Array<{ file: string; verified: boolean }>; paid?: string; next?: string };
+      const file = r.results?.[0]?.file;
+      if (!file) return { evaluated: false, ...r };
+      const signed = JSON.parse(await readFile(file, 'utf8')) as SignedVerdict;
+      const signedByCappz = verifyVerdict(signed, svc.publicKey);
+      const v = signed.verdict;
+      const out: Record<string, unknown> = { verdict: v.verdict.state, reasons: v.verdict.reasons, criteria: v.criteria.source, results: v.results.map((x) => ({ id: x.id, state: x.state, judgedBy: x.judgedBy, detail: x.detail })), evidenceMatched: v.evidence.matched, signedByCappz, hashMatched: r.results?.[0]?.verified ?? false, paid: r.paid, verdictFile: file, notes: opened.notes ?? [] };
+      if (!signedByCappz) return { ...out, next: 'Do not rely on this verdict: its signature does not match the published CAPPZ key.' };
+      if (a.accept) {
+        if (v.verdict.state !== 'pass') return { ...out, accepted: false, next: v.verdict.state === 'fail' ? 'Not accepted. Tell the seller what failed, or the buyer may dispute.' : 'Not accepted: a person must check the open criteria.' };
+        return { ...out, ...(await commandOf('accept')!.run({ contract: v.contractId, verdict: file }, o) as Record<string, unknown>) };
+      }
+      return { ...out, next: v.verdict.state === 'pass' ? `Criteria met. Buyer: cappz-market release ${v.contractId} (or the named evaluator: cappz-market accept ${v.contractId} --verdict ${file})` : v.verdict.state === 'fail' ? 'Criteria not met: ask the seller to fix and deliver again, or dispute.' : 'A person must check the open criteria before accepting.' };
+    },
+  },
+  {
+    name: 'draft',
+    summary: 'Describe what you sell or need in your own words; CAPPZ returns a checked draft and the exact sell or ask command to run (nothing is published). Costs 0.02 XRP from your wallet.',
+    money: true,
+    params: [
+      { name: 'text', type: 'string', description: 'What you sell or need, in plain words (price, quantity and dates only if you know them).', required: true, positional: true },
+      { name: 'wanted', type: 'boolean', description: 'Draft a request (ask) instead of a listing (sell).' },
+      { name: 'region', type: 'string', description: 'Your two-letter state code, if not in the text.' },
+    ],
+    async run(a, o) {
+      const svc = (await getDiscovery()).services?.listingDrafter;
+      if (!svc) throw new ToolError(`${marketUrl()} does not offer a listing drafter.`);
+      const net = marketNetwork(o);
+      if (!svc.networks.includes(net)) throw new ToolError(`The listing drafter runs on ${svc.networks.join(' and ')}, not ${net}.`);
+      const input = { text: str(a, 'text'), ...(a.wanted ? { intent: 'ask' } : {}), ...(a.region ? { region: checkRegion(str(a, 'region')) } : {}) };
+      const r = await commandOf('hire')!.run({ url: `${svc.url}/${net}/${svc.path}`, input: JSON.stringify(input), max: svc.priceXrp, out: join(homeDir(), 'drafts'), timeout: 3 }, o) as { results?: Array<{ file: string; verified: boolean }>; paid?: string };
+      const file = r.results?.[0]?.file;
+      if (!file) return { drafted: false, ...r };
+      const d = JSON.parse(await readFile(file, 'utf8')) as { draft: unknown; missing: string[]; questions: string[]; notes: string[]; command: string; argv: string[]; ready: boolean; model: string };
+      return { draft: d.draft, ready: d.ready, missing: d.missing, questions: d.questions, notes: d.notes, command: d.command, paid: r.paid, hashMatched: r.results?.[0]?.verified ?? false, next: d.ready ? `Review it, then run: ${d.command}` : `Fill in ${d.missing.join(', ')} and run the command.` };
+    },
+  },
+  {
+    name: 'scout',
+    summary: 'For a contract you sell on: which parts to subcontract, who on the market could do them (with reputation), and a ready subcontract command for each. Nothing is formed. Costs 0.05 XRP from your wallet.',
+    money: true,
+    params: [
+      { name: 'contract', type: 'string', description: 'The contract you sell on.', required: true, positional: true },
+      { name: 'budget', type: 'number', description: 'Most of what is left to subcontract, as a fraction (default 0.5).' },
+      { name: 'need', type: 'string', description: 'What you want help with, in a sentence.' },
+    ],
+    async run(a, o) {
+      const svc = (await getDiscovery()).services?.subcontractScout;
+      if (!svc) throw new ToolError(`${marketUrl()} does not offer a subcontract scout.`);
+      const net = marketNetwork(o);
+      if (!svc.networks.includes(net)) throw new ToolError(`The subcontract scout runs on ${svc.networks.join(' and ')}, not ${net}.`);
+      const input = { contractId: str(a, 'contract'), ...(a.budget !== undefined ? { budgetShare: num(a, 'budget') } : {}), ...(a.need ? { need: str(a, 'need') } : {}) };
+      const r = await commandOf('hire')!.run({ url: `${svc.url}/${net}/${svc.path}`, input: JSON.stringify(input), max: svc.priceXrp, out: join(homeDir(), 'scouts'), timeout: 3 }, o) as { results?: Array<{ file: string; verified: boolean }>; paid?: string };
+      const file = r.results?.[0]?.file;
+      if (!file) return { scouted: false, ...r };
+      const rep = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+      return { ...rep, paid: r.paid, hashMatched: r.results?.[0]?.verified ?? false, report: file, next: 'Check a candidate (cappz-market check <party>), then run its subcontract command.' };
     },
   },
   {

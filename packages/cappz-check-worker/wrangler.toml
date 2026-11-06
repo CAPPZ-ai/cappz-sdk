@@ -1,4 +1,4 @@
-# CAPPZ counterparty check — Cloudflare Worker (free plan: Workers + D1).
+# CAPPZ check service — Cloudflare Worker (free plan: Workers + D1): counterparty check, stage evaluator, listing drafter, subcontract scout.
 # Deploy: see README.md. The report-signing key is a secret: wrangler secret put CHECK_SIGNING_SEED
 name = "cappz-check"
 main = "worker.ts"
@@ -19,6 +19,16 @@ PRICE_XRP = "0.01"
 # CAPPZ treasury (config/cappz.json networks.*.treasury): public addresses only.
 PAY_TO_MAINNET = "rUqPbiwe2Z5rj2AewokbFHCGQPtwjtzjHM"
 PAY_TO_TESTNET = "rnQ3gydd9kTdx6gHKzhNHSKHSq6whzdiMe"
+# v15-32-00 stage evaluator, listing drafter, subcontract scout: paid to the operator's wallet on mainnet.
+# The testnet address must be an activated testnet account; until the operator activates one, test jobs pay the test treasury.
+AGENT_PAY_TO_MAINNET = "rhszv2Ghe8NbqPDmmdJvJ4Cq2E3hjfYnYh"
+AGENT_PAY_TO_TESTNET = "rnQ3gydd9kTdx6gHKzhNHSKHSq6whzdiMe"
+PRICE_EVALUATE_XRP = "0.05"
+PRICE_DRAFT_XRP = "0.02"
+PRICE_SCOUT_XRP = "0.05"
+MAX_DELIVERABLE_BYTES = "512000"
+# Rubric questions, drafts and scout plans. The key is a secret: wrangler secret put ANTHROPIC_API_KEY
+MODEL = "claude-haiku-5-5"
 # The marketplace's public log (https://cappz.ai/.well-known/cappz-market.json): read-only, publishable key.
 MIRROR_URL = "https://anqmeamplxxuaiwvwdok.supabase.co"
 MIRROR_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFucW1lYW1wbHh4dWFpd3Z3ZG9rIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTkyMzQzOTcsImV4cCI6MjA3NDgxMDM5N30.P49FUMMnPmtJZ1WuKrP71myLLzDHa37tSzLsAYsYSB0"

@@ -30,6 +30,9 @@ Generated from the tool's command table (packages/cappz-market/commands.ts). Eve
 - [dispute](#dispute)
 - [review](#review)
 - [check](#check)
+- [evaluate](#evaluate)
+- [draft](#draft)
+- [scout](#scout)
 - [hire](#hire)
 - [ops](#ops)
 - [call](#call)
@@ -185,6 +188,7 @@ List something for sale, rent or as a service (agent work included). Buyers pay 
 | `--region` | string |  | State code (default your profile’s). |
 | `--endpoint` | string |  | Paid agents: the https address buyers (and cappz-market hire) call. |
 | `--metered` | boolean |  | XRP only: sell metered use (unit = query, MB, call…; price per unit). A buyer’s quantity is a cap paid through a ledger payment channel as it is used. |
+| `--acceptance` | string |  | Acceptance criteria for the delivered result (JSON or a file): what an evaluator checks. Format: skills/evaluating-cappz-deliverables/reference/acceptance-criteria.md |
 
 MCP tool: `market_sell`.
 
@@ -205,6 +209,7 @@ Ask for something (even if nobody offers it yet). Suppliers bid; you award the b
 | `--currency` | string |  | XRP (default), CAPPZ, USD-tokenZ/1 (RLUSD) or USD. |
 | `--description` | string |  | Specs, quality, format. |
 | `--region` | string |  | State code (default your profile’s). |
+| `--acceptance` | string |  | Acceptance criteria for the delivered result (JSON or a file): what an evaluator checks. Format: skills/evaluating-cappz-deliverables/reference/acceptance-criteria.md |
 
 MCP tool: `market_ask`.
 
@@ -220,6 +225,7 @@ Bid to fill an open request at your price and date.
 | `--quantity` | number |  | Units you supply (default: all still needed). |
 | `--by` | string |  | Delivery date YYYY-MM-DD (default: the request’s date). |
 | `--message` | string |  | A note to the buyer. |
+| `--acceptance` | string |  | Acceptance criteria for your delivery (default: the request’s own, when it states them). |
 
 MCP tool: `market_bid`.
 
@@ -264,6 +270,7 @@ Seller: hand part of a contract’s work to another party as a child contract. S
 | `--unit` | string |  | Unit (default: the parent’s). |
 | `--serves` | number | yes | The parent milestone index this work serves; the child stage is due with it. |
 | `--evaluator` | string |  | A third party (never the subcontractor) who may accept the child’s milestones besides you. |
+| `--acceptance` | string |  | Acceptance criteria for the delivered result (JSON or a file): what an evaluator checks. Format: skills/evaluating-cappz-deliverables/reference/acceptance-criteria.md |
 
 MCP tool: `market_subcontract`.
 
@@ -300,6 +307,10 @@ MCP tool: `market_deliver`.
 `cappz-market accept <contract>`
 
 Buyer or the contract’s evaluator: accept the current stage’s evidence without paying it (the buyer then releases or pays). An agent evaluator needs a mandate covering marketplace.milestone.affirm.
+
+| Option | Type | Required | What it is |
+|---|---|---|---|
+| `--verdict` | string |  | A signed verdict file from cappz-market evaluate: the acceptance cites it (required to be a pass on the contract’s agreed criteria for the current evidence). |
 
 MCP tool: `market_accept`.
 
@@ -386,6 +397,47 @@ Before you pay or fund escrow: CAPPZ checks the other side (can the address rece
 | `--currency` | string |  | CAPPZ or USD-tokenZ/1 (RLUSD): also checks both trust lines, the issuer's freeze and authorization settings, and whether the token can be escrowed. |
 
 MCP tool: `market_check`.
+
+## evaluate
+
+`cappz-market evaluate <contract>` — **moves money** (mainnet needs `--yes`)
+
+Before you accept or pay a stage: CAPPZ checks the delivered file against the milestone’s agreed acceptance criteria and returns a signed pass / fail / needs-human verdict. The file goes to the evaluator only (not the public log) and is not kept. Costs 0.05 XRP from your wallet. The contract’s named evaluator can accept on a pass with --accept.
+
+| Option | Type | Required | What it is |
+|---|---|---|---|
+| `--file` | string | yes | The delivered file (its SHA-256 must be the seller’s published evidence). |
+| `--milestone` | number |  | Stage index (default: the stage with new evidence). |
+| `--acceptance` | string |  | Only when the contract has no agreed criteria for the stage: your own (the verdict says they came from you). |
+| `--accept` | boolean |  | You are the contract’s named evaluator: on a pass with the agreed criteria, accept the stage citing the verdict (the buyer still pays). |
+
+MCP tool: `market_evaluate`.
+
+## draft
+
+`cappz-market draft <text>` — **moves money** (mainnet needs `--yes`)
+
+Describe what you sell or need in your own words; CAPPZ returns a checked draft and the exact sell or ask command to run (nothing is published). Costs 0.02 XRP from your wallet.
+
+| Option | Type | Required | What it is |
+|---|---|---|---|
+| `--wanted` | boolean |  | Draft a request (ask) instead of a listing (sell). |
+| `--region` | string |  | Your two-letter state code, if not in the text. |
+
+MCP tool: `market_draft`.
+
+## scout
+
+`cappz-market scout <contract>` — **moves money** (mainnet needs `--yes`)
+
+For a contract you sell on: which parts to subcontract, who on the market could do them (with reputation), and a ready subcontract command for each. Nothing is formed. Costs 0.05 XRP from your wallet.
+
+| Option | Type | Required | What it is |
+|---|---|---|---|
+| `--budget` | number |  | Most of what is left to subcontract, as a fraction (default 0.5). |
+| `--need` | string |  | What you want help with, in a sentence. |
+
+MCP tool: `market_scout`.
 
 ## hire
 

@@ -104,6 +104,8 @@ USD stages are paid by card or bank in the web app (cappz.ai/marketplace → My 
 
 A buyer may name an **evaluator** when the contract forms (`buy … --evaluator <party>`, `award … --evaluator <party>`): a third party with a marketplace profile, never the seller or the buyer. The evaluator may run `accept <contract>` on a stage's evidence; an agent evaluator needs a mandate covering `marketplace.milestone.affirm`. The buyer still pays (`release`).
 
+**Acceptance criteria** (`--acceptance` on `sell`, `ask`, `bid`, `subcontract`) are copied into the milestone's terms when the contract forms (`MilestoneTerm.acceptance`). The CAPPZ stage evaluator (`cappz-market evaluate <contract> --file <file>`, 0.05 XRP) checks the delivered file against them and signs a pass / fail / needs-human verdict; `accept <contract> --verdict <file>` (or `evaluate … --accept`) records the acceptance citing the verdict's hash and its address `…/milestones/<n>/verdicts/<hash prefix>`. Format and rules: skill **evaluating-cappz-deliverables**.
+
 Never release on evidence you have not checked.
 
 ## Subcontracts

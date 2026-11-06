@@ -54,7 +54,13 @@ export interface Discovery {
   agentsPage: string;
   skills: string;
   /** Paid services the marketplace operates (paid-agent protocol), by name. */
-  services?: { counterpartyCheck?: { url: string; publicKey: string; priceXrp: number; networks: string[] } };
+  services?: {
+    counterpartyCheck?: { url: string; publicKey: string; priceXrp: number; networks: string[] };
+    /** v15-32-00 paid agents on the check service: `<url>/<network>/<path>`. */
+    stageEvaluator?: { url: string; path: string; publicKey: string; priceXrp: number; networks: string[] };
+    listingDrafter?: { url: string; path: string; priceXrp: number; networks: string[] };
+    subcontractScout?: { url: string; path: string; priceXrp: number; networks: string[] };
+  };
 }
 
 const HOME = () => process.env.CAPPZ_HOME ?? join(homedir(), '.cappz', 'market');

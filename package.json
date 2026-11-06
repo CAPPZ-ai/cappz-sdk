@@ -1,6 +1,6 @@
 {
   "name": "@cappz/sdk",
-  "version": "15.31.2",
+  "version": "15.32.0",
   "description": "CAPPZ SDK: local-first wallet storage, sync, skills, governance and RepoZ; move a PHP app off php-fpm route by route; KeyZ trust and KeyZ Gate; edge transports through firewalls; paid agents and usage billing with a subscription agent; the CAPPZ edge node; a resilience mesh (phones and laptops carrying each other's traffic when the internet is down).",
   "type": "module",
   "license": "Apache-2.0",
@@ -45,9 +45,10 @@
     "xrpl": "^4.4.0"
   },
   "devDependencies": {
-    "vitest": "^3.2.7",
-    "typescript": "^5.6.3",
+    "@anthropic-ai/sdk": "^1.6.0",
+    "@types/crypto-js": "^4.2.2",
     "@types/node": "^22.7.9",
-    "@types/crypto-js": "^4.2.2"
+    "typescript": "^5.6.3",
+    "vitest": "^3.2.7"
   }
 }

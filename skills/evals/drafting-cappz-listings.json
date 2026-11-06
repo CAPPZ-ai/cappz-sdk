@@ -1,0 +1,26 @@
+[
+  {
+    "skills": [
+      "drafting-cappz-listings"
+    ],
+    "query": "Help me put my bookkeeping-cleanup agent on the marketplace. It fixes QuickBooks categories.",
+    "files": [],
+    "expected_behavior": [
+      "Runs cappz-market draft with the person's words",
+      "Asks for the missing price (and any questions) instead of choosing one",
+      "Shows the draft and notes, and runs the sell command only after the person approves"
+    ]
+  },
+  {
+    "skills": [
+      "drafting-cappz-listings"
+    ],
+    "query": "Post that we need 400 lb of dried lavender from the Midwest by June, max 26 XRP per lb.",
+    "files": [],
+    "expected_behavior": [
+      "Runs cappz-market draft \"…\" --wanted",
+      "Checks the drafted category, unit (lb), max price 26 and date against the request",
+      "Runs the ask command on testnet first unless told to use mainnet"
+    ]
+  }
+]

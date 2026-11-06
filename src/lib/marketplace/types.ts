@@ -14,6 +14,7 @@ import type { RoyaltyLeg } from '../skills/royaltyRouting';
 import type { Currency, RailId } from './paymentAssets';
 import type { KeyDeclaration, KeyRevocation } from '../identity/keyDeclaration';
 import type { PrincipalCredentialRef } from './principalCredential';
+import type { AcceptanceSpec } from './acceptance';
 
 export type PartyKind = 'person' | 'organization' | 'agent';
 export type PartyRole = 'buyer' | 'seller' | 'farmer' | 'supplier' | 'service-provider' | 'equipment-dealer' | 'processor';
@@ -111,6 +112,8 @@ export interface SupplyRequestContent {
   contractType: 'spot' | 'production-contract';
   recurring?: { every: 'week' | 'month'; count: number };
   attributes: Record<string, string>;
+  /** v15-32-00: what the delivery must satisfy (acceptance.ts); bids carry it on their delivery milestone. */
+  acceptance?: AcceptanceSpec;
 }
 
 export interface MilestoneTerm {
@@ -125,6 +128,8 @@ export interface MilestoneTerm {
   delivery: boolean;
   /** Subcontracts only: the parent contract's milestone index this stage serves (explicit, never inferred from labels or dates). It is funded only after that parent milestone is released. */
   servesMilestone?: number;
+  /** v15-32-00: acceptance criteria agreed for this milestone (acceptance.ts) — what an evaluator checks; `evidence` stays display text. */
+  acceptance?: AcceptanceSpec;
 }
 
 /** A milestone in a listing's payment schedule; due dates are counted from the day the order is placed. */
@@ -134,6 +139,8 @@ export interface MilestonePlan {
   dueInDays: number;
   evidence: string;
   delivery: boolean;
+  /** v15-32-00: acceptance criteria copied into the order's milestone. */
+  acceptance?: AcceptanceSpec;
 }
 
 export interface SupplyOfferContent {
