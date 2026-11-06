@@ -37,6 +37,7 @@ export * from '../lib/marketplace/acceptance';
 export * from '../lib/marketplace/stageEvaluation';
 export * from '../lib/marketplace/listingDraft';
 export * from '../lib/marketplace/subcontractScout';
+export * from '../lib/marketplace/sellerListings';
 export * from '../lib/marketplace/demo';
 export * as model from '../lib/marketplace/model';
 export * as fees from '../lib/marketplace/fees';

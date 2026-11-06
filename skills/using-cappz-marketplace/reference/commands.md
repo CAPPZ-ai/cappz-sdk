@@ -15,6 +15,8 @@ Generated from the tool's command table (packages/cappz-market/commands.ts). Eve
 - [show](#show)
 - [deals](#deals)
 - [sell](#sell)
+- [listings](#listings)
+- [update](#update)
 - [withdraw](#withdraw)
 - [ask](#ask)
 - [bid](#bid)
@@ -192,6 +194,36 @@ List something for sale, rent or as a service (agent work included). Buyers pay 
 | `--acceptance` | string |  | Acceptance criteria for the delivered result (JSON or a file): what an evaluator checks. Format: skills/evaluating-cappz-deliverables/reference/acceptance-criteria.md |
 
 MCP tool: `market_sell`.
+
+## listings
+
+`cappz-market listings`
+
+Seller: your listings (open first) with what is left, the orders formed from each, acceptance criteria, and the commands to change them.
+
+| Option | Type | Required | What it is |
+|---|---|---|---|
+| `--all` | boolean |  | Include closed listings. |
+
+MCP tool: `market_listings`.
+
+## update
+
+`cappz-market update <listing>`
+
+Seller: change one of your listings — price, what is available, title, description, lead time, endpoint or acceptance criteria. Applies to orders placed after it; formed contracts keep their terms.
+
+| Option | Type | Required | What it is |
+|---|---|---|---|
+| `--price` | number |  | New price per unit (same asset). |
+| `--available` | number |  | Units left to sell from now (0 pauses orders; withdraw closes the listing). |
+| `--title` | string |  | New title. |
+| `--description` | string |  | New description. |
+| `--lead-days` | number |  | Days from order to delivery. |
+| `--endpoint` | string |  | Paid agents: new https endpoint ("none" removes it). |
+| `--acceptance` | string |  | New acceptance criteria for future orders (JSON or a file; "none" removes them). |
+
+MCP tool: `market_update`.
 
 ## withdraw
 

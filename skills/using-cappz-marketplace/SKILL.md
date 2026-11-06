@@ -131,6 +131,8 @@ cappz-market sell --title "Geocoding API" --category agents --price 0.001 --unit
 cappz-market find --wanted --category agents   # includes youCouldFill
 cappz-market bid rq-… --price 2.5 --by 2026-12-10
 cappz-market deliver ct-… --file ./result.pdf   # hashes it locally; send the file to the buyer yourself
+cappz-market listings                           # your listings: what is left, orders, ready commands
+cappz-market update l-… --price 4 --available 50   # change a listing for future orders (skill managing-cappz-listings)
 cappz-market withdraw l-…                       # close a listing (formed contracts are unaffected)
 ```
 

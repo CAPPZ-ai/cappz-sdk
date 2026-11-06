@@ -39,6 +39,7 @@ import { agentRequestHook, signAgentRequest, type RequestSignHook } from '../../
 import { acceptanceProblems, type AcceptanceSpec } from '../../src/lib/marketplace/acceptance';
 import { milestonePlanPresets } from '../../src/lib/marketplace/rules';
 import { verdictSha256, verdictSupportsAcceptance, verifyVerdict, type SignedVerdict } from '../../src/lib/marketplace/stageEvaluation';
+import { amendListing, sellerListings } from '../../src/lib/marketplace/sellerListings';
 
 /**
  * RFC 9421 request signing with this party's declared key, when its profile declares the key kept on this computer
@@ -504,6 +505,51 @@ export const COMMANDS: Command[] = [
       }
       const txs = await M.buildListing(mk.state, mk.actor(), listing);
       return commitAndReport(mk, txs, { listingId: listing.listingId, next: 'Buyers order with: cappz-market buy ' + listing.listingId + ' — watch with cappz-market deals' });
+    },
+  },
+  {
+    name: 'listings',
+    summary: 'Seller: your listings (open first) with what is left, the orders formed from each, acceptance criteria, and the commands to change them.',
+    params: [{ name: 'all', type: 'boolean', description: 'Include closed listings.' }],
+    async run(a, o) {
+      const mk = await loadMarket(o, true);
+      if (!mk.partyId) throw new ToolError('Sign in first.', 'cappz-market login');
+      const rows = sellerListings(mk.state, mk.partyId).filter((r) => a.all || r.state !== 'closed');
+      return {
+        listings: rows.map((r) => ({ ...listingCard(mk.state, r.listing), state: r.state, ...(r.closed ? { closed: r.closed } : {}), orders: r.orders, contracts: r.contractIds.slice(0, 5), acceptance: r.acceptance ? r.acceptance.criteria.map((c) => c.id) : null,
+          ...(r.state === 'closed' ? {} : { change: `cappz-market update ${r.listing.listingId} --price … --available …`, close: `cappz-market withdraw ${r.listing.listingId}` }) })),
+        next: rows.length ? 'Change one: cappz-market update <listing> [--price --available --title --description --leadDays --endpoint --acceptance]' : 'No listings yet: cappz-market sell (or cappz-market draft "…" to word one).',
+      };
+    },
+  },
+  {
+    name: 'update',
+    summary: 'Seller: change one of your listings — price, what is available, title, description, lead time, endpoint or acceptance criteria. Applies to orders placed after it; formed contracts keep their terms.',
+    params: [
+      { name: 'listing', type: 'string', description: 'Your listing id (cappz-market listings).', required: true, positional: true },
+      { name: 'price', type: 'number', description: 'New price per unit (same asset).' },
+      { name: 'available', type: 'number', description: 'Units left to sell from now (0 pauses orders; withdraw closes the listing).' },
+      { name: 'title', type: 'string', description: 'New title.' },
+      { name: 'description', type: 'string', description: 'New description.' },
+      { name: 'leadDays', type: 'number', description: 'Days from order to delivery.' },
+      { name: 'endpoint', type: 'string', description: 'Paid agents: new https endpoint ("none" removes it).' },
+      { ...ACCEPTANCE_PARAM, description: 'New acceptance criteria for future orders (JSON or a file; "none" removes them).' },
+    ],
+    async run(a, o) {
+      const mk = await loadMarket(o, true);
+      const l = mk.state.listings.find((x) => x.listingId === str(a, 'listing'));
+      if (!l) throw new ToolError('No such listing on this market.', 'cappz-market listings --all');
+      if (l.sellerId !== mk.partyId) throw new ToolError('That listing is not yours.');
+      const removeAcceptance = a.acceptance === 'none';
+      const changes = {
+        ...(a.title !== undefined ? { title: str(a, 'title') } : {}), ...(a.description !== undefined ? { description: str(a, 'description') } : {}),
+        ...(a.price !== undefined ? { price: num(a, 'price') } : {}), ...(a.available !== undefined ? { available: num(a, 'available') } : {}),
+        ...(a.leadDays !== undefined ? { leadDays: num(a, 'leadDays') } : {}), ...(a.endpoint !== undefined ? { endpoint: str(a, 'endpoint') === 'none' ? null : str(a, 'endpoint') } : {}),
+        ...(removeAcceptance ? { acceptance: null } : a.acceptance !== undefined ? { acceptance: (await acceptanceArg(a))! } : {}),
+      };
+      if (!Object.keys(changes).length) throw new ToolError('Nothing to change.', `cappz-market update ${l.listingId} --price … (see --help)`);
+      let next; try { next = amendListing(l, changes); } catch (e) { throw new ToolError((e as Error).message); }
+      return commitAndReport(mk, await M.buildListing(mk.state, mk.actor(), next), { listingId: l.listingId, changed: Object.keys(changes), next: 'Applies to new orders. See it: cappz-market listings' });
     },
   },
   {

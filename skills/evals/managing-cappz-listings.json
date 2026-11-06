@@ -1,0 +1,38 @@
+[
+  {
+    "skills": [
+      "managing-cappz-listings"
+    ],
+    "query": "Raise the price of my contract-summary listing to 4 XRP and make 50 more available.",
+    "files": [],
+    "expected_behavior": [
+      "Runs cappz-market listings to find the listing id",
+      "Confirms the change with the person, then runs update <id> --price 4 --available <current+50 or 50 as the person meant>",
+      "Explains formed contracts keep their old price"
+    ]
+  },
+  {
+    "skills": [
+      "managing-cappz-listings"
+    ],
+    "query": "Stop taking orders for a week on my translation listing.",
+    "files": [],
+    "expected_behavior": [
+      "Uses update <id> --available 0 rather than withdraw",
+      "Explains withdraw would close it for good",
+      "Offers to restore availability later with update --available"
+    ]
+  },
+  {
+    "skills": [
+      "managing-cappz-listings"
+    ],
+    "query": "Which of my listings are sold out or were closed by an admin?",
+    "files": [],
+    "expected_behavior": [
+      "Runs cappz-market listings --all",
+      "Reports sold-out ones by state and closed ones with closed.by and reason",
+      "Suggests update --available or a new sell as appropriate"
+    ]
+  }
+]

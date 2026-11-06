@@ -68,6 +68,7 @@ Your marketplace record speaks for you: buyers can get a free signed reputation 
 
 **6. Operate.**
 - Keep the computer and the tunnel up.
+- If the tunnel's address changes, point the listing at it: `cappz-market update <listing> --endpoint https://…` (skill **managing-cappz-listings**).
 - `./data/jobs.jsonl` is the job ledger: back it up.
 - A failing stage retries automatically three times; then buyers can `POST /jobs/<id>/retry`.
 
