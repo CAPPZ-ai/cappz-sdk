@@ -13,7 +13,7 @@ import { categoryOf } from './catalog';
 import { marketLedger, type MarketTx } from './ledger';
 import {
   contractAgreement, contractDelivery, contractDispute, contractEscrow, contractMilestone, contractReview, listingAddress, mandateAddress,
-  offerAddress, partyAddress, requestAddress, tokenAddress,
+  offerAddress, partyAddress, requestAddress, tokenAddress, isOperatorAddress,
 } from './MarketplacePaths';
 import { subcontractAddress } from './MarketplacePaths';
 import type { MarketState } from './replay';
@@ -137,6 +137,19 @@ export async function buildWithdrawListing(state: MarketState, actor: Actor, lis
   const l = state.listings.find((x) => x.listingId === listingId) ?? fail('Unknown listing.');
   if (l.sellerId !== actor.partyId) fail('Only the seller can withdraw a listing.');
   return [await tx('ListingWithdrawn', partyAddress(actor.partyId), listingAddress(listingId), { listingId })];
+}
+
+/**
+ * v15-32-04: a marketplace operator (site administrator or marketplace moderator) closes any listing, with the reason on
+ * the log. Written from the operator's address, which the mirror role-checks; replay honours a withdrawal only from the
+ * listing's seller or an operator. Contracts already formed are unaffected.
+ */
+export async function buildOperatorWithdrawListing(state: MarketState, operator: string, listingId: string, reason: string): Promise<MarketTx[]> {
+  if (!isOperatorAddress(operator)) fail('Only a marketplace operator removes another party’s listing.');
+  const l = state.listings.find((x) => x.listingId === listingId) ?? fail('Unknown listing.');
+  if (!l.open) fail('That listing is already closed.');
+  if (!reason.trim()) fail('Say why the listing is removed; the reason is recorded with it.');
+  return [await tx('ListingWithdrawn', operator, listingAddress(listingId), { listingId, by: 'operator', reason: reason.trim() })];
 }
 
 export async function buildInventoryAdjust(state: MarketState, actor: Actor, listingId: string, delta: number, reason: string): Promise<MarketTx[]> {

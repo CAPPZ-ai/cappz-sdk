@@ -9,7 +9,7 @@
  */
 import type { MarketTxLike } from './ledger';
 import { committedKey, milestoneAmounts, subcontractGate } from './rules';
-import { partyAddress, subcontractAddress } from './MarketplacePaths';
+import { isOperatorAddress, partyAddress, subcontractAddress } from './MarketplacePaths';
 import type { AccessDelivery, GraphPublication } from './knowledge/access';
 import { applySecurityEvent, type EligibilityAttestation, type OfferingView } from './securities';
 import { contractFeePlan, feeScheduleFrom, type FeeDistribution, type FeeScheduleView } from './fees';
@@ -20,7 +20,9 @@ import type {
   ChannelView, ContractTerms, ContractView, FeeCharge, FeeEscrow, ListingContent, MandateContent, MilestoneState, PartyProfile, SupplyOfferContent, SupplyRequestContent, TokenContent,
 } from './types';
 
-export interface ListingView extends ListingContent { open: boolean; remaining: number; publishedAt: string }
+export interface ListingView extends ListingContent { open: boolean; remaining: number; publishedAt: string;
+  /** v15-32-04: who closed it — the seller, or an operator with the recorded reason. */
+  closed?: { by: 'seller' | 'operator'; operator?: string; reason?: string; at: string } }
 export interface OfferView extends SupplyOfferContent { at: string; withdrawn: boolean; awardedQuantity: number }
 export interface RequestView extends SupplyRequestContent { postedAt: string; open: boolean; offers: OfferView[]; awardedQuantity: number; contractIds: string[] }
 export interface TokenView { content: TokenContent; issuedAt: string; balances: Record<string, number>; redeemed: number }
@@ -80,13 +82,22 @@ export function resolveMarket(txs: readonly MarketTxLike[]): MarketState {
         if (cls === 'party') { const v = p<{ profile: PartyProfile }>(t).profile; parties.set(v.partyId, v); }
         if (cls === 'listing') {
           const v = p<{ listing: ListingContent }>(t).listing; const prior = listings.get(v.listingId);
+          // v15-32-04: a listing is written only by its seller, from their own address, and never changes seller.
+          if (t.sourceAddress !== partyAddress(v.sellerId) || (prior && prior.sellerId !== v.sellerId)) break;
           listings.set(v.listingId, { ...v, open: prior?.open ?? true, remaining: prior ? prior.remaining + (v.quantity - prior.quantity) : v.quantity, publishedAt: prior?.publishedAt ?? t.timestamp });
         }
         if (cls === 'graph-manifest') { const v = p<{ listingId: string; manifest: GraphPublication['manifest'] }>(t); manifests.set(v.listingId, v.manifest); }
         if (cls === 'graph-ciphertext') { const v = p<Omit<GraphPublication, 'manifest' | 'publishedAt'>>(t); ciphers.set(v.listingId, { ...v, publishedAt: t.timestamp }); }
         if (cls === 'party-box-key') { const v = p<{ partyId: string; sealedPrivate: Record<string, unknown> }>(t); boxKeys.set(v.partyId, v.sealedPrivate); }
         break;
-      case 'ListingWithdrawn': { const l = listings.get(p<{ listingId: string }>(t).listingId); if (l) l.open = false; break; }
+      case 'ListingWithdrawn': {
+        // v15-32-04: only the seller, or an operator (role-checked by the mirror) with a reason, closes a listing.
+        const v = p<{ listingId: string; reason?: string }>(t); const l = listings.get(v.listingId);
+        if (!l || !l.open) break;
+        if (t.sourceAddress === partyAddress(l.sellerId)) { l.open = false; l.closed = { by: 'seller', at: t.timestamp }; }
+        else if (isOperatorAddress(t.sourceAddress)) { l.open = false; l.closed = { by: 'operator', operator: t.sourceAddress, ...(v.reason ? { reason: String(v.reason) } : {}), at: t.timestamp }; }
+        break;
+      }
       case 'InventoryAdjusted': { const v = p<{ listingId: string; delta: number }>(t); const l = listings.get(v.listingId); if (l) l.remaining += v.delta; break; }
       case 'SupplyRequested': { const v = p<{ request: SupplyRequestContent }>(t).request; requests.set(v.requestId, { ...v, postedAt: t.timestamp, open: true, offers: [], awardedQuantity: 0, contractIds: [] }); break; }
       case 'SupplyRequestClosed': { const r = requests.get(p<{ requestId: string }>(t).requestId); if (r) r.open = false; break; }

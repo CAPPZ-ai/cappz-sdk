@@ -59,6 +59,8 @@ export const subcontractAddress = (parentId: string, childId: string) => `${cont
 export const tokenAddress = (tokenId: string) => `${MARKETPLACE_POW_ROOT}/tokens/${tokenId}`;
 /** A marketplace operator (site administrator or delegated app administrator) acting by their pseudonymous party id. */
 export const operatorAddress = (partyId: string) => `${MARKETPLACE_POW_ROOT}/operators/${partyId}`;
+/** Whether a TX was written from an operator address (the mirror's insert policy role-checks these; publicLog.ts). */
+export const isOperatorAddress = (address: string) => address.startsWith(`${MARKETPLACE_POW_ROOT}/operators/`);
 export const mandateAddress = (partyId: string, mandateId: string) => `${partyAddress(partyId)}/mandates/${mandateId}`;
 /** SKU address used in the commodity leg memo (MarketplaceMemoValidator). */
 export const skuAddress = (listingOrRequestId: string) => `${MARKETPLACE_POW_ROOT}/sku/${listingOrRequestId}`;

@@ -8,7 +8,7 @@
  */
 export const MARKETPLACE_VERBS = [
   'marketplace.party.profile',
-  'marketplace.listing.publish', 'marketplace.listing.withdraw', 'marketplace.inventory.adjust',
+  'marketplace.listing.publish', 'marketplace.listing.withdraw', 'marketplace.listing.remove', 'marketplace.inventory.adjust',
   'marketplace.order.place', 'marketplace.contract.subcontract',
   'marketplace.request.post', 'marketplace.request.close',
   'marketplace.offer.submit', 'marketplace.offer.withdraw', 'marketplace.offer.award',
