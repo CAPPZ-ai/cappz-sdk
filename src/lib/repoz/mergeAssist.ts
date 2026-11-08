@@ -4,8 +4,10 @@ export interface MergeSuggestion { merged: string; rationale: string }
 
 /**
  * Ask the RepoZ agent for a merge suggestion. A person always reviews and signs.
- * The agent is a hosted function (repoz-merge-assist): without a registered hosted
- * backend this throws, and the merge stays manual.
+ * The operation is `repoz-merge-assist` on the registered hosted client: a host
+ * answers it however it likes (cappz.ai routes it to its browser AI path; there
+ * is no hosted copy). Without a registered client this throws, and the merge
+ * stays manual.
  */
 export async function suggestRepoZMerge(input: { artifactId: string; base: string; ours: string; theirs: string; instruction?: string }): Promise<MergeSuggestion> {
   const fns = hostedClient().functions;
