@@ -18,5 +18,10 @@ export type { ShadowReport, ShadowState, RetirePolicy, LegacyVerdict, Agreement,
 export { readBounded, isDeclarationShape } from '../lib/identity/edgeVerify';
 export { createReloader } from '../lib/identity/evidenceReload';
 // v15-36-00 — SAML Guard: a second, independent check in front of a SAML ACS (refuses ambiguity; shadow, then enforce).
-export { createSamlGuard, createSamlChecker, parseStrictXml, decodeSamlResponse, authnRequestIdFromUrl, spVerdict, SamlRefusal, SAML_NS, SAML_ATTACK_REASONS, SAML_SIGNATURE_ALGORITHMS, SAML_DIGEST_ALGORITHMS, DEFAULT_SAML_GATE, DEFAULT_XML_LIMITS } from '../lib/identity/samlGuard';
-export type { SamlGuardConfig, SamlGuardOptions, SamlVerdict, SamlReason, SamlGateReport, SamlGatePolicy, XmlEl, XmlLimits } from '../lib/identity/samlGuard';
+export { createSamlGuard, createSamlChecker, parseStrictXml, decodeSamlResponse, authnRequestIdFromUrl, authnRequestFromUrl, spVerdict, SamlRefusal, SAML_NS, SAML_ATTACK_REASONS, SAML_SIGNATURE_ALGORITHMS, SAML_DIGEST_ALGORITHMS, DEFAULT_SAML_GATE, DEFAULT_XML_LIMITS, signTenantMode, replaySamlTenantModes } from '../lib/identity/samlGuard';
+export type { SamlGuardConfig, SamlGuardOptions, SamlVerdict, SamlReason, SamlGateReport, SamlGatePolicy, SamlMultiReport, SamlTenant, SamlTenantModeRecord, SamlObserved, XmlEl, XmlLimits } from '../lib/identity/samlGuard';
+// v15-37-00 — built-in XML signature verification (exclusive C14N, RSA/ECDSA, pinned keys); onboarding from IdP metadata; the configuration doctor.
+export { exclusiveC14n, verifyEnvelopedSignature } from '../lib/identity/samlXmlDsig';
+export type { DsigResult } from '../lib/identity/samlXmlDsig';
+export { idpFromMetadata, lintSamlTenants } from '../lib/identity/samlTenants';
+export type { IdpMetadata, LintFinding, LintReport, LintSeverity } from '../lib/identity/samlTenants';

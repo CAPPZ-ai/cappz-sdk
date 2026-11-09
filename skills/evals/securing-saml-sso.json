@@ -1,0 +1,38 @@
+[
+  {
+    "skills": [
+      "securing-saml-sso"
+    ],
+    "query": "Our SaaS provider got hit by a SAML auth bypass last week \u2014 someone logged in as one of our admins with an assertion our Okta never issued. What should we do?",
+    "files": [],
+    "expected_behavior": [
+      "Triages with fact/inference/unknown marks: which component checked, which check failed, who owns it; does not invent a CVE it could not verify",
+      "Recommends containment first (revoke sessions) and reconciliation over the incident window with saml-reconcile.ts from Okta and the SaaS audit export",
+      "Explains the Guard needs control of the SP's traffic, so for a third-party SaaS the root-cause fix is the vendor's; lists questions to ask the vendor"
+    ]
+  },
+  {
+    "skills": [
+      "securing-saml-sso"
+    ],
+    "query": "We're a multi-tenant SaaS with 40 enterprise customers on SAML. How do we make sure customer A's IdP can never log someone into customer B?",
+    "files": [],
+    "expected_behavior": [
+      "Requires one ACS URL and one SP entity per tenant and explains that the login URL, never the response, picks the tenant",
+      "Uses saml-wizard add-tenant per customer from their IdP metadata (pins signed per tenant), then doctor, test, shadow, per-tenant enforce",
+      "Points out cross-tenant refusals show in the shadow report as findings the SP accepted, and that signature: builtin covers a broken SP signature check"
+    ]
+  },
+  {
+    "skills": [
+      "securing-saml-sso"
+    ],
+    "query": "Should we just patch the SAML library or also add this guard thing?",
+    "files": [],
+    "expected_behavior": [
+      "Presents the options table with covers / does not cover / needs / effort",
+      "Recommends both in order: patch or configure the root cause, safeguard with the Guard (shadow then enforce) where traffic is controlled, scheduled reconciliation for detection",
+      "Notes the Guard's limits (exclusive C14N only built in, encrypted assertion contents) where they apply"
+    ]
+  }
+]

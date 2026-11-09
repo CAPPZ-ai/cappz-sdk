@@ -1,0 +1,26 @@
+[
+  {
+    "skills": [
+      "monitoring-saml-logins"
+    ],
+    "query": "Set up daily monitoring so we'd catch a forged SAML login into our SaaS apps.",
+    "files": [],
+    "expected_behavior": [
+      "Identifies the two exports (IdP sign-ins, SaaS login audit) with read-only credentials and writes the field map, apps and aliases files",
+      "Runs a first reconciliation by hand and treats unmapped-app gaps as mapping work, never as clean",
+      "Schedules saml-reconcile (exit 1 pages, exit 2 tickets) using saml-wizard monitor output, and suggests sealed issuance for tamper evidence"
+    ]
+  },
+  {
+    "skills": [
+      "monitoring-saml-logins"
+    ],
+    "query": "saml-wizard status --alert just fired: tenant=acme reason=cross-tenant sp=allow mode=shadow. What now?",
+    "files": [],
+    "expected_behavior": [
+      "Explains the SP accepted a response naming another tenant: a real finding in the SP's tenant binding",
+      "Contains: revoke the session for the subject hash; proposes enforcing acme with --force --reason after asking the person",
+      "Scopes with reconciliation over the window, records report hashes, hands the root cause to securing-saml-sso; pastes no assertions or NameIDs"
+    ]
+  }
+]

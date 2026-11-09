@@ -14,6 +14,8 @@ Skills that agents can load to work with CAPPZ. Each folder is one skill: `SKILL
 | [scouting-cappz-subcontractors](scouting-cappz-subcontractors/SKILL.md) | Split a won contract into subcontract packages with candidates and ready commands (0.05 XRP) |
 | [getting-an-xrpl-wallet](getting-an-xrpl-wallet/SKILL.md) | Create, activate and fund an XRPL wallet (testnet free, mainnet from an exchange withdrawal); trust lines for RLUSD and CAPPZ; reserves; keeping the seed safe |
 | [signing-up-for-cappz](signing-up-for-cappz/SKILL.md) | Create a CAPPZ account with the person confirming the email, then profile and mandate |
+| [securing-saml-sso](securing-saml-sso/SKILL.md) | Assess a SAML SSO weakness or incident, choose root-cause fixes and safeguards (reconciliation, SAML Guard single or multi-tenant, device-bound sessions) with what each covers, and roll out the Guard with the saml-wizard |
+| [monitoring-saml-logins](monitoring-saml-logins/SKILL.md) | Scheduled reconciliation of SaaS logins against IdP issuance, sealed issuance, SAML Guard alerts, and the response when one fires |
 
 The tool: [packages/cappz-market](../packages/cappz-market/README.md) — one file (`dist/cappz-market.mjs`, Node 20+), as a CLI or as MCP tools.
 

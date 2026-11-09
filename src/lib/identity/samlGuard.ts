@@ -30,11 +30,20 @@
  *     its redirect, one use) unless unsolicited responses are allowed;
  *     an assertion ID is accepted once.
  *
- * The cryptographic signature check stays with the SP's own SAML library
- * unless a verifier is plugged in (`verifySignature`), and the verdict says
- * which ('left-to-sp' | 'verified'): both checks must pass, so an attacker has
- * to fool two different parsers, and the guard's half never trusts content it
- * cannot place unambiguously.
+ * v15-37-00: the signature is verified too, by default (`signature:
+ * 'builtin'`, samlXmlDsig.ts): exclusive C14N and RSA/ECDSA on the same tree
+ * the guard checked, with the key of a pinned certificate only — so even an
+ * SP whose own signature check is broken is covered. The SP keeps its check
+ * (both must pass). 'left-to-sp' or a plugged-in `verifySignature` remain,
+ * and the verdict says which checked it.
+ *
+ * Multi-tenant SaaS (v15-37-00): one guard serves many customers, each with
+ * its own IdP, ACS URL, SP entity, pins (signed for that tenant only), replay
+ * cache, outstanding requests, shadow report and mode. The tenant is chosen by
+ * the login URL the response is posted to — never by what the response says —
+ * and a response that names another tenant's IdP, SP, ACS or certificate is
+ * refused as 'cross-tenant': customer A's validly signed assertion cannot log
+ * into customer B.
  *
  * Adopt it the way a legacy verifier is retired: shadow first (the SP stays
  * authoritative; every response the SP accepted but the guard refused is a
@@ -48,6 +57,7 @@ import { buf, canonicalJson, sha256, sha256HexOf, toHex, utf8 } from './canonica
 import { signCanonical, verifyCanonical, type SigningKey } from '../sync/helloSignature.ts';
 import { createShadowComparison, type CostAssumptions, type LegacyVerdict, type ShadowState } from './shadowCompare.ts';
 import { readBounded } from './edgeVerify.ts';
+import { verifyEnvelopedSignature } from './samlXmlDsig.ts';
 
 export const SAML_NS = {
   protocol: 'urn:oasis:names:tc:SAML:2.0:protocol',
@@ -70,7 +80,13 @@ const TRANSFORMS = ['http://www.w3.org/2000/09/xmldsig#enveloped-signature', ...
 
 // ─── Strict XML reader ────────────────────────────────────────────
 
-export interface XmlEl { ns: string; local: string; qname: string; attrs: Record<string, string>; children: XmlEl[]; text: string; parent?: XmlEl }
+export interface XmlEl {
+  ns: string; local: string; qname: string; attrs: Record<string, string>; children: XmlEl[]; text: string; parent?: XmlEl;
+  /** Children and text in document order (for canonicalization). */
+  nodes: Array<XmlEl | string>;
+  /** Namespace bindings in scope at this element ('' = default). */
+  scope: Map<string, string>;
+}
 
 export class SamlRefusal extends Error { constructor(public reason: SamlReason, detail?: string) { super(detail ? `${reason}: ${detail}` : reason); } }
 
@@ -99,10 +115,11 @@ function decodeText(s: string): string {
  * CDATA, processing instructions (other than the declaration), duplicate attributes, undeclared prefixes,
  * and a prefix redeclared to a different namespace anywhere in the document.
  */
-export function parseStrictXml(xml: string, limits: XmlLimits = DEFAULT_XML_LIMITS): XmlEl {
+export function parseStrictXml(xml: string, limits: XmlLimits = DEFAULT_XML_LIMITS, o: { skipComments?: boolean } = {}): XmlEl {
   if (utf8(xml).length > limits.maxBytes) throw new SamlRefusal('too-large');
   let i = 0;
-  const s = xml.replace(/^\uFEFF/, '');
+  // XML 1.0 §2.11: line ends are normalized to \n before anything else (C14N sees \n only).
+  const s = xml.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
   if (s.startsWith('<?xml')) { const e = s.indexOf('?>'); if (e < 0) throw new SamlRefusal('malformed-xml'); i = e + 2; }
   const prefixUri = new Map<string, string>(); // every binding ever seen: one prefix, one namespace
   const stack: Array<{ el: XmlEl; scope: Map<string, string> }> = [];
@@ -118,11 +135,15 @@ export function parseStrictXml(xml: string, limits: XmlLimits = DEFAULT_XML_LIMI
     const text = lt < 0 ? s.slice(i) : s.slice(i, lt);
     if (text.length) {
       if (!stack.length) { if (text.trim()) throw new SamlRefusal('malformed-xml', 'text outside the root'); }
-      else stack[stack.length - 1].el.text += decodeText(text);
+      else { const t = decodeText(text); const top = stack[stack.length - 1].el; top.text += t; top.nodes.push(t); }
     }
     if (lt < 0) break;
     const head = s.slice(lt, lt + 9);
-    if (head.startsWith('<!--')) throw new SamlRefusal('comment');
+    if (head.startsWith('<!--')) {
+      if (!o.skipComments) throw new SamlRefusal('comment');
+      const e = s.indexOf('-->', lt + 4); if (e < 0) throw new SamlRefusal('malformed-xml', 'unterminated comment');
+      i = e + 3; continue;
+    }
     if (head.startsWith('<![CDATA[')) throw new SamlRefusal('cdata');
     if (head.startsWith('<!')) throw new SamlRefusal('doctype');
     if (head.startsWith('<?')) throw new SamlRefusal('processing-instruction');
@@ -153,7 +174,7 @@ export function parseStrictXml(xml: string, limits: XmlLimits = DEFAULT_XML_LIMI
       if (a[1] in rawAttrs) throw new SamlRefusal('duplicate-attribute', a[1]);
       const v = a[3] ?? a[4];
       if (v.includes('<')) throw new SamlRefusal('malformed-xml', '< in attribute');
-      rawAttrs[a[1]] = decodeText(v);
+      rawAttrs[a[1]] = decodeText(v.replace(/[\t\n]/g, ' ')); // §3.3.3: literal whitespace → space; character references kept
       at = attrRe.lastIndex;
     }
     const scope = new Map(stack.length ? stack[stack.length - 1].scope : []);
@@ -172,9 +193,9 @@ export function parseStrictXml(xml: string, limits: XmlLimits = DEFAULT_XML_LIMI
       if (k.includes(':')) resolve(scope, k.split(':')[0]); // declared, or refused
       attrs[k] = v;
     }
-    const el: XmlEl = { ns: resolve(scope, prefix), local, qname, attrs, children: [], text: '' };
+    const el: XmlEl = { ns: resolve(scope, prefix), local, qname, attrs, children: [], text: '', nodes: [], scope };
     if (++count > limits.maxElements) throw new SamlRefusal('too-large', 'elements');
-    if (stack.length) { el.parent = stack[stack.length - 1].el; el.parent.children.push(el); } else root = el;
+    if (stack.length) { el.parent = stack[stack.length - 1].el; el.parent.children.push(el); el.parent.nodes.push(el); } else root = el;
     if (!selfClosing) { stack.push({ el, scope }); if (stack.length > limits.maxDepth) throw new SamlRefusal('too-large', 'depth'); }
   }
   if (stack.length || !root) throw new SamlRefusal('malformed-xml', 'unclosed element');
@@ -205,30 +226,43 @@ function leafText(el: XmlEl, reason: SamlReason): string {
 
 // ─── Operator-signed IdP certificate pins ─────────────────────────
 
-/** The operator's wallet says: this IdP signs with this certificate (sha256 of its DER), until expiresAt. */
-export interface IdpPin { v: 1; idpEntityId: string; certSha256: string; expiresAt: string; signerKey: string; signature: string }
+/**
+ * The operator's wallet says: this IdP signs with this certificate, until expiresAt — and (v2) for this
+ * tenant only, carrying the certificate itself so the guard can verify signatures with it. A pin for one
+ * tenant never verifies a response at another tenant's login.
+ */
+export interface IdpPin { v: 1 | 2; idpEntityId: string; certSha256: string; expiresAt: string; signerKey: string; signature: string; tenantId?: string; certificate?: string }
 
-const pinText = (p: Omit<IdpPin, 'signature'>) => canonicalJson({ v: p.v, kind: 'cappz.saml.idp-pin', idpEntityId: p.idpEntityId, certSha256: p.certSha256.toLowerCase(), expiresAt: p.expiresAt, signerKey: p.signerKey });
+const pinText = (p: Omit<IdpPin, 'signature'>) => canonicalJson(p.v === 1
+  ? { v: 1, kind: 'cappz.saml.idp-pin', idpEntityId: p.idpEntityId, certSha256: p.certSha256.toLowerCase(), expiresAt: p.expiresAt, signerKey: p.signerKey }
+  : { v: 2, kind: 'cappz.saml.idp-pin', idpEntityId: p.idpEntityId, certSha256: p.certSha256.toLowerCase(), expiresAt: p.expiresAt, signerKey: p.signerKey, tenantId: p.tenantId ?? null, certificate: p.certificate ?? null });
 
-export async function declareIdpPin(p: { idpEntityId: string; certificate: string; expiresAt: string }, key: SigningKey): Promise<IdpPin> {
-  const unsigned = { v: 1 as const, idpEntityId: p.idpEntityId, certSha256: await certificateSha256(p.certificate), expiresAt: p.expiresAt, signerKey: key.publicKeyHex };
+const bareCert = (pemOrBase64: string) => pemOrBase64.replace(/-----(BEGIN|END) CERTIFICATE-----/g, '').replace(/\s+/g, '');
+
+export async function declareIdpPin(p: { idpEntityId: string; certificate: string; expiresAt: string; tenantId?: string }, key: SigningKey): Promise<IdpPin> {
+  const certificate = bareCert(p.certificate);
+  const unsigned = { v: 2 as const, idpEntityId: p.idpEntityId, certSha256: await certificateSha256(certificate), expiresAt: p.expiresAt, signerKey: key.publicKeyHex, ...(p.tenantId ? { tenantId: p.tenantId } : {}), certificate };
   return { ...unsigned, signature: await signCanonical(pinText(unsigned), key) };
 }
 
 /** sha256 of a certificate's DER, from PEM or bare base64 (as in ds:X509Certificate). */
 export async function certificateSha256(pemOrBase64: string): Promise<string> {
-  const b64 = pemOrBase64.replace(/-----(BEGIN|END) CERTIFICATE-----/g, '').replace(/\s+/g, '');
-  return toHex(await sha256(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))));
+  return toHex(await sha256(Uint8Array.from(atob(bareCert(pemOrBase64)), (c) => c.charCodeAt(0))));
 }
 
-/** Pins that verify against a trusted operator key and have not expired. */
-export async function acceptedPins(pins: readonly IdpPin[], trustedSignerKeys: readonly string[], now = Date.now()): Promise<{ accepted: IdpPin[]; refused: Array<{ pin: IdpPin; because: string }> }> {
+/**
+ * Pins that verify against a trusted operator key, have not expired and belong to `tenantId` (multi-tenant:
+ * a pin must name the tenant; single-tenant: any pin for the IdP).
+ */
+export async function acceptedPins(pins: readonly IdpPin[], trustedSignerKeys: readonly string[], now = Date.now(), tenantId?: string): Promise<{ accepted: IdpPin[]; refused: Array<{ pin: IdpPin; because: string }> }> {
   const accepted: IdpPin[] = []; const refused: Array<{ pin: IdpPin; because: string }> = [];
   for (const pin of pins) {
+    if (tenantId !== undefined && pin.tenantId !== tenantId) { refused.push({ pin, because: pin.tenantId ? `pin is for tenant ${pin.tenantId}` : 'pin names no tenant' }); continue; }
     if (!trustedSignerKeys.includes(pin.signerKey)) { refused.push({ pin, because: 'signer not trusted' }); continue; }
     if (!(Date.parse(pin.expiresAt) > now)) { refused.push({ pin, because: 'expired' }); continue; }
     const { signature, ...unsigned } = pin;
     if (!(await verifyCanonical(pinText(unsigned), signature, pin.signerKey).catch(() => false))) { refused.push({ pin, because: 'bad signature' }); continue; }
+    if (pin.certificate && (await certificateSha256(pin.certificate).catch(() => '')) !== pin.certSha256.toLowerCase()) { refused.push({ pin, because: 'certificate does not match its hash' }); continue; }
     accepted.push(pin);
   }
   return { accepted, refused };
@@ -239,15 +273,16 @@ export async function acceptedPins(pins: readonly IdpPin[], trustedSignerKeys: r
 export type SamlReason =
   | 'malformed-xml' | 'too-large' | 'doctype' | 'entity' | 'comment' | 'cdata' | 'processing-instruction' | 'duplicate-attribute' | 'namespace'
   | 'not-a-response' | 'status-not-success' | 'assertion-count' | 'assertion-misplaced' | 'duplicate-id' | 'missing-id'
-  | 'unsigned' | 'signature-misplaced' | 'reference-mismatch' | 'transform' | 'weak-algorithm' | 'unpinned-certificate' | 'bad-signature'
+  | 'unsigned' | 'signature-misplaced' | 'reference-mismatch' | 'transform' | 'weak-algorithm' | 'unpinned-certificate' | 'bad-signature' | 'bad-digest' | 'signature-unsupported' | 'no-pinned-key'
   | 'issuer' | 'destination' | 'recipient' | 'audience' | 'subject' | 'conditions' | 'not-yet-valid' | 'expired' | 'stale' | 'lifetime-too-long'
-  | 'in-response-to' | 'unsolicited' | 'unknown-request' | 'replayed' | 'replay-cache-full' | 'encrypted-refused' | 'no-saml-response';
+  | 'in-response-to' | 'unsolicited' | 'unknown-request' | 'replayed' | 'replay-cache-full' | 'encrypted-refused' | 'no-saml-response'
+  | 'cross-tenant' | 'unknown-tenant';
 
 /** Reasons that mean the response was wrong or hostile, not that the guard is misconfigured. */
 export const SAML_ATTACK_REASONS: readonly SamlReason[] = [
   'doctype', 'entity', 'comment', 'cdata', 'processing-instruction', 'duplicate-attribute', 'namespace', 'assertion-count', 'assertion-misplaced',
-  'duplicate-id', 'unsigned', 'signature-misplaced', 'reference-mismatch', 'transform', 'weak-algorithm', 'bad-signature',
-  'expired', 'stale', 'lifetime-too-long', 'in-response-to', 'unknown-request', 'replayed',
+  'duplicate-id', 'unsigned', 'signature-misplaced', 'reference-mismatch', 'transform', 'weak-algorithm', 'bad-signature', 'bad-digest',
+  'expired', 'stale', 'lifetime-too-long', 'in-response-to', 'unknown-request', 'replayed', 'cross-tenant',
 ];
 
 export interface SamlGuardConfig {
@@ -260,7 +295,15 @@ export interface SamlGuardConfig {
   /** Operator-signed certificate pins (declareIdpPin) and the operator keys trusted to sign them. */
   pins?: readonly IdpPin[];
   trustedPinSigners?: readonly string[];
-  /** Refuse a response whose signature embeds no certificate (default false: the SP's configured certificate is used). */
+  /** Multi-tenant: the tenant this configuration is for; pins must name it. */
+  tenantId?: string;
+  /**
+   * The cryptographic signature check. 'builtin' (default since 15.37.0): exclusive C14N + RSA/ECDSA with a
+   * pinned certificate, on the same tree the guard checked. 'left-to-sp': structure only, the SP's library
+   * verifies (a broken SP signature check then passes — the doctor flags it). verifySignature overrides both.
+   */
+  signature?: 'builtin' | 'left-to-sp';
+  /** Refuse a response whose signature embeds no certificate (default false: pinned certificates are used). */
   requireEmbeddedCertificate?: boolean;
   /** Require the Assertion itself to be signed (default false: a signed Response containing it also counts). */
   requireSignedAssertion?: boolean;
@@ -273,7 +316,7 @@ export interface SamlGuardConfig {
   maxLifetimeSec?: number;
   /** IssueInstant older than this is stale (default 5 min). */
   maxAgeSec?: number;
-  /** Optional cryptographic signature check (e.g. a vetted XML-DSig library). Without it, the SP's own check is relied on. */
+  /** Custom cryptographic check (e.g. a vetted XML-DSig library), instead of the built-in one. */
   verifySignature?: (xml: string, signed: { element: 'Response' | 'Assertion'; id: string; certificate?: string }) => Promise<boolean>;
   /** Salt for subject hashes in verdicts and reports (no NameID leaves the guard). */
   subjectSalt?: string;
@@ -281,10 +324,14 @@ export interface SamlGuardConfig {
   limits?: XmlLimits;
 }
 
+/** What the response claimed about where it came from and where it goes (for cross-tenant classification). */
+export interface SamlObserved { issuers: string[]; audiences: string[]; destination?: string; recipient?: string; certificateSha256s: string[] }
+
 export interface SamlVerdict {
   allowed: boolean;
   reason?: SamlReason;
   detail?: string;
+  tenant?: string;
   assertion: 'plain' | 'encrypted' | 'unknown';
   signature: 'verified' | 'left-to-sp' | 'bad-signature' | 'not-checked';
   solicited: 'matched' | 'unsolicited' | 'unknown-request' | 'not-checked';
@@ -293,6 +340,7 @@ export interface SamlVerdict {
   inResponseTo?: string;
   subjectHash?: string;
   notOnOrAfter?: string;
+  observed?: SamlObserved;
 }
 
 interface Store { outstanding: Map<string, number>; seen: Map<string, number> }
@@ -304,18 +352,32 @@ const time = (v: string | undefined, reason: SamlReason): number | undefined => 
   return t;
 };
 
+const softText = (el: XmlEl | undefined) => (el && !el.children.length ? el.text.trim() : undefined);
+async function observe(root: XmlEl, a: XmlEl): Promise<SamlObserved> {
+  const o: SamlObserved = { issuers: [], audiences: [], destination: root.attrs.Destination, certificateSha256s: [] };
+  for (const el of [root, a]) { const i = softText(el.children.find((c) => c.ns === SAML_NS.assertion && c.local === 'Issuer')); if (i) o.issuers.push(i); }
+  walk(a, (e) => {
+    if (e.ns === SAML_NS.assertion && e.local === 'Audience') { const t = softText(e); if (t) o.audiences.push(t); }
+    if (e.ns === SAML_NS.assertion && e.local === 'SubjectConfirmationData' && e.attrs.Recipient) o.recipient ??= e.attrs.Recipient;
+  });
+  const certs: string[] = []; walk(root, (e) => { if (e.ns === SAML_NS.dsig && e.local === 'X509Certificate') { const t = softText(e); if (t) certs.push(t); } });
+  for (const c of certs) { const h = await certificateSha256(c).catch(() => ''); if (h) o.certificateSha256s.push(h); }
+  return o;
+}
+
 export function createSamlChecker(cfg: SamlGuardConfig, store: Store = { outstanding: new Map(), seen: new Map() }) {
   const skew = (cfg.clockSkewSec ?? 120) * 1000;
   const maxLife = (cfg.maxLifetimeSec ?? 600) * 1000;
   const maxAge = (cfg.maxAgeSec ?? 300) * 1000;
   const maxReplay = cfg.maxReplayEntries ?? 500_000;
-  let pinCache: { at: number; shas: Set<string> } | null = null;
+  const sigMode = cfg.signature ?? 'builtin';
+  let pinCache: { at: number; pins: IdpPin[] } | null = null;
 
-  async function pinnedShas(now: number): Promise<Set<string>> {
-    if (pinCache && now - pinCache.at < 60_000) return pinCache.shas;
-    const { accepted } = await acceptedPins((cfg.pins ?? []).filter((p) => p.idpEntityId === cfg.idpEntityId), cfg.trustedPinSigners ?? [], now);
-    pinCache = { at: now, shas: new Set(accepted.map((p) => p.certSha256.toLowerCase())) };
-    return pinCache.shas;
+  async function pinned(now: number): Promise<IdpPin[]> {
+    if (pinCache && now - pinCache.at < 60_000) return pinCache.pins;
+    const { accepted } = await acceptedPins((cfg.pins ?? []).filter((p) => p.idpEntityId === cfg.idpEntityId), cfg.trustedPinSigners ?? [], now, cfg.tenantId);
+    pinCache = { at: now, pins: accepted };
+    return accepted;
   }
 
   function sweep(now: number) {
@@ -327,7 +389,7 @@ export function createSamlChecker(cfg: SamlGuardConfig, store: Store = { outstan
   function expectRequest(id: string, now = Date.now()) { if (/^[A-Za-z_][\w.-]{0,255}$/.test(id)) { if (store.outstanding.size > 100_000) sweep(now); store.outstanding.set(id, now); } }
 
   async function check(xml: string, now = Date.now()): Promise<SamlVerdict> {
-    const v: SamlVerdict = { allowed: false, assertion: 'unknown', signature: 'not-checked', solicited: 'not-checked', certificate: 'not-checked' };
+    const v: SamlVerdict = { allowed: false, tenant: cfg.tenantId, assertion: 'unknown', signature: 'not-checked', solicited: 'not-checked', certificate: 'not-checked' };
     try {
       const root = parseStrictXml(xml, cfg.limits);
       await inspect(root, xml, v, now);
@@ -354,6 +416,7 @@ export function createSamlChecker(cfg: SamlGuardConfig, store: Store = { outstan
     if (assertions.length !== 1) throw new SamlRefusal('assertion-count', String(assertions.length));
     const a = assertions[0];
     if (a.parent !== root || a.ns !== SAML_NS.assertion) throw new SamlRefusal('assertion-misplaced', `${a.parent?.local} ${a.ns}`);
+    v.observed = await observe(root, a);
     const responseId = root.attrs.ID; if (!responseId) throw new SamlRefusal('missing-id', 'Response');
 
     const status = one(root, SAML_NS.protocol, 'Status', 'status-not-success')!;
@@ -366,7 +429,7 @@ export function createSamlChecker(cfg: SamlGuardConfig, store: Store = { outstan
     const issued = time(root.attrs.IssueInstant, 'stale');
     if (issued === undefined || issued > now + skew || now - issued > maxAge + skew) throw new SamlRefusal('stale', root.attrs.IssueInstant);
 
-    // Solicited: InResponseTo names a request this SP sent and has not used yet.
+    // Solicited: InResponseTo names a request this SP (this tenant) sent and has not used yet.
     const irt = root.attrs.InResponseTo;
     if (irt) {
       v.inResponseTo = irt;
@@ -405,9 +468,14 @@ export function createSamlChecker(cfg: SamlGuardConfig, store: Store = { outstan
     }
     if (!signed.has(a) && (cfg.requireSignedAssertion || !signed.has(root))) throw new SamlRefusal('unsigned', cfg.requireSignedAssertion ? 'assertion not signed' : 'neither response nor assertion signed');
 
+    const pins = await pinned(now);
+    const pinnedShas = new Set(pins.map((p) => p.certSha256.toLowerCase()));
+    const keys = new Set(pins.flatMap((p) => (p.certificate ? [p.certificate] : [])));
     if (embedded.length) {
-      const pins = await pinnedShas(now);
-      for (const c of embedded) if (!pins.has(await certificateSha256(c).catch(() => ''))) { v.certificate = 'unpinned'; throw new SamlRefusal('unpinned-certificate'); }
+      for (const c of embedded) {
+        if (!pinnedShas.has(await certificateSha256(c).catch(() => ''))) { v.certificate = 'unpinned'; throw new SamlRefusal('unpinned-certificate'); }
+        keys.add(c); // pinned by hash (a v1 pin carries no certificate): its key may verify
+      }
       v.certificate = 'pinned';
     } else {
       v.certificate = 'not-embedded';
@@ -418,6 +486,15 @@ export function createSamlChecker(cfg: SamlGuardConfig, store: Store = { outstan
       for (const [owner] of signed) {
         const ok = await cfg.verifySignature(xml, { element: owner === root ? 'Response' : 'Assertion', id: owner.attrs.ID, certificate: embedded[0] }).catch(() => false);
         if (!ok) { v.signature = 'bad-signature'; throw new SamlRefusal('bad-signature', owner.local); }
+      }
+      v.signature = 'verified';
+    } else if (sigMode === 'builtin') {
+      for (const [, sig] of signed) {
+        const r = await verifyEnvelopedSignature(sig, [...keys]);
+        if (!r.ok) {
+          v.signature = 'bad-signature';
+          throw new SamlRefusal(r.reason === 'unsupported' ? 'signature-unsupported' : r.reason === 'no-key' ? 'no-pinned-key' : r.reason, r.detail);
+        }
       }
       v.signature = 'verified';
     } else v.signature = 'left-to-sp';
@@ -471,7 +548,7 @@ export function createSamlChecker(cfg: SamlGuardConfig, store: Store = { outstan
     if (store.seen.size >= maxReplay) { sweep(now); if (store.seen.size >= maxReplay) throw new SamlRefusal('replay-cache-full'); }
   }
 
-  return { check, expectRequest, store };
+  return { check, expectRequest, store, config: cfg };
 }
 
 // ─── Bindings ─────────────────────────────────────────────────────
@@ -483,16 +560,19 @@ export function decodeSamlResponse(b64: string): string | null {
   try { return new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(atob(s), (c) => c.charCodeAt(0))); } catch { return null; }
 }
 
-/** The ID of an AuthnRequest in an HTTP-Redirect binding URL (SAMLRequest = base64(deflate-raw(xml))). */
-export function authnRequestIdFromUrl(url: string): string | null {
+/** An AuthnRequest in an HTTP-Redirect binding URL (SAMLRequest = base64(deflate-raw(xml))): its ID, Issuer (SP entity) and ACS URL. */
+export function authnRequestFromUrl(url: string): { id: string; issuer?: string; acsUrl?: string } | null {
   try {
     const q = new URL(url).searchParams.get('SAMLRequest');
     if (!q) return null;
     const xml = new TextDecoder().decode(inflateSync(Uint8Array.from(atob(q), (c) => c.charCodeAt(0))));
     const root = parseStrictXml(xml, { maxBytes: 64 * 1024, maxDepth: 16, maxElements: 200 });
-    return root.ns === SAML_NS.protocol && root.local === 'AuthnRequest' && root.attrs.ID ? root.attrs.ID : null;
+    if (root.ns !== SAML_NS.protocol || root.local !== 'AuthnRequest' || !root.attrs.ID) return null;
+    return { id: root.attrs.ID, issuer: softText(root.children.find((c) => c.ns === SAML_NS.assertion && c.local === 'Issuer')), acsUrl: root.attrs.AssertionConsumerServiceURL };
   } catch { return null; }
 }
+/** The ID of an AuthnRequest in an HTTP-Redirect binding URL. */
+export const authnRequestIdFromUrl = (url: string): string | null => authnRequestFromUrl(url)?.id ?? null;
 
 /** The SP's own verdict on a POST to its ACS: X-Legacy-Verdict if it sets one; else 4xx/5xx deny, a session cookie allow. */
 export function spVerdict(res: Response, header = 'x-legacy-verdict'): LegacyVerdict {
@@ -503,26 +583,64 @@ export function spVerdict(res: Response, header = 'x-legacy-verdict'): LegacyVer
   return 'missing';
 }
 
-// ─── The guard in front of an ACS ─────────────────────────────────
+// ─── Tenant modes, governed ───────────────────────────────────────
+
+/** An operator-signed change of a tenant's mode; enforce cites the shadow report it was decided on. */
+export interface SamlTenantModeRecord { v: 1; kind: 'cappz.saml.tenant-mode'; tenantId: string; mode: 'shadow' | 'enforce'; at: string; reason: string; reportHash: string | null; signerKey: string; signature: string }
+
+const modeText = (r: Omit<SamlTenantModeRecord, 'signature'>) => canonicalJson(r);
+
+export async function signTenantMode(r: { tenantId: string; mode: 'shadow' | 'enforce'; reason: string; reportHash?: string | null; at?: string }, key: SigningKey): Promise<SamlTenantModeRecord> {
+  if (r.mode === 'enforce' && !r.reportHash && !r.reason.trim()) throw new Error('enforce needs the shadow report hash, or a reason');
+  const unsigned = { v: 1 as const, kind: 'cappz.saml.tenant-mode' as const, tenantId: r.tenantId, mode: r.mode, at: r.at ?? new Date().toISOString(), reason: r.reason, reportHash: r.reportHash ?? null, signerKey: key.publicKeyHex };
+  return { ...unsigned, signature: await signCanonical(modeText(unsigned), key) };
+}
+
+/** Replay signed mode records from trusted operators (in time order): each tenant's current mode with the record that set it. */
+export async function replaySamlTenantModes(records: readonly SamlTenantModeRecord[], trustedKeys: readonly string[]): Promise<{ modes: Record<string, SamlTenantModeRecord>; refused: number }> {
+  const modes: Record<string, SamlTenantModeRecord> = {}; let refused = 0;
+  for (const r of [...records].sort((x, y) => Date.parse(x.at) - Date.parse(y.at))) {
+    const { signature, ...unsigned } = r;
+    if (r?.kind !== 'cappz.saml.tenant-mode' || !trustedKeys.includes(r.signerKey) || !(await verifyCanonical(modeText(unsigned), signature, r.signerKey).catch(() => false))) { refused++; continue; }
+    modes[r.tenantId] = r;
+  }
+  return { modes, refused };
+}
+
+// ─── The guard in front of one or many ACSs ───────────────────────
 
 const HOP_BY_HOP = ['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'te', 'trailer', 'upgrade', 'proxy-authorization', 'proxy-authenticate', 'host', 'content-length', 'expect'];
-const VERDICT_HEADERS = ['cappz-saml-verdict', 'cappz-saml-subject-hash', 'cappz-saml-assertion', 'cappz-saml-signature'];
+const VERDICT_HEADERS = ['cappz-saml-verdict', 'cappz-saml-subject-hash', 'cappz-saml-assertion', 'cappz-saml-signature', 'cappz-saml-tenant'];
 
 export interface SamlGatePolicy { minResponses: number; minDays: number; /** Refusals the SP also accepted that need no explanation (hostile by construction). */ acceptedStricterReasons: readonly string[] }
 export const DEFAULT_SAML_GATE: SamlGatePolicy = { minResponses: 500, minDays: 7, acceptedStricterReasons: SAML_ATTACK_REASONS };
 
+/** One customer of a multi-tenant SaaS: its own IdP, its own ACS URL(s) and SP entity, its own pins and mode. */
+export interface SamlTenant extends Omit<SamlGuardConfig, 'tenantId'> { id: string; mode?: 'shadow' | 'enforce' }
+
 export interface SamlGuardOptions {
-  config: SamlGuardConfig;
-  /** 'shadow': the SP stays authoritative and the guard records; 'enforce': refused responses never reach the SP. */
+  /** One IdP, one SP (15.36 shape). */
+  config?: SamlGuardConfig;
+  /** A multi-tenant SaaS: each tenant chosen by the ACS URL the response is posted to. */
+  tenants?: readonly SamlTenant[];
+  /** Default mode: 'shadow' (the SP stays authoritative; the guard records) or 'enforce' (refusals never reach the SP). */
   mode: 'shadow' | 'enforce';
+  /** Current per-tenant modes (replaySamlTenantModes over the operator's signed records); read per request. */
+  tenantModes?: () => Record<string, 'shadow' | 'enforce'> | Promise<Record<string, 'shadow' | 'enforce'>>;
   /** The SP: base URL or a fetch function. */
   upstream: string | ((req: Request) => Promise<Response>);
-  /** ACS paths on this host (default: the paths of config.acsUrls). */
+  /** Single-tenant: ACS paths on this host (default: the paths of config.acsUrls). */
   acsPaths?: readonly string[];
+  /** Behind a reverse proxy: take the scheme from X-Forwarded-Proto (default true — bind the guard to loopback). */
+  trustForwardedProto?: boolean;
   gate?: SamlGatePolicy;
   shadowState?: ShadowState;
+  /** Multi-tenant: saved shadow state per tenant id. */
+  shadowStates?: Record<string, ShadowState>;
+  /** Multi-tenant: saved cross-tenant attempt counts per tenant id. */
+  crossTenantCounts?: Record<string, number>;
   cost?: CostAssumptions;
-  /** Called for every checked response (audit log, TX writer): verdicts carry hashes, never the NameID. */
+  /** Called for every checked response (audit log, TX writer, alerting): verdicts carry hashes, never the NameID. */
   onVerdict?: (v: SamlVerdict & { mode: 'shadow' | 'enforce'; sp?: LegacyVerdict; at: string }) => void | Promise<void>;
   maxBodyBytes?: number;
   now?: () => number;
@@ -540,34 +658,95 @@ export interface SamlGateReport {
   reportHash: string;
 }
 
+export interface SamlMultiReport {
+  tenants: Record<string, SamlGateReport & { mode: 'shadow' | 'enforce'; crossTenant: number }>;
+  /** Responses posted to an ACS path no tenant's URL matched. */
+  unknownTenant: number;
+  reportHash: string;
+}
+
 export function createSamlGuard(o: SamlGuardOptions) {
   const now = o.now ?? Date.now;
-  const checker = createSamlChecker(o.config);
+  const multi = !!o.tenants;
+  const tenants: SamlTenant[] = o.tenants ? [...o.tenants] : o.config ? [{ ...o.config, id: o.config.tenantId ?? 'default' }] : [];
+  if (!tenants.length) throw new Error('SAML Guard needs config or tenants');
+  const ids = new Set<string>();
+  for (const t of tenants) { if (ids.has(t.id)) throw new Error(`tenant ${t.id} listed twice`); ids.add(t.id); }
   const gate = o.gate ?? DEFAULT_SAML_GATE;
-  const compare = createShadowComparison({ state: o.shadowState, now, policy: { minRequests: gate.minResponses, minDays: gate.minDays, acceptedStricterReasons: gate.acceptedStricterReasons, minDenials: 0 } });
-  const acsPaths = new Set(o.acsPaths ?? o.config.acsUrls.map((u) => new URL(u).pathname));
+  const per = new Map(tenants.map((t) => [t.id, {
+    tenant: t,
+    checker: createSamlChecker({ ...t, ...(multi ? { tenantId: t.id } : {}) }),
+    compare: createShadowComparison({ state: multi ? o.shadowStates?.[t.id] : o.shadowState, now, policy: { minRequests: gate.minResponses, minDays: gate.minDays, acceptedStricterReasons: gate.acceptedStricterReasons, minDenials: 0 } }),
+    crossTenant: o.crossTenantCounts?.[t.id] ?? 0,
+  }]));
+  // Login URL → tenant. Exact URL first; a path only when no other tenant shares it (host-based tenancy needs Host passed through).
+  const byUrl = new Map<string, string>(); const byPath = new Map<string, string[]>();
+  for (const t of tenants) for (const u of t.acsUrls) {
+    if (byUrl.has(u)) throw new Error(`ACS URL ${u} belongs to two tenants`);
+    byUrl.set(u, t.id); const p = new URL(u).pathname; byPath.set(p, [...(byPath.get(p) ?? []), t.id]);
+  }
+  if (!multi && o.acsPaths) for (const p of o.acsPaths) byPath.set(p, [tenants[0].id]);
+  let unknownTenant = 0;
   const maxBody = o.maxBodyBytes ?? 512 * 1024;
   const fetchUp = typeof o.upstream === 'function' ? o.upstream : (r: Request) => fetch(r);
+
+  function tenantFor(req: Request, url: URL): { id: string | null; isAcs: boolean } {
+    const proto = (o.trustForwardedProto ?? true) ? req.headers.get('x-forwarded-proto')?.split(',')[0].trim() : undefined;
+    const full = `${proto ? `${proto}:` : url.protocol}//${url.host}${url.pathname}`;
+    const exact = byUrl.get(full);
+    if (exact) return { id: exact, isAcs: true };
+    const onPath = byPath.get(url.pathname);
+    if (!onPath) return { id: null, isAcs: false };
+    return { id: onPath.length === 1 ? onPath[0] : null, isAcs: true };
+  }
+
+  /** A refusal whose response names another tenant's IdP, SP, ACS or pinned certificate is the cross-tenant login. */
+  async function classify(v: SamlVerdict, own: SamlTenant, count = true): Promise<SamlVerdict> {
+    if (!multi || v.allowed || !v.observed || !['issuer', 'audience', 'recipient', 'destination', 'unpinned-certificate', 'bad-signature', 'no-pinned-key'].includes(v.reason ?? '')) return v;
+    const ob = v.observed;
+    for (const t of tenants) {
+      if (t.id === own.id) continue;
+      const theirShas = new Set((t.pins ?? []).filter((p) => p.tenantId === t.id).map((p) => p.certSha256.toLowerCase()));
+      const hit = (ob.issuers.includes(t.idpEntityId) && t.idpEntityId !== own.idpEntityId) || (ob.audiences.includes(t.spEntityId) && !ob.audiences.includes(own.spEntityId))
+        || (!!ob.destination && t.acsUrls.includes(ob.destination)) || (!!ob.recipient && t.acsUrls.includes(ob.recipient))
+        || ob.certificateSha256s.some((h) => theirShas.has(h));
+      if (hit) { if (count) per.get(own.id)!.crossTenant++; return { ...v, reason: 'cross-tenant', detail: `${v.reason}: the response names tenant ${t.id}, posted to tenant ${own.id}` }; }
+    }
+    return v;
+  }
 
   function forwardRequest(req: Request, body: Uint8Array | null, extra: Record<string, string> = {}): Request {
     const url = new URL(req.url);
     const target = typeof o.upstream === 'string' ? new URL(url.pathname + url.search, o.upstream).toString() : req.url;
     const h = new Headers();
     req.headers.forEach((v, k) => { if (!HOP_BY_HOP.includes(k) && !VERDICT_HEADERS.includes(k)) h.set(k, v); });
+    if (typeof o.upstream === 'string') h.set('x-forwarded-host', req.headers.get('x-forwarded-host') ?? url.host);
     for (const [k, v] of Object.entries(extra)) h.set(k, v);
     return new Request(target, { method: req.method, headers: h, body: body && body.length && req.method !== 'GET' && req.method !== 'HEAD' ? buf(body) : undefined, redirect: 'manual' });
   }
 
-  /** Learn AuthnRequest IDs from the SP's redirects to the IdP, so InResponseTo can be matched. */
-  function learn(res: Response) {
+  /** Learn AuthnRequest IDs from the SP's redirects to the IdP — per tenant (by its SP entity or ACS URL), so InResponseTo cannot cross tenants. */
+  function learn(res: Response, hint: string | null) {
     const loc = res.headers.get('location');
-    if (res.status >= 300 && res.status < 400 && loc) { const id = authnRequestIdFromUrl(loc); if (id) checker.expectRequest(id, now()); }
+    if (res.status >= 300 && res.status < 400 && loc) {
+      const r = authnRequestFromUrl(loc);
+      if (r) {
+        const t = tenants.find((x) => (r.issuer && x.spEntityId === r.issuer) || (r.acsUrl && x.acsUrls.includes(r.acsUrl)))?.id ?? (multi ? hint : tenants[0].id);
+        if (t) per.get(t)!.checker.expectRequest(r.id, now());
+      }
+    }
     return res;
   }
 
-  async function report(): Promise<SamlGateReport> {
-    const r = await compare.report(o.cost ?? { instanceUsdPerHour: 0, vcpus: 1, label: 'not priced' });
-    const s = compare.state();
+  async function modeOf(id: string): Promise<'shadow' | 'enforce'> {
+    const m = o.tenantModes ? (await o.tenantModes())[id] : undefined;
+    return m ?? per.get(id)!.tenant.mode ?? o.mode;
+  }
+
+  async function tenantReport(id: string): Promise<SamlGateReport> {
+    const p = per.get(id)!;
+    const r = await p.compare.report(o.cost ?? { instanceUsdPerHour: 0, vcpus: 1, label: 'not priced' });
+    const s = p.compare.state();
     const because: string[] = [];
     if (r.requests < gate.minResponses) because.push(`${r.requests} of ${gate.minResponses} SAML responses seen`);
     if (r.days < gate.minDays) because.push(`${r.days.toFixed(2)} of ${gate.minDays} days observed`);
@@ -584,40 +763,72 @@ export function createSamlGuard(o: SamlGuardOptions) {
     return { ...body, reportHash: await sha256HexOf(canonicalJson(body)) };
   }
 
+  async function report(): Promise<SamlGateReport | SamlMultiReport> {
+    if (!multi) return tenantReport(tenants[0].id);
+    const out: SamlMultiReport['tenants'] = {};
+    for (const t of tenants) out[t.id] = { ...(await tenantReport(t.id)), mode: await modeOf(t.id), crossTenant: per.get(t.id)!.crossTenant };
+    const body = { tenants: out, unknownTenant };
+    return { ...body, reportHash: await sha256HexOf(canonicalJson(body)) };
+  }
+
   async function handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
     if (req.method === 'GET' && url.pathname === '/cappz/saml/report') return Response.json(await report());
-    if (req.method !== 'POST' || !acsPaths.has(url.pathname)) {
+    const { id, isAcs } = tenantFor(req, url);
+    if (req.method !== 'POST' || !isAcs) {
       const body = req.method === 'GET' || req.method === 'HEAD' ? null : await readBounded(req, maxBody);
       if (body === null && req.method !== 'GET' && req.method !== 'HEAD') return new Response('request too large', { status: 413 });
-      return learn(await fetchUp(forwardRequest(req, body)));
+      return learn(await fetchUp(forwardRequest(req, body)), id);
     }
     const body = await readBounded(req, maxBody);
     if (body === null) return new Response('request too large', { status: 413 });
+    const at = new Date(now()).toISOString();
+    if (!id) {
+      unknownTenant++;
+      const v: SamlVerdict = { allowed: false, reason: 'unknown-tenant', detail: `${url.host}${url.pathname} matches no tenant's ACS URL`, assertion: 'unknown', signature: 'not-checked', solicited: 'not-checked', certificate: 'not-checked' };
+      await o.onVerdict?.({ ...v, mode: o.mode, at });
+      if (o.mode === 'enforce') return Response.json({ error: 'SAML response refused', reason: v.reason }, { status: 403 });
+      return fetchUp(forwardRequest(req, body));
+    }
+    const p = per.get(id)!;
+    const mode = await modeOf(id);
     const started = performance.now();
     const form = new URLSearchParams(new TextDecoder().decode(body));
     const raw = form.getAll('SAMLResponse');
     const xml = raw.length === 1 ? decodeSamlResponse(raw[0]) : null;
-    const v: SamlVerdict = xml === null
-      ? { allowed: false, reason: raw.length > 1 ? 'assertion-count' : 'no-saml-response', detail: raw.length > 1 ? 'two SAMLResponse fields' : undefined, assertion: 'unknown', signature: 'not-checked', solicited: 'not-checked', certificate: 'not-checked' }
-      : await checker.check(xml, now());
+    const v = await classify(xml === null
+      ? { allowed: false, tenant: id, reason: raw.length > 1 ? 'assertion-count' : 'no-saml-response', detail: raw.length > 1 ? 'two SAMLResponse fields' : undefined, assertion: 'unknown', signature: 'not-checked', solicited: 'not-checked', certificate: 'not-checked' }
+      : await p.checker.check(xml, now()), p.tenant);
     const guardMs = performance.now() - started;
-    const at = new Date(now()).toISOString();
     const headers: Record<string, string> = { 'cappz-saml-verdict': v.allowed ? 'pass' : `refuse; reason=${v.reason}`, 'cappz-saml-assertion': v.assertion, 'cappz-saml-signature': v.signature };
+    if (multi) headers['cappz-saml-tenant'] = id;
     if (v.subjectHash) headers['cappz-saml-subject-hash'] = v.subjectHash;
 
-    if (o.mode === 'enforce') {
-      await o.onVerdict?.({ ...v, mode: 'enforce', at });
+    if (mode === 'enforce') {
+      await o.onVerdict?.({ ...v, mode, at });
       if (!v.allowed) return Response.json({ error: 'SAML response refused', reason: v.reason }, { status: 403, headers: { 'cappz-saml-verdict': headers['cappz-saml-verdict'] } });
-      return learn(await fetchUp(forwardRequest(req, body, headers)));
+      return learn(await fetchUp(forwardRequest(req, body, headers)), id);
     }
     // Shadow: the SP decides; the guard records what it would have done.
     const res = await fetchUp(forwardRequest(req, body));
     const sp = spVerdict(res);
-    compare.record({ cappz: { allowed: v.allowed, reason: v.reason ?? 'pass' }, cappzMs: guardMs, legacy: sp, path: url.pathname });
-    await o.onVerdict?.({ ...v, mode: 'shadow', sp, at });
-    return learn(res);
+    p.compare.record({ cappz: { allowed: v.allowed, reason: v.reason ?? 'pass' }, cappzMs: guardMs, legacy: sp, path: url.pathname });
+    await o.onVerdict?.({ ...v, mode, sp, at });
+    return learn(res, id);
   }
 
-  return { handle, report, check: checker.check, expectRequest: checker.expectRequest, state: compare.state };
+  /** Check one response offline for a tenant (wizard `test`, CI): nothing is recorded in the shadow report. */
+  async function checkFor(tenantId: string, xml: string, at = now()): Promise<SamlVerdict> {
+    const p = per.get(tenantId); if (!p) throw new Error(`no tenant ${tenantId}`);
+    return classify(await createSamlChecker({ ...p.tenant, ...(multi ? { tenantId } : {}) }).check(xml, at), p.tenant, false);
+  }
+
+  const single = per.get(tenants[0].id)!;
+  return {
+    handle, report, checkFor,
+    check: single.checker.check, expectRequest: single.checker.expectRequest, state: () => single.compare.state(),
+    states: () => Object.fromEntries([...per].map(([k, p]) => [k, p.compare.state()])),
+    tenants: () => tenants.map((t) => t.id),
+    crossTenantCounts: () => Object.fromEntries([...per].map(([k, p]) => [k, p.crossTenant])),
+  };
 }

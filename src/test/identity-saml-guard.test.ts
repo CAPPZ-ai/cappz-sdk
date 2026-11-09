@@ -29,7 +29,7 @@ function response(o: Opts = {}): string {
 async function setup(extra: Partial<SamlGuardConfig> = {}) {
   const operator = await generateSigningKey();
   const pin = await declareIdpPin({ idpEntityId: 'https://idp.example.com', certificate: CERT, expiresAt: iso(86400_000) }, operator);
-  const cfg: SamlGuardConfig = { idpEntityId: 'https://idp.example.com', spEntityId: 'https://app.example.com', acsUrls: [ACS], pins: [pin], trustedPinSigners: [operator.publicKeyHex], ...extra };
+  const cfg: SamlGuardConfig = { idpEntityId: 'https://idp.example.com', spEntityId: 'https://app.example.com', acsUrls: [ACS], pins: [pin], trustedPinSigners: [operator.publicKeyHex], signature: 'left-to-sp', ...extra }; // structure tests: fake signatures
   return { cfg, checker: createSamlChecker(cfg), operator };
 }
 

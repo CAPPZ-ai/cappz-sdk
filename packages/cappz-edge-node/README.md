@@ -149,6 +149,13 @@ v15-09-00 (details: [docs/IDENTITY_TRUST_TRANSPORTS.md](../../docs/IDENTITY_TRUS
   shadow first (`GET /cappz/saml/report`), then `CAPPZ_SAML_MODE=enforce`. Env:
   `CAPPZ_SAML_CONFIG`, `CAPPZ_SAML_UPSTREAM`, `CAPPZ_SAML_HOST`, `CAPPZ_SAML_MIN_RESPONSES|DAYS`;
   pins in `<data>/saml-idp-pins.json` (`saml-guard.ts pin`). Guide: docs/SAML_GUARD.md.
+- **v15-37-00 — SAML Guard for multi-tenant SaaS:** `CAPPZ_SAML_CONFIG` takes a `tenants` list
+  (each its own IdP, ACS URL, SP entity, pins, report and mode; the login URL picks the tenant — pass
+  `Host` and `X-Forwarded-Proto`); the XML signature is verified built in with pinned keys; per-tenant
+  enforce/rollback are operator-signed records in `<data>/saml-tenant-modes.jsonl`
+  (`CAPPZ_SAML_OPERATORS` adds trusted keys); alerts in `<data>/saml-alerts.jsonl`; shadow state saved
+  on shutdown. `tools/saml-wizard.ts`: keygen, init, add-tenant (from IdP metadata), doctor, test,
+  status --alert, enforce, shadow, rotate, monitor — or no arguments for the guided setup.
 - **Fixed:** UDP sockets bound without a hostname land on 127.0.0.1 in Deno, and
   `joinMulticast` is not a Deno API, so beacons never left the host before v15-09-00. Sockets
   now bind `0.0.0.0` and join per interface (`--allow-sys=networkInterfaces`; or pin
