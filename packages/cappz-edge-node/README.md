@@ -142,6 +142,13 @@ v15-09-00 (details: [docs/IDENTITY_TRUST_TRANSPORTS.md](../../docs/IDENTITY_TRUS
   deployments (`--clients N`); `tools/write-race.ts` sends overlapping writes and reads back
   what was kept (php-fpm kept 12 of 88 confirmed orders; the port 300 of 300). Ports can replay
   the node's own TXs from `CAPPZ_NODE_DATA` (set by `php-port.ts serve`). Guide: docs/MOVE_OFF_PHP.md.
+- **v15-36-00 — SAML: catch forged logins, then refuse them:** `tools/saml-reconcile.ts` finds
+  SaaS logins your identity provider never issued from two read-only log exports (exit 1 on
+  findings, so a timer can alert; `seal` signs and chains issuance batches, hashed subjects).
+  `--saml 41451` (or `tools/saml-guard.ts`) runs SAML Guard in front of a SAML SP you host:
+  shadow first (`GET /cappz/saml/report`), then `CAPPZ_SAML_MODE=enforce`. Env:
+  `CAPPZ_SAML_CONFIG`, `CAPPZ_SAML_UPSTREAM`, `CAPPZ_SAML_HOST`, `CAPPZ_SAML_MIN_RESPONSES|DAYS`;
+  pins in `<data>/saml-idp-pins.json` (`saml-guard.ts pin`). Guide: docs/SAML_GUARD.md.
 - **Fixed:** UDP sockets bound without a hostname land on 127.0.0.1 in Deno, and
   `joinMulticast` is not a Deno API, so beacons never left the host before v15-09-00. Sockets
   now bind `0.0.0.0` and join per interface (`--allow-sys=networkInterfaces`; or pin

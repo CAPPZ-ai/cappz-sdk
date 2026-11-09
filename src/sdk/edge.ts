@@ -17,3 +17,6 @@ export { createShadowComparison, readLegacyVerdict, denialReason, quantile, DEFA
 export type { ShadowReport, ShadowState, RetirePolicy, LegacyVerdict, Agreement, CostAssumptions } from '../lib/identity/shadowCompare';
 export { readBounded, isDeclarationShape } from '../lib/identity/edgeVerify';
 export { createReloader } from '../lib/identity/evidenceReload';
+// v15-36-00 — SAML Guard: a second, independent check in front of a SAML ACS (refuses ambiguity; shadow, then enforce).
+export { createSamlGuard, createSamlChecker, parseStrictXml, decodeSamlResponse, authnRequestIdFromUrl, spVerdict, SamlRefusal, SAML_NS, SAML_ATTACK_REASONS, SAML_SIGNATURE_ALGORITHMS, SAML_DIGEST_ALGORITHMS, DEFAULT_SAML_GATE, DEFAULT_XML_LIMITS } from '../lib/identity/samlGuard';
+export type { SamlGuardConfig, SamlGuardOptions, SamlVerdict, SamlReason, SamlGateReport, SamlGatePolicy, XmlEl, XmlLimits } from '../lib/identity/samlGuard';

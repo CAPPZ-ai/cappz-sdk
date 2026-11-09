@@ -23,3 +23,8 @@ export { generateBoxKeyPair, newContentKey, sealTo, openWith } from '../lib/cryp
 export { runTrustComparison, exposureRows, buildPki, signCrl, verifyX509, TRADEOFFS, DEFAULT_COMPARISON_ASSUMPTIONS, ASSUMPTION_LABELS } from '../lib/identity/trustComparison';
 export type { ComparisonReport, ComparisonAssumptions, ExposureRow, LatencyRow, CostRow, Tradeoff, X509Verdict } from '../lib/identity/trustComparison';
 export { issueCertificate, verifySignedBy } from '../lib/identity/x509';
+// v15-36-00 — SAML: find SaaS logins your IdP never issued (two log exports, read-only), sealed issuance batches, operator-signed IdP certificate pins.
+export { reconcileSamlLogins, issuedFromOktaSystemLog, issuedFromEntraSignIns, issuedFromRecords, loginsFromRecords, parseCsv, sealIssuedBatch, openSealedBatches, hashLogins } from '../lib/identity/samlReconcile';
+export type { IssuedAssertion, SpLogin, LoginState, ReconcileOptions, ReconcileReport, FieldMapping, SealedIssuedBatch } from '../lib/identity/samlReconcile';
+export { declareIdpPin, acceptedPins, certificateSha256 } from '../lib/identity/samlGuard';
+export type { IdpPin } from '../lib/identity/samlGuard';

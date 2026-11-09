@@ -34,6 +34,8 @@
  * verification gateway for nginx auth_request / proxy mode (verifyGateway.ts).
  * --routes 41450 (with CAPPZ_ROUTES_MODULE / CAPPZ_ROUTES_UPSTREAM) serves the route
  * host that moves a PHP app off php-fpm one route at a time (routes.ts).
+ * --saml 41451 (with CAPPZ_SAML_CONFIG / CAPPZ_SAML_UPSTREAM) serves SAML Guard
+ * in front of a SAML service provider, shadow first (samlGuard.ts).
  * --legacy 41447 serves the DMZ quarantine and legacy front end, and pulls
  * partner FTPS/SFTP directories (legacy.ts). CAPPZ_SERVE_WALLETS lists the
  * wallets whose multicast groups the node answers (UDP 41448): a signed
@@ -49,6 +51,7 @@ import { startBeacon, listenBeacons, listenWalletGroups, askWalletGroup } from '
 import { resolveTls, rotateTls } from './tlsIdentity.ts';
 import { serveVerifyGateway, verifyGatewayFor } from './verifyGateway.ts';
 import { serveRoutes } from './routes.ts';
+import { serveSamlGuard } from './samlGuard.ts';
 import { serveLegacy } from './legacy.ts';
 import { serveLdap } from './ldap.ts';
 import { memberTableFromStore } from './directory.ts';
@@ -80,6 +83,7 @@ const legacyPort = arg('legacy', 41447);
 const ftpsPort = arg('ftps', 41449);
 const ldapPort = arg('ldap', 41389);
 const routesPort = arg('routes', 41450);
+const samlPort = arg('saml', 41451);
 const powAddress = Deno.env.get('CAPPZ_POW') ?? 'unset-pow';
 const dataDir = Deno.env.get('CAPPZ_NODE_DATA') ?? './cappz-node-data';
 const key = await loadNodeKey();
@@ -181,6 +185,8 @@ await Promise.all([
   serveLdap(ldapPort, directoryRows),
   // v15-12-00: the route host runs when there is a port module or a legacy app to front.
   Deno.env.get('CAPPZ_ROUTES_MODULE') || Deno.env.get('CAPPZ_ROUTES_UPSTREAM') ? serveRoutes({ port: routesPort, dataDir, nodeAddress: powAddress }) : Promise.resolve(),
+  // v15-36-00: SAML Guard in front of a SAML service provider you host (samlGuard.ts), when configured.
+  Deno.env.get('CAPPZ_SAML_CONFIG') ? serveSamlGuard(samlPort, dataDir) : Promise.resolve(),
   key && serveWallets.length
     ? listenWalletGroups({
         wallets: serveWallets, key, endpoints: groupEndpoints, declaredKeys: sessionOpts.declaredKeysFor,

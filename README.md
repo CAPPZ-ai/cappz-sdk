@@ -1,6 +1,6 @@
 # CAPPZ SDK
 
-The public part of [CAPPZ](https://cappz.ai), version 15.35.1. Apache-2.0.
+The public part of [CAPPZ](https://cappz.ai), version 15.36.0. Apache-2.0.
 
 - **`@cappz/sdk/port`**: move a PHP app off php-fpm one route at a time. Inventory the app, run each new handler beside PHP and compare every response, cut over on the evidence, roll back in about a second.
 - **`@cappz/sdk/identity`**: KeyZ, wallet-keyed trust. Keys are trusted through declarations the wallet signs, with revocations replayed offline and short delegations; SD-JWT identity claims; X.509 as a projection of a declaration.
@@ -109,6 +109,14 @@ Moving your own app: [docs/MOVE_OFF_PHP.md](docs/MOVE_OFF_PHP.md). Identity, Key
   and `tools/gateway.ts` run the comparison on your own instance. Examples:
   `packages/cappz-sdk/examples/php/verify_route.php` (the legacy check, with its verdict headers) and
   `packages/cappz-sdk/examples/php/after_retirement.php` (the route behind nginx auth_request).
+- **SAML: catch forged logins, then refuse them** (15.36.0) — `reconcileSamlLogins` (`@cappz/sdk/identity`)
+  finds SaaS logins your identity provider never issued, from two read-only log exports (Okta System Log,
+  Entra sign-ins, or any CSV/JSON by field mapping), with gaps reported as their own state; `sealIssuedBatch`
+  makes the issuance record tamper-evident. `createSamlGuard` (`@cappz/sdk/edge`) is a second, independent
+  check in front of a SAML ACS you host: one assertion in one place, no DOCTYPE/comments/namespace rebinding,
+  signatures referencing their own element, SHA-256+, operator-signed certificate pins, issuer / destination /
+  recipient / audience / time / InResponseTo / replay — shadow first, enforce on its report.
+  `packages/cappz-edge-node/tools/saml-reconcile.ts` and `tools/saml-guard.ts`; [docs/SAML_GUARD.md](docs/SAML_GUARD.md).
 - **Move off PHP, route by route** (`@cappz/sdk/port`, 15.12.0) — `inventoryPhpApp` reads a
   PHP app (routes, tables and file stores with their readers and writers, sessions, uploads,
   cron, secrets, libraries) and orders it in waves; `createRouteHost` serves ported routes,

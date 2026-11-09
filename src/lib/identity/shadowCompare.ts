@@ -97,7 +97,9 @@ export function createShadowComparison(o: { policy?: RetirePolicy; state?: Shado
   const policy = o.policy ?? DEFAULT_RETIRE_POLICY;
   const s: ShadowState = o.state ?? { startedAt: now(), lastAt: now(), counts: { agree: 0, 'cappz-stricter': 0, 'cappz-looser': 0, 'legacy-missing': 0 }, stricterReasons: {}, looserSamples: [], denials: { cappz: 0, legacy: 0 }, cappzMs: newHist(), legacyMs: newHist() };
 
-  function record(r: { cappz: Pick<EdgeVerdict, 'allowed' | 'signature' | 'trust' | 'content'>; cappzMs: number; legacy: LegacyVerdict; legacyMs?: number; path: string }): Agreement {
+  /** cappz: an edge verdict, or any other checker's verdict with its own reason (SAML Guard, v15-36-00). */
+  function record(r: { cappz: Pick<EdgeVerdict, 'allowed' | 'signature' | 'trust' | 'content'> | { allowed: boolean; reason: string }; cappzMs: number; legacy: LegacyVerdict; legacyMs?: number; path: string }): Agreement {
+    const why = () => ('reason' in r.cappz ? r.cappz.reason : denialReason(r.cappz));
     s.lastAt = now();
     addHist(s.cappzMs, r.cappzMs);
     if (r.legacyMs !== undefined && Number.isFinite(r.legacyMs)) addHist(s.legacyMs, r.legacyMs);
@@ -106,8 +108,8 @@ export function createShadowComparison(o: { policy?: RetirePolicy; state?: Shado
     let a: Agreement;
     if (r.legacy === 'missing') a = 'legacy-missing';
     else if (r.cappz.allowed === (r.legacy === 'allow')) a = 'agree';
-    else if (!r.cappz.allowed) { a = 'cappz-stricter'; const why = denialReason(r.cappz); s.stricterReasons[why] = (s.stricterReasons[why] ?? 0) + 1; }
-    else { a = 'cappz-looser'; if (s.looserSamples.length < 50) s.looserSamples.push({ at: s.lastAt, cappz: `${r.cappz.signature} ${r.cappz.trust}`, path: r.path }); }
+    else if (!r.cappz.allowed) { a = 'cappz-stricter'; const w = why(); s.stricterReasons[w] = (s.stricterReasons[w] ?? 0) + 1; }
+    else { a = 'cappz-looser'; if (s.looserSamples.length < 50) s.looserSamples.push({ at: s.lastAt, cappz: 'reason' in r.cappz ? r.cappz.reason : `${r.cappz.signature} ${r.cappz.trust}`, path: r.path }); }
     s.counts[a]++;
     return a;
   }
