@@ -68,3 +68,5 @@ export const skuAddress = (listingOrRequestId: string) => `${MARKETPLACE_POW_ROO
 export const reputationAddress = (partyId: string, date: string) => `${partyAddress(partyId)}/reputation/${date}`;
 /** v15-32-00: an evaluator's signed verdict on one deliverable of one milestone (HD child of the milestone; the deliverable's hash names it). */
 export const verdictAddress = (contractId: string, milestone: number, deliverableSha256: string) => `${contractMilestone(contractId, milestone)}/verdicts/${deliverableSha256.slice(0, 16)}`;
+/** v15-38-00: payment instructions a party declared (HD child of the party); anchors and the revocation are its children. */
+export const payeeInstructionsAddress = (partyId: string, instructionsId: string) => `${partyAddress(partyId)}/payee-instructions/${instructionsId}`;

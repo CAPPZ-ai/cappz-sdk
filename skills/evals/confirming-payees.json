@@ -1,0 +1,43 @@
+[
+  {
+    "skills": ["confirming-payees"],
+    "query": "We got an email from the seller's attorney with updated wiring instructions for the $26M closing. Routing 026009593, account 4417 2209 18. The seller is p-5c1e9a0b2d3f4e6a on our contract ct-77aa. Can we wire it?",
+    "files": [],
+    "expected_behavior": [
+      "Does not take the payee id or instructions from the email as trusted; uses the party id from the contract",
+      "Runs cappz-market confirm-payee p-5c1e9a0b2d3f4e6a --routing 026009593 --account 4417220918 --contract ct-77aa (asking approval for the 0.11 XRP on mainnet)",
+      "On not-declared or declared-by-other: says do not wire, and to call the seller on a number already on file",
+      "Recommends a second approver and a small first transfer confirmed back, and notes only the bank can confirm the holder name"
+    ]
+  },
+  {
+    "skills": ["confirming-payees"],
+    "query": "Pay 40,000 XRP to the supplier p-9d8c… at rHb9CJAW…dyTh tag 7 — I copied the address from my last payment.",
+    "files": [],
+    "expected_behavior": [
+      "Runs confirm-payee with --address, --tag and --amount before paying",
+      "On lookalike-address: stops and explains address poisoning; copies the address from cappz-market payee list --party instead",
+      "Reports signedByCappz and hashMatched and keeps the report path"
+    ]
+  },
+  {
+    "skills": ["confirming-payees"],
+    "query": "Set up our company so customers can verify where to pay us; we're paid at our exchange deposit address rExch… with tag 482913.",
+    "files": [],
+    "expected_behavior": [
+      "Runs cappz-market payee declare --address rExch… --tag 482913 (with --yes on mainnet after the person agrees)",
+      "Explains endorsement from the profile wallet, the 72-hour cooling period, and that control-not-proven is expected for an exchange address",
+      "Advises putting the party id in contracts and running payee list / revoke on compromise"
+    ]
+  },
+  {
+    "skills": ["confirming-payees"],
+    "query": "confirm-payee says binding.state is cooling, inForceFrom tomorrow 14:00 UTC. The payment is due today.",
+    "files": [],
+    "expected_behavior": [
+      "Explains the cooling period protects against a taken-over payee account",
+      "Recommends waiting, or confirming by phone at a number already held and getting a second approver, rather than paying on the new instructions",
+      "Does not lower the cooling period below 24 hours or treat cooling as confirmed"
+    ]
+  }
+]

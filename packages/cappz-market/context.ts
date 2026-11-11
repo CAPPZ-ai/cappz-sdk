@@ -60,6 +60,8 @@ export interface Discovery {
     stageEvaluator?: { url: string; path: string; publicKey: string; priceXrp: number; networks: string[] };
     listingDrafter?: { url: string; path: string; priceXrp: number; networks: string[] };
     subcontractScout?: { url: string; path: string; priceXrp: number; networks: string[] };
+    /** v15-38-00: priceXrp is the whole job (platform fee + service fee), paid in two stages to two addresses. */
+    payeeConfirmation?: { url: string; path: string; publicKey: string; priceXrp: number; networks: string[] };
   };
 }
 

@@ -33,6 +33,13 @@
  * `subcontract` commands for a contract). Jobs are partitioned per agent in
  * D1. Verdicts are signed by the same key under their own domain. None of
  * them writes to the marketplace log: parties act with cappz-market.
+ *
+ * v15-38-00: the payee confirmation (/<net>/payee): are these payment
+ * instructions the ones the payee declared and endorsed from their wallet,
+ * past the cooling period — not merely an address that exists
+ * (payeeConfirmation.ts). Two payees in one job, nobody forwarding money: the
+ * platform fee is paid up front to the CAPPZ treasury, the service fee to the
+ * operator once the signed report's hash is shown.
  */
 import { isValidClassicAddress } from 'xrpl';
 import { createPaidAgent, SCHEDULE_PRESETS, type JobEvent, type JobStore } from '../../src/lib/agentKit/paidAgent';
@@ -51,6 +58,9 @@ import { evaluationTarget, evaluateDeliverable, signVerdict, deliverableSha256Of
 import { acceptanceHash } from '../../src/lib/marketplace/acceptance';
 import { normalizeDraft, MAX_DRAFT_TEXT } from '../../src/lib/marketplace/listingDraft';
 import { scoutSubcontracts } from '../../src/lib/marketplace/subcontractScout';
+import { runPayeeConfirmation, signPayeeReport, type PayeeConfirmRequest } from '../../src/lib/marketplace/payeeConfirmation';
+import type { MarketTxLike } from '../../src/lib/marketplace/ledger';
+import type { AgentOffer } from '../../src/lib/agentKit/paidAgent';
 import type { ModelEnv, ModelPorts } from './modelPorts';
 
 /**
@@ -82,6 +92,9 @@ export interface Env {
   PRICE_SCOUT_XRP?: string;
   /** Largest deliverable the evaluator reads, in bytes (default 512 KB; never above MAX_DELIVERABLE_BYTES). */
   MAX_DELIVERABLE_BYTES?: string;
+  /** v15-38-00 payee confirmation: the service fee (to AGENT_PAY_TO_*) and the platform fee (to PAY_TO_*), in XRP. */
+  PRICE_PAYEE_XRP?: string;
+  PRICE_PAYEE_PLATFORM_XRP?: string;
   /** Model for rubric questions, drafts and scout plans (default claude-haiku-5-5); the key is a secret. */
   MODEL?: string;
   ANTHROPIC_API_KEY?: string;
@@ -91,7 +104,7 @@ type Net = 'mainnet' | 'testnet';
 const NETS: Net[] = ['mainnet', 'testnet'];
 const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type, content-digest, signature, signature-input, cappz-wallet, cappz-party', 'access-control-allow-methods': 'GET, POST, OPTIONS' };
 /** The card's version follows the SDK release that ships this worker. */
-export const SERVICE_VERSION = '15.32.2';
+export const SERVICE_VERSION = '15.38.0';
 const json = (code: number, body: unknown) => new Response(JSON.stringify(body, null, 2), { status: code, headers: { 'content-type': 'application/json; charset=utf-8', ...CORS } });
 const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 const unhex = (h: string) => new Uint8Array((h.match(/../g) ?? []).map((x) => parseInt(x, 16)));
@@ -110,10 +123,14 @@ export function d1JobStore(db: D1, network: string): JobStore {
 }
 
 /** The marketplace's public log for one network, replayed; cached for a minute per isolate. */
-const cache = new Map<Net, { at: number; state: MarketState }>();
+const cache = new Map<Net, { at: number; state: MarketState; txs: MarketTxLike[] }>();
 async function marketState(env: Env, network: Net, fresh = false): Promise<MarketState | null> {
+  return (await marketLog(env, network, fresh))?.state ?? null;
+}
+/** The replayed state and the attributed entries it came from (the payee confirmation replays declarations from the entries). */
+async function marketLog(env: Env, network: Net, fresh = false): Promise<{ state: MarketState; txs: MarketTxLike[] } | null> {
   const hit = cache.get(network);
-  if (!fresh && hit && Date.now() - hit.at < 60_000) return hit.state;
+  if (!fresh && hit && Date.now() - hit.at < 60_000) return hit;
   const partition = marketPartition(network);
   const port: PublicLogPort = {
     insert: async () => ({ error: { message: 'read-only' } }),
@@ -125,9 +142,10 @@ async function marketState(env: Env, network: Net, fresh = false): Promise<Marke
     },
   };
   try {
-    const state = resolveMarket(attributePublicLog(await pullPublicLog(port, null)).accepted);
-    cache.set(network, { at: Date.now(), state });
-    return state;
+    const txs = attributePublicLog(await pullPublicLog(port, null)).accepted;
+    const entry = { at: Date.now(), state: resolveMarket(txs), txs };
+    cache.set(network, entry);
+    return entry;
   } catch { return null; }
 }
 
@@ -291,6 +309,70 @@ export async function openNamedJob(env: Env, network: Net, name: AgentName, req:
   return { code: 201, body: { job: done, pay: (await agent.job(opened.job.jobId))?.pay ?? opened.pay } };
 }
 
+/* ── v15-38-00: payee confirmation ───────────────────────────────────────────────────────────────────── */
+
+export const payeePrices = (env: Partial<Env>) => ({ service: Number(env.PRICE_PAYEE_XRP || '0.1'), platform: Number(env.PRICE_PAYEE_PLATFORM_XRP || '0.01') });
+
+/** Two stages, two payees: the platform fee up front to the CAPPZ treasury, the service fee to the operator for the signed report. */
+export function payeeOffer(env: Partial<Env>, network: Net): AgentOffer {
+  const { service, platform } = payeePrices(env); const total = Math.round((service + platform) * 1e6) / 1e6;
+  const treasury = network === 'mainnet' ? env.PAY_TO_MAINNET! : env.PAY_TO_TESTNET!;
+  const operator = (network === 'mainnet' ? env.AGENT_PAY_TO_MAINNET : env.AGENT_PAY_TO_TESTNET) || treasury;
+  return {
+    name: `CAPPZ payee confirmation (${network})`,
+    description: 'Before a large payment: are these the payment instructions the payee declared — on the market, endorsed from the payee\'s own XRPL wallet, past a 72-hour cooling period, not revoked or replaced — and not a lookalike of an address you paid, or a change from where you paid them before? XRPL addresses (plus every counterparty-check fact) or a bank account by salted digest. Signed ok / warn / stop report. Rules: github.com/CAPPZ-ai/cappz-sdk/blob/main/src/lib/marketplace/payeeConfirmation.ts',
+    payTo: operator, network, currency: 'XRP', price: total,
+    stages: [
+      { label: 'Platform fee', kind: 'upfront', share: platform / total, payTo: treasury, deliverable: 'The check runs.' },
+      { label: 'Payee confirmation', kind: 'completion', share: service / total, payTo: operator, deliverable: 'The signed report (its SHA-256 is shown before you pay).' },
+    ],
+  };
+}
+
+/** Validate a payee confirmation request before anything is opened (the payer's bank number never arrives: only digests). */
+export function payeeInput(input: unknown): Omit<PayeeConfirmRequest, 'network'> {
+  const i = (typeof input === 'object' && input ? input : {}) as Record<string, unknown>;
+  const usage = 'Send {"input": {"payee": "p-…", "address": "r…", "destinationTag"?: 7}} or {"input": {"payee": "p-…", "bankDigests": ["<sha256>", …]}}; optionally "payer", "amount", "currency", "contractId", "coolingHours".';
+  if (typeof i.payee !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(i.payee)) throw new Error(`Name the payee by party id. ${usage}`);
+  let instrument: PayeeConfirmRequest['instrument'];
+  if (i.address !== undefined) {
+    if (!isValidClassicAddress(String(i.address))) throw new Error(`${String(i.address)} is not a valid XRPL classic address.`);
+    const tag = i.destinationTag === undefined ? undefined : Number(i.destinationTag);
+    if (tag !== undefined && !(Number.isInteger(tag) && tag >= 0 && tag <= 0xffffffff)) throw new Error('destinationTag is a whole number from 0 to 4294967295.');
+    instrument = { kind: 'xrpl', address: String(i.address), ...(tag !== undefined ? { destinationTag: tag } : {}) };
+  } else if (Array.isArray(i.bankDigests)) {
+    if (!i.bankDigests.length || i.bankDigests.length > 32 || !i.bankDigests.every((d) => typeof d === 'string' && /^[0-9a-f]{64}$/.test(d))) throw new Error('bankDigests is 1 to 32 SHA-256 digests (bankAccountDigest with each declaration\'s salt), never the account number.');
+    instrument = { kind: 'bank', digests: i.bankDigests as string[] };
+  } else throw new Error(usage);
+  if (i.payer !== undefined && !isValidClassicAddress(String(i.payer))) throw new Error('payer is not a valid XRPL classic address.');
+  const amount = i.amount === undefined ? undefined : Number(i.amount);
+  if (amount !== undefined && !(amount >= 0)) throw new Error('amount must be a number.');
+  const currency = i.currency === undefined ? undefined : currencyOf(String(i.currency));
+  if (i.currency !== undefined && !currency) throw new Error('currency must name a payment asset: XRP, CAPPZ, USD-tokenZ/1 (RLUSD) or USD.');
+  if (i.contractId !== undefined && !/^ct-[A-Za-z0-9-]{1,64}$/.test(String(i.contractId))) throw new Error('contractId is ct-….');
+  const cooling = i.coolingHours === undefined ? undefined : Number(i.coolingHours);
+  if (cooling !== undefined && !(cooling >= 24 && cooling <= 24 * 30)) throw new Error('coolingHours is from 24 to 720.');
+  return { payee: i.payee, instrument, ...(i.payer ? { payer: String(i.payer) } : {}), ...(amount !== undefined ? { amount } : {}), ...(currency ? { currency } : {}), ...(i.contractId ? { contractId: String(i.contractId) } : {}), ...(cooling !== undefined ? { coolingHours: cooling } : {}) };
+}
+
+export function payeeAgent(env: Env, network: Net) {
+  return createPaidAgent({
+    offer: payeeOffer(env, network),
+    store: d1JobStore(env.DB, `${network}:payee`),
+    ledger: rpcLedgerReader,
+    work: async ({ input }) => {
+      const log = await marketLog(env, network, true);
+      if (!log) throw new Error('The marketplace log could not be read just now; the confirmation is retried.');
+      const report = await runPayeeConfirmation({ network, ...payeeInput(input) }, log.state, log.txs);
+      // Never deliver a report built on an unreadable ledger: fail the stage (it is retried) instead.
+      if (report.binding.state === 'anchor-unreadable' || report.counterparty?.ledger?.error) throw new Error('The ledger could not be read just now; the confirmation is retried, and the service fee is not due until it succeeds.');
+      return JSON.stringify(signPayeeReport(report, env.CHECK_SIGNING_SEED), null, 2);
+    },
+  });
+}
+
+const PAYEE_HOW = 'cappz-market confirm-payee <party> --address r… [--tag 7] [--amount 25] — or POST /<network>/payee/jobs {"input": {"payee": "p-…", "address": "r…"}} → pay the platform fee shown → POST /jobs/<id>/payments → pay the confirmation stage → GET /jobs/<id>/stages/1/result';
+
 /**
  * Deal-bound signing approval (free): replay the public log now (never a cached copy, so a dispute raised a moment
  * ago counts) and approve this exact unsigned escrow transaction, or say why not. Read-only: nothing is stored.
@@ -320,10 +402,11 @@ export function serviceCard(env: Env, origin: string, network: Net | null) {
   const paid = network ? agentFor(env, network).card() : undefined;
   const card = buildAgentCard({
     url: network ? `${origin}/${network}` : origin, version: SERVICE_VERSION, ...(paid ? { paid } : { manifest: { name: 'cappz-check', version: SERVICE_VERSION, network: 'xrpl', operations: [] } }),
-    name: network ? undefined : 'CAPPZ check service', description: network ? undefined : 'Counterparty checks, stage evaluations, listing drafts and subcontract scouting (paid, per network); deal-bound signing approvals and reputation attestations (free). Reports, verdicts, approvals and attestations are signed with Ed25519.',
+    name: network ? undefined : 'CAPPZ check service', description: network ? undefined : 'Counterparty checks, payee confirmations, stage evaluations, listing drafts and subcontract scouting (paid, per network); deal-bound signing approvals and reputation attestations (free). Reports, verdicts, approvals and attestations are signed with Ed25519.',
     provider: { organization: 'CAPPZ', url: 'https://cappz.ai' }, documentationUrl: 'https://github.com/CAPPZ-ai/cappz-sdk/tree/main/packages/cappz-check-worker',
     extraSkills: [...(network ? [] : NETS.map((n) => ({ id: `counterparty-check-${n}`, name: `CAPPZ counterparty check (${n})`, description: `Paid per check: ${origin}/${n}/.well-known/agent-card.json describes it.`, tags: ['paid', `xrpl-${n}`] }))),
       ...nets.flatMap((n) => AGENT_NAMES.map((a) => ({ id: `${a}-${n}`, name: `${AGENT_TEXT[a].name} (${n})`, description: `Paid, ${agentPrice(env, a)} XRP per job: ${origin}/${n}/${a}/agent. ${AGENT_TEXT[a].howToUse}`, tags: ['paid', a, `xrpl-${n}`], inputModes: ['application/json'], outputModes: ['application/json'] }))),
+      ...nets.map((n) => ({ id: `payee-${n}`, name: `CAPPZ payee confirmation (${n})`, description: `Paid, ${payeePrices(env).platform} XRP platform fee + ${payeePrices(env).service} XRP per confirmation: ${origin}/${n}/payee/agent. ${PAYEE_HOW}`, tags: ['paid', 'payee', `xrpl-${n}`], inputModes: ['application/json'], outputModes: ['application/json'] })),
       ...FREE_SKILLS(origin, nets)],
     requestSigning: 'optional',
     signingKeyTrust: 'This card, reports, approvals and attestations are signed by the key published in the marketplace discovery document (/.well-known/cappz-market.json, services.counterpartyCheck.publicKey) and at GET /key: trust state published-key. No KeyZ wallet declaration names it yet.',
@@ -353,7 +436,43 @@ export default {
       }
       if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/key')) {
         return json(200, { service: 'CAPPZ counterparty check', price: `${env.PRICE_XRP || '0.01'} XRP per check`, networks: Object.fromEntries(NETS.map((n) => [n, `${url.origin}/${n}`])), signature: { alg: 'Ed25519', publicKey }, howToUse: 'cappz-market check <address|party> [--network mainnet] — or POST /<network>/jobs {"input": {"address": "r…"}} → pay the stage shown → GET /<network>/jobs/<id>/stages/0/result', approvals: 'Free: POST /<network>/authorize {"contractId", "milestone", "tx"} → a signed approval of that exact unsigned escrow transaction or token stage payment, or the reasons it is refused. Rules: https://github.com/CAPPZ-ai/cappz-sdk/blob/main/src/lib/marketplace/signingApproval.ts', reputation: 'Free: GET /<network>/reputation/<partyId> → a signed reputation attestation.', agentCard: `${url.origin}/.well-known/agent-card.json`, rules: 'https://github.com/CAPPZ-ai/cappz-sdk/blob/main/src/lib/marketplace/counterpartyCheck.ts',
-          agents: Object.fromEntries(AGENT_NAMES.map((a) => [a, { name: AGENT_TEXT[a].name, price: `${agentPrice(env, a)} XRP per job`, networks: Object.fromEntries(NETS.map((n) => [n, `${url.origin}/${n}/${a}`])), howToUse: AGENT_TEXT[a].howToUse }])) });
+          agents: { ...Object.fromEntries(AGENT_NAMES.map((a) => [a, { name: AGENT_TEXT[a].name, price: `${agentPrice(env, a)} XRP per job`, networks: Object.fromEntries(NETS.map((n) => [n, `${url.origin}/${n}/${a}`])), howToUse: AGENT_TEXT[a].howToUse }])),
+            payee: { name: 'CAPPZ payee confirmation', price: `${payeePrices(env).platform} XRP platform fee + ${payeePrices(env).service} XRP per confirmation`, networks: Object.fromEntries(NETS.map((n) => [n, `${url.origin}/${n}/payee`])), howToUse: PAYEE_HOW } } });
+      }
+      // v15-38-00 payee confirmation: /<net>/payee[/agent|/health|/jobs|/jobs/<id>[/payments|/retry|/stages/<n>/result]]
+      const pa = /^\/(mainnet|testnet)\/payee(\/agent|\/health|\/jobs|\/jobs\/(job-[0-9a-f]{16})(\/payments|\/retry|\/stages\/(\d+)\/result)?)?$/.exec(url.pathname);
+      if (pa) {
+        const network = pa[1] as Net; const sub = pa[2]; const id = pa[3]; const tail = pa[4]; const stageN = pa[5];
+        const agent = payeeAgent(env, network);
+        if (req.method === 'GET' && (!sub || sub === '/agent')) return json(200, { ...agent.card(), publicKey, howToUse: PAYEE_HOW });
+        if (req.method === 'GET' && sub === '/health') return json(200, { ok: true, network, agent: 'payee', stages: agent.card().stages.map((s) => ({ label: s.label, payTo: s.payTo, amount: s.amount })) });
+        if (req.method === 'POST' && sub === '/jobs') {
+          const body = (await req.json().catch(() => ({}))) as { input?: unknown };
+          const input = payeeInput(body.input);
+          const state = await marketState(env, network, true);
+          if (!state) return json(503, { error: 'The marketplace log could not be read just now; nothing was opened or charged. Retry shortly.' });
+          if (!state.parties.has(input.payee)) return json(404, { error: `No party ${input.payee} on the ${network} market: do not pay these instructions. Get the payee id from your contract. Nothing was opened or charged.` });
+          // The job keeps the request as sent (validated above); the work step validates it again when it runs.
+          const opened = await agent.openJob(body.input);
+          return json(201, opened);
+        }
+        if (id) {
+          if (req.method === 'GET' && !tail) { const j = await agent.job(id); return j ? json(200, j) : json(404, { error: 'Unknown job.' }); }
+          if (req.method === 'POST' && tail === '/payments') {
+            const b = (await req.json().catch(() => ({}))) as { txHash?: string };
+            const check = await agent.claimPayment(id, String(b.txHash ?? ''));
+            await agent.work(id); // the platform fee unlocks the check: run it now, so the report's hash is ready for the next stage
+            return json(200, check);
+          }
+          if (req.method === 'POST' && tail === '/retry') return json(200, await agent.retry(id));
+          if (req.method === 'GET' && stageN !== undefined) {
+            const r = await agent.result(id, Number(stageN));
+            if (r.state === 'released') return new Response(r.bytes as unknown as BodyInit, { status: 200, headers: { 'content-type': 'application/json; charset=utf-8', 'x-result-sha256': r.hash, ...CORS } });
+            if (r.state === 'payment-required') return json(402, { message: 'Ready — pay this stage to receive it.', resultSha256: r.hash, pay: r.pay });
+            return json(409, { message: 'Not ready yet.', job: r.job });
+          }
+        }
+        return json(405, { error: 'Method not allowed.' });
       }
       // v15-32-00 named agents: /<net>/<agent>[/agent|/health|/jobs|/jobs/<id>[/payments|/retry|/stages/<n>/result]]
       const na = /^\/(mainnet|testnet)\/(evaluate|draft|scout)(\/agent|\/health|\/jobs|\/jobs\/(job-[0-9a-f]{16})(\/payments|\/retry|\/stages\/(\d+)\/result)?)?$/.exec(url.pathname);

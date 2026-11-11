@@ -18,6 +18,12 @@
  * Runs unchanged in the browser, Node 22+, Bun and Deno: web-standard APIs
  * only, plus `xrpl`. Imports are relative with extensions so the file can be
  * shipped as-is in the downloadable agent.
+ *
+ * v15-38-00: a stage may name its own `payTo` — e.g. a platform fee paid up
+ * front to a treasury and the service fee to the operator — so one job can
+ * pay two parties with no one forwarding money. Each stage's payment is
+ * checked against that stage's destination; an offer without stage
+ * addresses behaves exactly as before.
  */
 import { isValidClassicAddress } from 'xrpl';
 import { fetchIncomingPayments, fetchLedgerTx, type LedgerTx, type XrplNetwork } from '../xrpl/ledgerCheck.ts';
@@ -36,7 +42,12 @@ export interface PaymentStage {
   share: number;
   /** What the buyer receives or can check at this stage. */
   deliverable?: string;
+  /** v15-38-00: where this stage is paid, when not the offer's `payTo` (a public classic address, never a secret). */
+  payTo?: string;
 }
+
+/** Where a stage is paid: its own address, or the offer's. */
+export const stagePayTo = (terms: Pick<AgentOffer, 'payTo' | 'stages'>, stage: number): string => terms.stages[stage]?.payTo ?? terms.payTo;
 
 export interface AgentOffer {
   name: string;
@@ -106,6 +117,7 @@ export function offerProblems(o: AgentOffer): string[] {
     const firstWork = o.stages.findIndex((x) => x.kind !== 'upfront');
     if (o.stages.slice(firstWork).some((x) => x.kind === 'upfront')) p.push('Upfront payments come before any work stage.');
     if (o.stages.some((x) => !x.label.trim())) p.push('Give every stage a name.');
+    if (o.stages.some((x) => x.payTo !== undefined && !isValidClassicAddress(x.payTo))) p.push('A stage\'s payment address is not a valid XRPL address.');
     if (o.price > 0 && stageAmountsMicro(o).some((a) => a <= 0n)) p.push('The price is too small to split into these stages.');
   }
   return p;
@@ -180,13 +192,14 @@ export async function paymentRequest(terms: JobTerms, jobId: string, stage: numb
   if (!s) throw new Error(`No stage ${stage}.`);
   const amount = stageAmounts(terms)[stage];
   const destinationTag = await destinationTagFor(jobId, stage);
+  const destination = stagePayTo(terms, stage);
   const Amount = terms.currency === 'XRP' ? String(toMicro(amount)) : { currency: terms.token!.hex, issuer: terms.token!.issuer, value: amount };
   const memo = (t: string, d: string) => ({ Memo: { MemoType: hex(enc.encode(t)), MemoData: hex(enc.encode(d)) } });
   return {
-    jobId, stage, label: s.label, network: terms.network, destination: terms.payTo, destinationTag,
+    jobId, stage, label: s.label, network: terms.network, destination, destinationTag,
     currency: terms.currency, issuer: terms.currency === 'XRP' ? null : terms.token!.issuer, amount,
-    preparedTx: { TransactionType: 'Payment', Destination: terms.payTo, DestinationTag: destinationTag, Amount, Memos: [memo('cappz-job', `${jobId}:${stage}`)] },
-    instructions: `Send ${amount} ${terms.token?.code ?? terms.currency} on XRPL ${terms.network} to ${terms.payTo} with destination tag ${destinationTag}.${terms.currency !== 'XRP' ? ` It must come from issuer ${terms.token?.issuer}; you need a trust line to it.` : ''}`,
+    preparedTx: { TransactionType: 'Payment', Destination: destination, DestinationTag: destinationTag, Amount, Memos: [memo('cappz-job', `${jobId}:${stage}`)] },
+    instructions: `Send ${amount} ${terms.token?.code ?? terms.currency} on XRPL ${terms.network} to ${destination} with destination tag ${destinationTag}.${terms.currency !== 'XRP' ? ` It must come from issuer ${terms.token?.issuer}; you need a trust line to it.` : ''}`,
   };
 }
 
@@ -200,7 +213,7 @@ export function checkPayment(terms: JobTerms, req: PaymentRequest, lt: LedgerTx)
   if (!lt.validated) return { ...base, state: 'not-validated', reason: 'The transaction is not in a validated ledger yet.', delivered: null };
   if (lt.result !== 'tesSUCCESS') return { ...base, state: 'failed', reason: `The transaction failed on the ledger (${lt.result || 'no result'}).`, delivered: null };
   if (lt.network !== terms.network) return { ...base, state: 'wrong-destination', reason: `The transaction is on ${lt.network}, the job is on ${terms.network}.`, delivered: null };
-  if (lt.type !== 'Payment' || lt.destination !== terms.payTo) return { ...base, state: 'wrong-destination', reason: 'The payment did not go to this agent’s address.', delivered: null };
+  if (lt.type !== 'Payment' || lt.destination !== req.destination || req.destination !== stagePayTo(terms, req.stage)) return { ...base, state: 'wrong-destination', reason: 'The payment did not go to this stage’s address.', delivered: null };
   if (lt.destinationTag !== req.destinationTag) return { ...base, state: 'wrong-tag', reason: `The destination tag is ${lt.destinationTag ?? 'missing'}; this stage needs ${req.destinationTag}.`, delivered: null };
   let got: bigint | null = null;
   if (terms.currency === 'XRP') { if (lt.deliveredDrops !== null) got = BigInt(lt.deliveredDrops); }
@@ -370,7 +383,7 @@ export function createPaidAgent(opts: PaidAgentOptions) {
     /** Public description of the agent: what it does, what it costs, how payment works. Holds nothing secret. */
     card() {
       const amounts = stageAmounts(offer);
-      return { name: offer.name, description: offer.description, network: offer.network, payTo: offer.payTo, currency: offer.currency, issuer: offer.token?.issuer ?? null, price: fromMicro(toMicro(offer.price)), stages: offer.stages.map((s, i) => ({ ...s, amount: amounts[i] })) };
+      return { name: offer.name, description: offer.description, network: offer.network, payTo: offer.payTo, currency: offer.currency, issuer: offer.token?.issuer ?? null, price: fromMicro(toMicro(offer.price)), stages: offer.stages.map((s, i) => ({ ...s, payTo: stagePayTo(offer, i), amount: amounts[i] })) };
     },
     async openJob(input: unknown): Promise<{ job: JobView; pay: PaymentRequest | null }> {
       const jobId = newJobId();
@@ -406,9 +419,12 @@ export function createPaidAgent(opts: PaidAgentOptions) {
       const open = (await Promise.all((await jobIds()).map(view))).filter((j): j is JobView => !!j && j.state !== 'completed' && j.state !== 'cancelled');
       let paid = 0, worked = 0;
       const waiting = (await Promise.all(open.map(async (j) => [j, await due(j)] as const))).filter(([, r]) => r) as Array<readonly [JobView, PaymentRequest]>;
+      // Each destination (the offer's, and any stage's own) is read once per tick.
+      const incomingBy = new Map<string, Promise<LedgerTx[]>>();
+      const incomingTo = (account: string) => { let p = incomingBy.get(account); if (!p) { p = ledger.incoming(offer.network, account); incomingBy.set(account, p); } return p; };
       if (waiting.length) {
-        const incoming = await ledger.incoming(offer.network, offer.payTo);
         for (const [j, req] of waiting) {
+          const incoming = await incomingTo(req.destination);
           // Every transaction with this stage's tag counts on its own merits: a later stray underpayment never hides an earlier full one.
           const checks = incoming.filter((t) => t.destinationTag === req.destinationTag).map((t) => checkPayment(j.terms, req, t));
           if (!checks.length) continue;

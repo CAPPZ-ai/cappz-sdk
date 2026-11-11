@@ -34,6 +34,8 @@ Generated from the tool's command table (packages/cappz-market/commands.ts). Eve
 - [cancel](#cancel)
 - [review](#review)
 - [check](#check)
+- [payee](#payee)
+- [confirm-payee](#confirm-payee)
 - [evaluate](#evaluate)
 - [draft](#draft)
 - [scout](#scout)
@@ -451,6 +453,48 @@ Before you pay or fund escrow: CAPPZ checks the other side (can the address rece
 | `--currency` | string |  | CAPPZ or USD-tokenZ/1 (RLUSD): also checks both trust lines, the issuer's freeze and authorization settings, and whether the token can be escrowed. |
 
 MCP tool: `market_check`.
+
+## payee
+
+`cappz-market payee <action>` — **moves money** (mainnet needs `--yes`)
+
+Payees: publish the payment instructions buyers should use, so instructions arriving by email can be confirmed — declare (an XRPL address and tag, or a bank account by salted digest: the number is never published), endorsed from your own wallet; list, revoke at once, or record an anchor signed elsewhere. New instructions are in force after a 72-hour cooling period.
+
+| Option | Type | Required | What it is |
+|---|---|---|---|
+| `--address` | string |  | declare: the XRPL address you are paid at. |
+| `--tag` | number |  | declare: the destination tag buyers must use (e.g. at an exchange). |
+| `--routing` | string |  | declare a bank account: routing number / sort code / BIC (hashed here, never sent). |
+| `--account` | string |  | declare a bank account: account number or IBAN (hashed here, never sent). |
+| `--hint` | string |  | declare a bank account: what buyers see, e.g. "First Bank ••4321" (at most four digits). |
+| `--purpose` | string |  | declare: display text, e.g. "Land purchase, Block 12 Lot 3". |
+| `--days` | number |  | declare: valid for this many days (default: until revoked or replaced). |
+| `--replaces` | string |  | declare: comma-separated ids of your earlier instructions this replaces. |
+| `--id` | string |  | revoke / anchor: the instructions id (pi-…). |
+| `--tx` | string |  | anchor: hash of an endorsement signed from another wallet (your profile wallet, or the declared address). Without it, this tool's wallet endorses when it is your profile wallet. |
+| `--reason` | string |  | revoke: why (public). |
+| `--party` | string |  | list: another party's instructions (default yours). |
+
+MCP tool: `market_payee`.
+
+## confirm-payee
+
+`cappz-market confirm-payee <payee>` — **moves money** (mainnet needs `--yes`)
+
+Before a large payment: confirm the instructions you were given are the ones the payee declared and endorsed from their own wallet, past the cooling period — not a fraudster's, a lookalike of an address you paid, or a change from where you paid them before. XRPL address or bank account (hashed on this computer). Signed ok / warn / stop. Costs 0.01 XRP platform fee + 0.1 XRP.
+
+| Option | Type | Required | What it is |
+|---|---|---|---|
+| `--address` | string |  | The XRPL address you were told to pay. |
+| `--tag` | number |  | The destination tag you were told to use. |
+| `--routing` | string |  | Bank instructions: routing number / sort code / BIC (hashed here, never sent). |
+| `--account` | string |  | Bank instructions: account number or IBAN (hashed here, never sent). |
+| `--amount` | number |  | What you intend to send (XRP, or --currency). |
+| `--currency` | string |  | CAPPZ or USD-tokenZ/1 (RLUSD), for an XRPL payment in a token. |
+| `--contract` | string |  | The deal this pays: the payee must be its seller. |
+| `--cooling` | number |  | Hours new instructions must have been endorsed (default 72, at least 24). |
+
+MCP tool: `market_confirm-payee`.
 
 ## evaluate
 

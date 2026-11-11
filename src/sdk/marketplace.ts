@@ -35,6 +35,7 @@ export * from '../lib/marketplace/agentCard';
 export * from '../lib/marketplace/reputationAttestation';
 export * from '../lib/marketplace/acceptance';
 export * from '../lib/marketplace/stageEvaluation';
+export * from '../lib/marketplace/payeeConfirmation';
 export * from '../lib/marketplace/listingDraft';
 export * from '../lib/marketplace/subcontractScout';
 export * from '../lib/marketplace/sellerListings';

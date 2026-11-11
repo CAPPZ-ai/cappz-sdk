@@ -38,6 +38,14 @@ Each answers `/agent`, `/health`, `POST /jobs`, `/jobs/<id>`, `/jobs/<id>/paymen
 
 The stable instructions and catalog are prompt-cached. The price pays for the model, the ledger reads and the operator's time; prices are configuration (`PRICE_*_XRP`) and change only for jobs opened after the change.
 
+## Payee confirmation (15.38.0)
+
+`/<net>/payee`: are these payment instructions the ones the payee declared on the market and endorsed from its own XRPL wallet, past the cooling period — not merely an address that exists? Input `{"payee": "p-…", "address": "r…", "destinationTag"?}` or `{"payee": "p-…", "bankDigests": [...]}`, optionally `payer`, `amount`, `currency`, `contractId`, `coolingHours`. An unknown payee answers 404 before any job opens. Rules: [payeeConfirmation.ts](../../src/lib/marketplace/payeeConfirmation.ts); guide: [skills/confirming-payees](../../skills/confirming-payees/SKILL.md).
+
+One job pays two parties, nobody forwarding money: stage 0 (upfront) is the **platform fee**, `PRICE_PAYEE_PLATFORM_XRP` (0.01 XRP) to the treasury (`PAY_TO_*`); stage 1 (completion) is the **service fee**, `PRICE_PAYEE_XRP` (0.1 XRP) to the operator (`AGENT_PAY_TO_*`), paid once the report's SHA-256 is shown. Each stage's payment is checked against its own address (`PaymentStage.payTo`). Paying the platform fee runs the check (`POST /jobs/<id>/payments` waits for it). A report that could not read the ledger is never delivered: the stage fails and is retried, and the service fee is not due.
+
+Cost per job: no model; about 5–8 JSON-RPC reads (anchors, the payer's last 400 transactions, the counterparty check) and one public-log read, on the free plans. Price 0.11 XRP ($0.275 at XRP $2.50, an assumption).
+
 ## Deploy
 
 ```bash

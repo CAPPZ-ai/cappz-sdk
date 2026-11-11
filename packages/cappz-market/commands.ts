@@ -31,6 +31,7 @@ import { Wallet } from 'xrpl';
 import { xrpNeededForStage } from '../../src/lib/marketplace/walletFunding';
 import { AGENT_OPERATIONS, executeAgentOperation, type AgentOperation } from '../../src/lib/marketplace/agentApi';
 import { readTrustLine, verifyCheck, type SignedCheck } from '../../src/lib/marketplace/counterpartyCheck';
+import { bankAccountDigest, bindingOf, buildPayeeAnchor, buildPayeeInstructions, buildPayeeRevocation, newBankSalt, newInstructionsId, prepareEndorsement, readAnchor, resolvePayeeLogs, verifyPayeeReport, type PayeeInstructionsContent, type SignedPayeeReport } from '../../src/lib/marketplace/payeeConfirmation';
 import type { MarketplaceVerb } from '../../src/lib/marketplace/marketplaceVerbs';
 import type { ContractView, Currency, ListingContent, PartyKind, PartyProfile, PartyRole, SupplyOfferContent, SupplyRequestContent } from '../../src/lib/marketplace/types';
 import type { ListingView, MarketState, RequestView } from '../../src/lib/marketplace/replay';
@@ -974,6 +975,144 @@ export const COMMANDS: Command[] = [
     },
   },
   {
+    name: 'payee',
+    summary: 'Payees: publish the payment instructions buyers should use, so instructions arriving by email can be confirmed — declare (an XRPL address and tag, or a bank account by salted digest: the number is never published), endorsed from your own wallet; list, revoke at once, or record an anchor signed elsewhere. New instructions are in force after a 72-hour cooling period.',
+    money: true,
+    params: [
+      { name: 'action', type: 'string', description: 'declare, list, revoke or anchor.', required: true, positional: true },
+      { name: 'address', type: 'string', description: 'declare: the XRPL address you are paid at.' },
+      { name: 'tag', type: 'number', description: 'declare: the destination tag buyers must use (e.g. at an exchange).' },
+      { name: 'routing', type: 'string', description: 'declare a bank account: routing number / sort code / BIC (hashed here, never sent).' },
+      { name: 'account', type: 'string', description: 'declare a bank account: account number or IBAN (hashed here, never sent).' },
+      { name: 'hint', type: 'string', description: 'declare a bank account: what buyers see, e.g. "First Bank ••4321" (at most four digits).' },
+      { name: 'purpose', type: 'string', description: 'declare: display text, e.g. "Land purchase, Block 12 Lot 3".' },
+      { name: 'days', type: 'number', description: 'declare: valid for this many days (default: until revoked or replaced).' },
+      { name: 'replaces', type: 'string', description: 'declare: comma-separated ids of your earlier instructions this replaces.' },
+      { name: 'id', type: 'string', description: 'revoke / anchor: the instructions id (pi-…).' },
+      { name: 'tx', type: 'string', description: 'anchor: hash of an endorsement signed from another wallet (your profile wallet, or the declared address). Without it, this tool\'s wallet endorses when it is your profile wallet.' },
+      { name: 'reason', type: 'string', description: 'revoke: why (public).' },
+      { name: 'party', type: 'string', description: 'list: another party\'s instructions (default yours).' },
+    ],
+    async run(a, o) {
+      const action = str(a, 'action');
+      const mk = await loadMarket(o, action !== 'list' || !a.party);
+      const net = mk.mode === 'live' ? mk.network : 'testnet';
+      const logs = await resolvePayeeLogs(mk.txs);
+      if (action === 'list') {
+        const id = a.party ? String(a.party) : mk.partyId!; const log = logs.get(id);
+        if (!log?.declarations.length) return { party: id, instructions: [], next: id === mk.partyId ? 'cappz-market payee declare --address r… [--tag n]' : 'This party has declared no payment instructions: do not pay instructions claimed for it.' };
+        const now = new Date().toISOString();
+        const out = await Promise.all(log.declarations.map(async (d) => {
+          const anchors = mk.mode === 'live' ? await Promise.all(d.anchorTxs.map((h) => readAnchor(net, h))) : [];
+          const b = bindingOf(d, log, anchors, now, 72);
+          const i = d.content.instrument;
+          return { id: d.content.instructionsId, instrument: i.kind === 'xrpl' ? { kind: 'xrpl', address: i.address, destinationTag: i.destinationTag ?? null } : { kind: 'bank', hint: i.hint }, purpose: d.content.purpose ?? null, declaredAt: d.declaredAt, state: b.state, control: b.control, inForceFrom: b.inForceFrom, because: b.because };
+        }));
+        return { party: id, name: log.name, profileWallet: log.walletHistory.at(-1)?.account ?? null, instructions: out };
+      }
+      const partyId = mk.partyId!; const prof = mk.state.parties.get(partyId);
+      if (!prof) throw new ToolError('Set up your marketplace profile first.', 'cappz-market profile --name "…" --kind organization');
+      if (action === 'revoke') {
+        const id = str(a, 'id');
+        if (!logs.get(partyId)?.declarations.some((d) => d.content.instructionsId === id)) throw new ToolError(`You have no instructions ${id}.`, 'cappz-market payee list');
+        return commitAndReport(mk, await buildPayeeRevocation(partyId, id, str(a, 'reason', '')), { revoked: id, next: 'Buyers checking these instructions now get a stop. Tell anyone who holds them, through a channel you already use with them.' });
+      }
+      if (action === 'anchor') {
+        const id = str(a, 'id');
+        const d = logs.get(partyId)?.declarations.find((x) => x.content.instructionsId === id);
+        if (!d) throw new ToolError(`You have no instructions ${id}.`, 'cappz-market payee list');
+        if (!a.tx) {
+          // Endorse from this tool's wallet, when it is the profile wallet.
+          const w = await wallet(); const endorser = prof.xrplAccount ?? null;
+          if (mk.mode !== 'live') throw new ToolError('Practice market: endorsements are ledger transactions and are skipped here.');
+          if (!endorser || !w || w.wallet.classicAddress !== endorser) throw new ToolError(`This tool's wallet is not your profile wallet${endorser ? ` ${endorser}` : ''}.`, `Sign ${JSON.stringify(prepareEndorsement(endorser ?? '<your profile wallet>', id, d.hash))} from it, then: cappz-market payee anchor --id ${id} --tx <hash>`);
+          if (net === 'mainnet' && !o.yes) throw new ToolError(`Endorsing sends one AccountSet from ${endorser} on mainnet (network fee only, no reserve).`, 'Confirm, then repeat with --yes.');
+          const lt = await signAndSubmit(seedSigner(w.wallet.seed!), prepareEndorsement(endorser, id, d.hash), net);
+          return commitAndReport(mk, await buildPayeeAnchor(partyId, id, lt.hash), { id, anchorTx: lt.hash, anchoredBy: endorser, inForceFrom: new Date(Date.parse(lt.closeTime ?? new Date().toISOString()) + 72 * 3_600_000).toISOString(), next: 'cappz-market payee list' });
+        }
+        const h = str(a, 'tx').toUpperCase();
+        const an = mk.mode === 'live' ? await readAnchor(net, h) : null;
+        if (an && (an.error || !an.validated || an.result !== 'tesSUCCESS' || an.memo !== `${id}:${d.hash}`)) throw new ToolError(`Transaction ${h} is not a validated endorsement of ${id} (${an.error ?? `memo ${an.memo ?? 'missing'}`}).`, `Sign this from your wallet: ${JSON.stringify(prepareEndorsement(prof.xrplAccount ?? '<your profile wallet>', id, d.hash))}`);
+        return commitAndReport(mk, await buildPayeeAnchor(partyId, id, h), { id, anchoredBy: an?.account ?? null, next: 'cappz-market payee list' });
+      }
+      if (action !== 'declare') throw new ToolError('action is declare, list, revoke or anchor.');
+      let instrument: PayeeInstructionsContent['instrument'];
+      if (a.address) instrument = { kind: 'xrpl', address: checkAddress(String(a.address)), ...(a.tag !== undefined ? { destinationTag: num(a, 'tag') } : {}) };
+      else if (a.routing && a.account) { const salt = newBankSalt(); instrument = { kind: 'bank', salt, digest: await bankAccountDigest(salt, String(a.routing), String(a.account)), hint: str(a, 'hint') }; }
+      else throw new ToolError('Declare --address r… [--tag n], or a bank account with --routing, --account and --hint.');
+      const now = new Date().toISOString();
+      const content: PayeeInstructionsContent = { instructionsId: newInstructionsId(), partyId, network: net, instrument, validFrom: now, validUntil: a.days !== undefined ? new Date(Date.parse(now) + num(a, 'days') * 86_400_000).toISOString() : null, ...(a.purpose ? { purpose: str(a, 'purpose') } : {}), ...(list(a.replaces).length ? { supersedes: list(a.replaces) } : {}) };
+      let built: { txs: Parameters<Market['commit']>[0]; hash: string };
+      try { built = await buildPayeeInstructions(mk.state, partyId, content); } catch (e) { throw new ToolError((e as Error).message); }
+      await mk.commit(built.txs);
+      const id = content.instructionsId; const w = await wallet();
+      const endorser = prof.xrplAccount ?? null;
+      const report = { ok: true, id, hash: built.hash, instrument: instrument.kind === 'xrpl' ? instrument : { kind: 'bank', hint: (instrument as { hint: string }).hint } };
+      if (mk.mode !== 'live') return { ...report, endorsed: false, next: 'Practice market: endorsements are ledger transactions and are skipped here.' };
+      if (!endorser) return { ...report, endorsed: false, next: 'Your profile names no XRPL wallet: set one (cappz-market profile --xrplAccount r…), then endorse from it and run cappz-market payee anchor.' };
+      const unsigned = prepareEndorsement(endorser, id, built.hash);
+      if (!w || w.wallet.classicAddress !== endorser) return { ...report, endorsed: false, endorse: unsigned, next: `Sign this AccountSet from your profile wallet ${endorser} (no reserve, network fee only), then: cappz-market payee anchor --id ${id} --tx <hash>` };
+      if (net === 'mainnet' && !o.yes) return { ...report, endorsed: false, endorse: unsigned, next: `Declared, not yet endorsed. Endorsing sends one AccountSet from ${endorser} on mainnet (network fee only, no reserve): cappz-market payee anchor --id ${id} --network mainnet --yes` };
+      const lt = await signAndSubmit(seedSigner(w.wallet.seed!), unsigned, net);
+      await mk.commit(await buildPayeeAnchor(partyId, id, lt.hash));
+      const control = instrument.kind === 'xrpl' && instrument.address === endorser;
+      return { ...report, endorsed: true, anchorTx: lt.hash, controlProven: instrument.kind === 'xrpl' ? control : null, inForceFrom: new Date(Date.parse(lt.closeTime ?? now) + 72 * 3_600_000).toISOString(),
+        next: `Buyers can confirm these instructions from ${new Date(Date.parse(lt.closeTime ?? now) + 72 * 3_600_000).toISOString().slice(0, 16)} UTC: cappz-market confirm-payee ${partyId} ${instrument.kind === 'xrpl' ? `--address ${instrument.address}${instrument.destinationTag !== undefined ? ` --tag ${instrument.destinationTag}` : ''}` : '--routing … --account …'}.${instrument.kind === 'xrpl' && !control ? ` To prove you control ${instrument.address} too, sign ${JSON.stringify(prepareEndorsement(instrument.address, id, built.hash))} from it and run payee anchor --id ${id} --tx <hash>.` : ''} Give buyers your party id (${partyId}) in the contract, not in the email with the instructions.` };
+    },
+  },
+  {
+    name: 'confirm-payee',
+    summary: 'Before a large payment: confirm the instructions you were given are the ones the payee declared and endorsed from their own wallet, past the cooling period — not a fraudster\'s, a lookalike of an address you paid, or a change from where you paid them before. XRPL address or bank account (hashed on this computer). Signed ok / warn / stop. Costs 0.01 XRP platform fee + 0.1 XRP.',
+    money: true,
+    params: [
+      { name: 'payee', type: 'string', description: 'The payee\'s party id — from your contract or an earlier, trusted exchange, never from the message with the instructions.', required: true, positional: true },
+      { name: 'address', type: 'string', description: 'The XRPL address you were told to pay.' },
+      { name: 'tag', type: 'number', description: 'The destination tag you were told to use.' },
+      { name: 'routing', type: 'string', description: 'Bank instructions: routing number / sort code / BIC (hashed here, never sent).' },
+      { name: 'account', type: 'string', description: 'Bank instructions: account number or IBAN (hashed here, never sent).' },
+      { name: 'amount', type: 'number', description: 'What you intend to send (XRP, or --currency).' },
+      { name: 'currency', type: 'string', description: 'CAPPZ or USD-tokenZ/1 (RLUSD), for an XRPL payment in a token.' },
+      { name: 'contract', type: 'string', description: 'The deal this pays: the payee must be its seller.' },
+      { name: 'cooling', type: 'number', description: 'Hours new instructions must have been endorsed (default 72, at least 24).' },
+    ],
+    async run(a, o) {
+      const svc = (await getDiscovery()).services?.payeeConfirmation;
+      if (!svc) throw new ToolError(`${marketUrl()} does not offer a payee confirmation.`);
+      const net = marketNetwork(o);
+      if (!svc.networks.includes(net)) throw new ToolError(`The payee confirmation runs on ${svc.networks.join(' and ')}, not ${net}.`);
+      const payee = str(a, 'payee'); const w = await requireWallet();
+      const input: Record<string, unknown> = { payee, payer: w.classicAddress };
+      if (a.address) Object.assign(input, { address: checkAddress(String(a.address)), ...(a.tag !== undefined ? { destinationTag: num(a, 'tag') } : {}) });
+      else if (a.routing && a.account) {
+        // Hash the bank details here, once per salt the payee declared: the number never leaves this computer.
+        const mk = await loadMarket(o);
+        const salts = ((await resolvePayeeLogs(mk.txs)).get(payee)?.declarations ?? []).flatMap((d) => (d.content.instrument.kind === 'bank' ? [d.content.instrument.salt] : []));
+        if (!salts.length) return { verdict: 'stop', reasons: [{ level: 'stop', code: 'payee-no-bank-instructions', text: `${payee} has declared no bank account on the ${net} market: do not pay these instructions.` }], paid: '0 XRP', next: 'Call the payee on a phone number you already had.' };
+        input.bankDigests = await Promise.all(salts.slice(-32).map((s) => bankAccountDigest(s, String(a.routing), String(a.account))));
+      } else throw new ToolError('Give the instructions you were sent: --address r… [--tag n], or --routing … --account ….');
+      if (a.amount !== undefined) input.amount = num(a, 'amount');
+      if (a.currency !== undefined) input.currency = currencyOf(a);
+      if (a.contract) input.contractId = String(a.contract);
+      if (a.cooling !== undefined) input.coolingHours = num(a, 'cooling');
+      const base = `${svc.url}/${net}/${svc.path}`;
+      const res = await fetch(`${base}/jobs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ input }) });
+      const opened = await res.json().catch(() => ({})) as { job?: { jobId: string }; error?: string };
+      if (res.status === 404) return { verdict: 'stop', reasons: [{ level: 'stop', code: 'payee-unknown-payee', text: opened.error ?? `No party ${payee}.` }], paid: '0 XRP', next: 'Do not pay. Get the payee id from your contract, and call the payee on a phone number you already had.' };
+      if (!res.ok || !opened.job) throw new ToolError(`The payee confirmation refused: ${opened.error ?? res.status}. Nothing was charged.`);
+      const r = await commandOf('hire')!.run({ url: base, job: opened.job.jobId, max: svc.priceXrp, out: join(homeDir(), 'payee-confirmations'), timeout: 5 }, o) as { results?: Array<{ stage: number; file: string; verified: boolean }>; paid?: string };
+      const got = r.results?.find((x) => x.stage === 1) ?? r.results?.at(-1);
+      if (!got) return { confirmed: false, ...r };
+      const signed = JSON.parse(await readFile(got.file, 'utf8')) as SignedPayeeReport;
+      const signedByCappz = verifyPayeeReport(signed, svc.publicKey);
+      const rep = signed.report;
+      return {
+        verdict: rep.verdict, binding: rep.binding, reasons: rep.reasons, advice: rep.advice, subject: rep.subject,
+        signedByCappz, hashMatched: got.verified, paid: r.paid, report: got.file,
+        next: !signedByCappz ? 'Do not rely on this report: its signature does not match the published CAPPZ key.' : rep.verdict === 'stop' ? 'Do not pay. Call the payee on a phone number you already had.' : rep.verdict === 'warn' ? 'Weigh the warnings with a second approver before paying.' : 'Confirmed. Have a second person approve the payment against this report.',
+      };
+    },
+  },
+  {
     name: 'evaluate',
     summary: 'Before you accept or pay a stage: CAPPZ checks the delivered file against the milestone’s agreed acceptance criteria and returns a signed pass / fail / needs-human verdict. The file goes to the evaluator only (not the public log) and is not kept. Costs 0.05 XRP from your wallet. The contract’s named evaluator can accept on a pass with --accept.',
     money: true,
@@ -1089,7 +1228,7 @@ export const COMMANDS: Command[] = [
       await mkdir(out, { recursive: true });
       const deadline = Date.now() + num(a, 'timeout', 15) * 60_000;
       for (;;) {
-        const v = (await http(`/jobs/${jobId}`)).body as { job: { state: string; stages: Array<{ index: number; state: string; result: { hash: string } | null }> }; pay: { stage: number; amount: string; network: XrplNetwork; preparedTx: Record<string, unknown> } | null };
+        const v = (await http(`/jobs/${jobId}`)).body as { job: { state: string; stages: Array<{ index: number; state: string; result: { hash: string } | null; failure?: string | null }> }; pay: { stage: number; amount: string; network: XrplNetwork; preparedTx: Record<string, unknown> } | null };
         for (const s of v.job.stages) {
           if (s.state !== 'released' || !s.result || results.some((r) => r.stage === s.index)) continue;
           const r = await http(`/jobs/${jobId}/stages/${s.index}/result`, undefined, true); // results are bytes, hashed as delivered
@@ -1098,7 +1237,7 @@ export const COMMANDS: Command[] = [
           results.push({ stage: s.index, file, sha256: got, verified: got === s.result.hash });
         }
         if (v.job.state === 'completed') return { job: jobId, agent: card.name, paid: `${spent} ${card.currency}`, payments: paid, results, allVerified: results.every((r) => r.verified) };
-        if (v.job.state === 'failed') throw new ToolError(`The agent’s work failed on job ${jobId}.`, `Ask it to retry: POST ${base}/jobs/${jobId}/retry`);
+        if (v.job.state === 'failed') throw new ToolError(`The agent’s work failed on job ${jobId}${(() => { const f = v.job.stages.find((x) => x.failure)?.failure; return f ? `: ${f}` : ''; })()}.`, `Ask it to retry: POST ${base}/jobs/${jobId}/retry`);
         if (v.pay && paidStage.has(v.pay.stage)) {
           // Already paid on the ledger: never pay twice. Report the same transaction until the agent records it.
           const p = paidStage.get(v.pay.stage)!;
