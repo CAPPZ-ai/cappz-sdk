@@ -31,12 +31,18 @@ export interface AppLedger<E extends string> {
   append(txs: AppTx<E>[]): Promise<AppTx<E>[]>;
   emit(params: { eventType: E; sourceAddress: string; targetAddress: string; payload: Record<string, unknown>; txId?: string }): Promise<AppTx<E>>;
   refresh(): Promise<AppTx<E>[]>;
+  /** Shared ledgers: publish entries this device holds that the public copy lacks; 0 otherwise. */
+  shareExisting(): Promise<number>;
   get(): AppTx<E>[];
   subscribe(fn: (txs: AppTx<E>[]) => void): () => void;
 }
 
-export function createAppLedger<E extends string>(params: { eventLog: string; cachePrefix: string; emitterDomain: string; governingPrinciple: string }): AppLedger<E> {
-  const cache = new CappzEventCache<AppTx<E>>(params.eventLog, params.cachePrefix);
+/**
+ * 15.39.0 — `shared: true` for an admin-governed ledger: every append is published to the
+ * log's public copy first (sharedEventLog.ts) and every device merges it on refresh.
+ */
+export function createAppLedger<E extends string>(params: { eventLog: string; cachePrefix: string; emitterDomain: string; governingPrinciple: string; shared?: boolean }): AppLedger<E> {
+  const cache = new CappzEventCache<AppTx<E>>(params.eventLog, params.cachePrefix, { shared: params.shared });
   const create: AppLedger<E>['create'] = async (p) => {
     const txId = p.txId ?? `${p.eventType}-${(await sha256Hex(`${p.targetAddress}|${JSON.stringify(p.payload)}|${crypto.randomUUID()}`)).slice(0, 32)}`;
     const event = await createNotarizedEvent({
@@ -48,7 +54,7 @@ export function createAppLedger<E extends string>(params: { eventLog: string; ca
   const append: AppLedger<E>['append'] = async (txs) => {
     const known = new Set(cache.getCached().map((t) => t.txId));
     const fresh = txs.filter((t) => !known.has(t.txId));
-    if (fresh.length) await cache.appendMany(fresh, { requireDurable: true });
+    if (fresh.length) await cache.appendMany(fresh, { requireDurable: true, share: params.shared });
     return cache.getCached();
   };
   return {
@@ -57,5 +63,6 @@ export function createAppLedger<E extends string>(params: { eventLog: string; ca
     refresh: () => cache.refresh(),
     get: () => cache.getCached(),
     subscribe: (fn) => cache.subscribe(fn),
+    shareExisting: () => cache.shareExisting(() => true),
   };
 }

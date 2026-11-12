@@ -29,10 +29,18 @@ export interface SkillConfigCacheEntry extends CappzEventCacheEntry {
 const SKILL_CONFIG_HD = "m/44'/144'/0'/cappz/skill-config/events/";
 const SKILL_CONFIG_PREFIX = 'cappz:skill-config/events/';
 
+// 15.39.0 — shared: admin-governed compositions (agent window bindings, skill
+// compositions such as Network Promotion) are published to the log's public copy
+// and every device merges it; other entries stay device-local.
 const _cache = new CappzEventCache<SkillConfigCacheEntry>(
   SKILL_CONFIG_HD,
   SKILL_CONFIG_PREFIX,
+  { shared: true },
 );
+
+/** The governed composition events: what `persistBatch({ share: true })` writes and `shareExisting` backfills. */
+export const GOVERNED_COMPOSITION_EVENTS = ['SkillConstituentIncluded', 'SkillConstituentRemoved'] as const;
+const isGovernedComposition = (e: SkillConfigCacheEntry) => (GOVERNED_COMPOSITION_EVENTS as readonly string[]).includes(String(e.eventType));
 
 let _refreshLock = false;
 
@@ -40,12 +48,17 @@ let _refreshLock = false;
 
 export const agentSkillCache = {
   /** Authorized composition amendments commit as one flushed wallet batch. */
-  async persistBatch(entries: readonly SkillConfigCacheEntry[]): Promise<void> {
+  async persistBatch(entries: readonly SkillConfigCacheEntry[], options?: { share?: boolean }): Promise<void> {
+    if (options?.share && entries.some((e) => !isGovernedComposition(e))) throw new Error('Only SkillConstituentIncluded / SkillConstituentRemoved are shared.');
     while (_refreshLock) await new Promise(resolve => setTimeout(resolve, 10));
     _refreshLock = true;
-    try { await _cache.appendMany(entries, { requireDurable: true }); }
+    try { await _cache.appendMany(entries, { requireDurable: true, share: options?.share }); }
     finally { _refreshLock = false; }
   },
+  /** Publish governed compositions this device holds that the public copy lacks (an admin's earlier bindings). */
+  shareExisting: (): Promise<number> => _cache.shareExisting(isGovernedComposition),
+  /** Where the cache stands against its public copy: local-only, synced or unreachable. */
+  get sharedState() { return _cache.sharedState; },
   /**
    * Persist a new entry and refresh the cache. The ONLY write path.
    * Thread-safe via refresh lock — concurrent calls queue behind the lock.

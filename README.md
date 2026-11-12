@@ -1,6 +1,6 @@
 # CAPPZ SDK
 
-The public part of [CAPPZ](https://cappz.ai), version 15.38.0. Apache-2.0.
+The public part of [CAPPZ](https://cappz.ai), version 15.39.0. Apache-2.0.
 
 - **`@cappz/sdk/port`**: move a PHP app off php-fpm one route at a time. Inventory the app, run each new handler beside PHP and compare every response, cut over on the evidence, roll back in about a second.
 - **`@cappz/sdk/identity`**: KeyZ, wallet-keyed trust. Keys are trusted through declarations the wallet signs, with revocations replayed offline and short delegations; SD-JWT identity claims; X.509 as a projection of a declaration.
@@ -134,6 +134,14 @@ Moving your own app: [docs/MOVE_OFF_PHP.md](docs/MOVE_OFF_PHP.md). Identity, Key
   history — plus every counterparty-check fact — as a signed ok / warn / stop report (`signPayeeReport`). Paid agents
   may now pay each stage to its own address (`PaymentStage.payTo`): the service charges a platform fee up front to
   the CAPPZ treasury and its service fee to the operator. Skill: [confirming-payees](skills/confirming-payees/SKILL.md).
+- **Shared admin-governed logs: bindings follow the account, not the browser** (15.39.0, `@cappz/sdk/sync`) — a
+  `CappzEventCache` opened with `{ shared: true }` keeps a public copy of governed writes in one partition of the
+  hosted mirror per log (`pub:<event-log address>`): writes publish there first and reach the wallet only after the
+  mirror accepted them; every device merges the copy on refresh and keeps it for offline use. Agent window bindings
+  and skill compositions (`agentSkillCache.persistBatch(entries, { share: true })`) and shared app ledgers
+  (`createAppLedger({ shared: true })`) use it, and `shareExisting()` backfills an admin's earlier records. The app
+  registers the port (`registerSharedEventLog(mirrorSharedEventLog(mirror, authorOf))`) and owns the insert rule;
+  unregistered, caches run local-only. `sharedState` says `synced`, `unreachable` (device copy shown) or `local-only`.
 - **Move off PHP, route by route** (`@cappz/sdk/port`, 15.12.0) — `inventoryPhpApp` reads a
   PHP app (routes, tables and file stores with their readers and writers, sessions, uploads,
   cron, secrets, libraries) and orders it in waves; `createRouteHost` serves ported routes,

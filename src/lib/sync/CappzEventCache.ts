@@ -29,6 +29,7 @@ import { CreateEventSubscription } from './CreateEventSubscription';
 import { chainletStorage } from './chainletStorage';
 import { ChainletStoreParamType, getChainletParam } from './chainletStoreParams';
 import { canonicalizeEventEntry, recordedFormOf } from '../mdm/eventTypeAliases';
+import { sharedEventLog, sharedPartitionFor, type SharedLogEntry } from './sharedEventLog';
 
 
 
@@ -37,6 +38,22 @@ import { canonicalizeEventEntry, recordedFormOf } from '../mdm/eventTypeAliases'
 export interface CappzEventCacheEntry {
   txId: string;
   timestamp: string;
+}
+
+/**
+ * 15.39.0 — where a shared cache stands against its public copy (sharedEventLog.ts):
+ * local-only (not shared, or no port registered), synced (the last pull succeeded),
+ * unreachable (the last pull failed; the device copy is shown, and may be behind).
+ */
+export type SharedCacheState = 'local-only' | 'synced' | 'unreachable';
+
+export interface CappzEventCacheOptions {
+  /** Keep a public copy of governed writes and merge it on refresh (sharedEventLog.ts). */
+  shared?: boolean;
+  /** Re-read the shared copy at most this often on refresh (default 60 s). */
+  sharedTtlMs?: number;
+  /** How long a refresh waits for the shared copy before showing the device copy (default 8 s; the pull keeps going). */
+  sharedWaitMs?: number;
 }
 
 const MEMORY_PARTITIONS = new Map<string, CappzEventCacheEntry[]>();
@@ -63,17 +80,29 @@ export class CappzEventCache<T extends CappzEventCacheEntry> {
   private _hydrated = false;
   private _inflight: Promise<T[]> | null = null;
   private readonly _indexKey: string;
+  private _sharedAt = 0;
+  private _sharedPull: Promise<void> | null = null;
+  private _sharedTxIds = new Set<string>();
+  private _sharedState: SharedCacheState = 'local-only';
 
   /**
    * @param hdAddress - HD address prefix for this cache partition
    * @param cachePrefix - KV key prefix for individual entries under this partition
+   * @param options - `shared: true` keeps a public copy of governed writes (15.39.0)
    */
   constructor(
     private readonly hdAddress: string,
     private readonly cachePrefix: string,
+    private readonly options: CappzEventCacheOptions = {},
   ) {
     this._indexKey = `${cachePrefix}__index__`;
   }
+
+  /** The public partition of this log (`pub:<event-log address>`). */
+  get sharedPartition(): string { return sharedPartitionFor(this.hdAddress); }
+
+  /** Where this cache stands against its public copy. */
+  get sharedState(): SharedCacheState { return this._sharedState; }
 
   // ─── Read ────────────────────────────────────────────────────
 
@@ -91,10 +120,88 @@ export class CappzEventCache<T extends CappzEventCacheEntry> {
    *   3. If recovered from durable → rebuild local index for next read
    */
   async refresh(): Promise<T[]> {
+    const local = await this._refreshLocal();
+    if (!this.options.shared || !sharedEventLog()) return local;
+    if (Date.now() - this._sharedAt < (this.options.sharedTtlMs ?? 60_000)) return local;
+    // The shared copy is merged into the device store; a slow mirror never holds the view,
+    // the pull finishes in the background and its writes notify subscribers.
+    const pull = this._pullShared();
+    await Promise.race([pull, new Promise<void>((resolve) => setTimeout(resolve, this.options.sharedWaitMs ?? 8_000))]);
+    return [...this._cache];
+  }
+
+  private async _refreshLocal(): Promise<T[]> {
     if (this._hydrated) return this._mergeMemorySnapshot();
     if (this._inflight) return this._inflight;
     this._inflight = this._refreshFromStore().finally(() => { this._inflight = null; });
     return this._inflight;
+  }
+
+  /** Read the public copy and keep every entry the device lacks (one batch, one index update). */
+  private _pullShared(): Promise<void> {
+    const port = sharedEventLog();
+    if (!port) return Promise.resolve();
+    if (this._sharedPull) return this._sharedPull;
+    this._sharedPull = (async () => {
+      try {
+        const records = await port.pull(this.sharedPartition);
+        this._sharedTxIds = new Set(records.map((r) => r.entry.txId));
+        const known = new Set(this._cache.map((e) => e.txId));
+        const additions: T[] = [];
+        for (const r of records) {
+          if (known.has(r.entry.txId)) continue;
+          known.add(r.entry.txId);
+          additions.push(canonicalizeEventEntry(r.entry as unknown as T));
+        }
+        if (additions.length) await this._keepLocally(additions);
+        this._sharedState = 'synced';
+      } catch (err) {
+        this._sharedState = 'unreachable';
+        console.warn(`[CappzEventCache] Shared log unreachable for ${this.cachePrefix}; showing the device copy`, err);
+      } finally {
+        this._sharedAt = Date.now();
+        this._sharedPull = null;
+      }
+    })();
+    return this._sharedPull;
+  }
+
+  /** Persist entries read from the shared copy exactly as recorded, then expose them. */
+  private async _keepLocally(additions: T[]): Promise<void> {
+    const refs = additions.map((entry) => ({ txId: entry.txId, key: `${this.cachePrefix}${entry.txId}` }));
+    const held = (await chainletStorage.getItem<Array<{ txId: string; key: string }>>(this._indexKey)) ?? [];
+    const merged = new Map(held.map((ref) => [ref.txId, ref]));
+    for (const ref of refs) merged.set(ref.txId, ref);
+    await chainletStorage.setItems([
+      ...refs.map((ref, i) => [ref.key, recordedFormOf(additions[i])] as [string, unknown]),
+      [this._indexKey, [...merged.values()]],
+    ]);
+    const known = new Set(this._cache.map((e) => e.txId));
+    for (const entry of additions) if (!known.has(entry.txId)) this._cache.push(entry);
+    this._cache.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    writeMemoryPartition(this.cachePrefix, this._cache);
+    this._hydrated = true;
+  }
+
+  /**
+   * Governed entries this device holds that the public copy does not (written before
+   * the log was shared, or by a device that could not publish). Empty until a pull succeeded.
+   */
+  unshared(filter: (entry: T) => boolean): T[] {
+    if (this._sharedState !== 'synced') return [];
+    return this._cache.filter((e) => filter(e) && !this._sharedTxIds.has(e.txId));
+  }
+
+  /** Publish `unshared(filter)` to the public copy; returns how many were published. */
+  async shareExisting(filter: (entry: T) => boolean): Promise<number> {
+    const port = sharedEventLog();
+    if (!this.options.shared || !port) return 0;
+    if (this._sharedState !== 'synced') { this._sharedAt = 0; await this._pullShared(); }
+    const pending = this.unshared(filter);
+    if (!pending.length) return 0;
+    await port.publish(this.sharedPartition, pending.map((e) => recordedFormOf(e) as unknown as SharedLogEntry));
+    for (const e of pending) this._sharedTxIds.add(e.txId);
+    return pending.length;
   }
 
   /** Merge sibling-instance writes from the shared memory partition. */
@@ -141,13 +248,15 @@ export class CappzEventCache<T extends CappzEventCacheEntry> {
       // ── Durable Recovery (with timeout) ───────────────────────
       // Local index is empty/missing. Attempt recovery from chainlet blocks.
       // Guard with 8s timeout to prevent UI hanging on slow/failed Supabase queries.
+      // 15.39.0: the timer is cleared when recovery answers (it always warned 8 s later before).
+      let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
       const recovered = await Promise.race([
         this._recoverFromChainlet(),
-        new Promise<T[]>(resolve => setTimeout(() => {
+        new Promise<T[]>(resolve => { recoveryTimer = setTimeout(() => {
           console.warn(`[CappzEventCache] Durable recovery timed out for ${this.cachePrefix}`);
           resolve([]);
-        }, 8000)),
-      ]);
+        }, 8000); }),
+      ]).finally(() => clearTimeout(recoveryTimer));
       if (recovered.length > 0) {
         console.log(`[CappzEventCache] Recovered ${recovered.length} entries from durable chainlet for ${this.cachePrefix}`);
         // Rebuild local index so future reads are fast
@@ -306,7 +415,8 @@ export class CappzEventCache<T extends CappzEventCacheEntry> {
    * callers use this so a blocked block store surfaces as "staged in memory"
    * rather than silently leaving the replay empty on every other device.
    */
-  async append(tx: T, options?: { requireDurable?: boolean }): Promise<void> {
+  async append(tx: T, options?: { requireDurable?: boolean; share?: boolean }): Promise<void> {
+    if (options?.share) return this.appendMany([tx], { requireDurable: options.requireDurable ?? true, share: true });
     const entryKey = `${this.cachePrefix}${tx.txId}`;
 
     // 1. Local-first visibility. UI state resolves from the in-memory event TX
@@ -350,7 +460,7 @@ export class CappzEventCache<T extends CappzEventCacheEntry> {
    * lost-update race created when hundreds of append() calls each rewrite the
    * same index independently.
    */
-  async appendMany(entries: readonly T[], options?: { requireDurable?: boolean }): Promise<void> {
+  async appendMany(entries: readonly T[], options?: { requireDurable?: boolean; share?: boolean }): Promise<void> {
     const existing = new Set(this._cache.map((entry) => entry.txId));
     const additions: T[] = [];
     for (const entry of entries) {
@@ -359,6 +469,16 @@ export class CappzEventCache<T extends CappzEventCacheEntry> {
       additions.push(entry);
     }
     if (!additions.length) return;
+
+    // 15.39.0 — a governed write is published to the shared copy first; the wallet
+    // keeps it only after the mirror accepted it, so nobody holds a binding others
+    // cannot see. A shared write with no shared log registered is refused, not kept local.
+    if (options?.share) {
+      const port = sharedEventLog();
+      if (!this.options.shared || !port) throw new Error(`[CappzEventCache] ${this.cachePrefix} is not a shared log here; the write was not made.`);
+      await port.publish(this.sharedPartition, additions.map((e) => recordedFormOf(e) as unknown as SharedLogEntry));
+      for (const e of additions) this._sharedTxIds.add(e.txId);
+    }
 
     const refs = additions.map((entry) => ({
       txId: entry.txId,
