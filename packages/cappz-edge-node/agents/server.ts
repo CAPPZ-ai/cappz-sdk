@@ -57,18 +57,21 @@ if (!key) { console.error('[agents] needs CAPPZ_NODE_KEY / CAPPZ_NODE_PUB (node.
 
 // ─── Durable job store: one append-only log per agent, results as files ──────
 
+/** A missing file is a fresh start; any other read error (a denied --allow-read, a broken disk) must stop the agent, never pass for "no jobs". */
+const onlyMissing = (e: unknown): void => { if (!(e instanceof Deno.errors.NotFound)) throw e; };
+
 async function fileJobStore(dir: string): Promise<JobStore> {
   await Deno.mkdir(`${dir}/results`, { recursive: true });
   const logPath = `${dir}/jobs.jsonl`;
   const log: JobEvent[] = [];
-  try { for (const l of (await Deno.readTextFile(logPath)).split('\n')) if (l.trim()) log.push(JSON.parse(l)); } catch { /* first start */ }
+  try { for (const l of (await Deno.readTextFile(logPath)).split('\n')) if (l.trim()) log.push(JSON.parse(l)); } catch (e) { onlyMissing(e); /* first start */ }
   return {
     async append(e) { await Deno.writeTextFile(logPath, JSON.stringify(e) + '\n', { append: true }); log.push(e); },
     async events() { return [...log]; },
     async eventsFor(jobId) { return log.filter((e) => e.jobId === jobId); },
     async paymentUsed(txHash) { return log.some((e) => e.type === 'StagePaid' && e.txHash === txHash); },
     async putResult(j, s, b) { await Deno.writeFile(`${dir}/results/${j}-${s}`, b); },
-    async getResult(j, s) { try { return await Deno.readFile(`${dir}/results/${j}-${s}`); } catch { return null; } },
+    async getResult(j, s) { try { return await Deno.readFile(`${dir}/results/${j}-${s}`); } catch (e) { onlyMissing(e); return null; } },
   };
 }
 
@@ -109,7 +112,7 @@ async function period(jobId: string): Promise<{ start: number; end: number } | n
   return { start, end: start + WEBHOOK_DAYS * DAY };
 }
 async function hookRecords(jobId: string): Promise<unknown[]> {
-  try { return (await Deno.readTextFile(hookFile(jobId))).split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l)); } catch { return []; }
+  try { return (await Deno.readTextFile(hookFile(jobId))).split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l)); } catch (e) { onlyMissing(e); return []; }
 }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

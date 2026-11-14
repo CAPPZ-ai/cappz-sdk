@@ -54,6 +54,17 @@ describe('edge node paid agents: docs', () => {
   });
 });
 
+describe('edge node paid agents: durable jobs', () => {
+  it('the launcher lets the agents read back what they write, and the server never takes a read error for "no jobs"', () => {
+    // 15.43.1: 15.43.0's launcher granted --allow-read on the SDK only, so a paid result came back empty and a restart forgot every job.
+    const launcher = readFileSync(join(dir, 'run-agents.ps1'), 'utf8');
+    expect(launcher).toMatch(/--allow-read=`"\$sdk`",`"\$data`" --allow-write=`"\$data`"/);
+    const server = readFileSync(join(dir, 'server.ts'), 'utf8');
+    expect(server.split('\n').filter((l) => /Deno\.read/.test(l) && /catch\s*\{/.test(l))).toEqual([]);
+    expect(server.match(/catch \(e\) \{ onlyMissing\(e\);/g)).toHaveLength(3);
+  });
+});
+
 describe('edge node paid agents: verify.mjs', () => {
   const keyPair = async () => {
     const k = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']) as CryptoKeyPair;

@@ -30,8 +30,8 @@ $mutex = New-Object System.Threading.Mutex($false, "Local\cappz-agents$suffix")
 if (-not $mutex.WaitOne(0)) { exit 0 }
 $deno = "$env:USERPROFILE\.deno\bin\deno.exe"
 # --cached-only: no code downloads at run time (deno cache the server once after setup).
-# Network: XRPL (payments) and the 127.0.0.1 listener. Reads the SDK; writes only $data.
-$denoArgs = "run --cached-only --config `"$sdk\deno.json`" --allow-net --allow-read=`"$sdk`" --allow-write=`"$data`" --allow-env `"$server`""
+# Network: XRPL (payments) and the 127.0.0.1 listener. Reads the SDK and $data (its jobs and results); writes only $data.
+$denoArgs = "run --cached-only --config `"$sdk\deno.json`" --allow-net --allow-read=`"$sdk`",`"$data`" --allow-write=`"$data`" --allow-env `"$server`""
 while ($true) {
   cmd /c "`"$deno`" $denoArgs >> `"$log`" 2>&1"
   Add-Content $log "[run-agents$suffix] $(Get-Date -Format s) agents exited ($LASTEXITCODE); restarting in 10 s"
