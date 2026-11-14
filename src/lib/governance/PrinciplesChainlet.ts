@@ -296,12 +296,37 @@ export const principlesChainlet = {
 /**
  * Bootstrap the COPE substrate principle from public/soul.md.
  *
- * Called by SkillLoader during boot. Idempotent — only emits a TX
- * when the hash of soul.md has changed since the last adoption.
+ * Called by SkillLoader during boot and before every RepoZ write. Idempotent —
+ * only emits a TX when the hash of soul.md has changed since the last adoption.
+ *
+ * 15.40.1: soul.md is read once per page, not once per call. Concurrent callers
+ * share one check (a burst of saved artifacts used to fetch the file, hash it
+ * and race to adopt or amend once per artifact). A successful check is reused
+ * for the life of the page — soul.md changes only with a deploy, and a deploy
+ * reloads the page. A check that fell back to the offline stub, or failed, is
+ * retried after COPE_STUB_RETRY_MS so a stub is never kept once the network is back.
  */
-export async function bootstrapCopeSubstrate(): Promise<PrincipleRecord> {
-  // Fetch soul.md from the public root. Network failures fall back
-  // to a stub so the chainlet still boots in offline / SSR contexts.
+export const COPE_STUB_RETRY_MS = 60_000;
+const OFFLINE_STUB = '# soul.md — COPE substrate (offline-fallback stub)\n';
+let copeCheck: { promise: Promise<PrincipleRecord>; stub: boolean; at: number } | null = null;
+
+/** Forget the shared check (tests; or after soul.md is known to have changed without a reload). */
+export function resetCopeSubstrateCheck(): void { copeCheck = null; }
+
+export function bootstrapCopeSubstrate(): Promise<PrincipleRecord> {
+  const now = Date.now();
+  if (copeCheck && !(copeCheck.stub && now - copeCheck.at >= COPE_STUB_RETRY_MS)) return copeCheck.promise;
+  const entry = { promise: null as unknown as Promise<PrincipleRecord>, stub: false, at: now };
+  entry.promise = runCopeCheck((stub) => { entry.stub = stub; }).catch((e) => {
+    if (copeCheck === entry) copeCheck = null; // a failed check is not reused
+    throw e;
+  });
+  copeCheck = entry;
+  return entry.promise;
+}
+
+async function runCopeCheck(markStub: (stub: boolean) => void): Promise<PrincipleRecord> {
+  // Network failures fall back to a stub so the chainlet still boots in offline / SSR contexts.
   let content = '';
   try {
     const res = await fetch('/soul.md', { cache: 'no-store' });
@@ -309,9 +334,7 @@ export async function bootstrapCopeSubstrate(): Promise<PrincipleRecord> {
   } catch {
     /* offline / no-fetch context */
   }
-  if (!content) {
-    content = '# soul.md — COPE substrate (offline-fallback stub)\n';
-  }
+  if (!content) { content = OFFLINE_STUB; markStub(true); }
 
   const latest = await principlesChainlet.getLatest('cope');
   if (!latest) {
@@ -324,9 +347,9 @@ export async function bootstrapCopeSubstrate(): Promise<PrincipleRecord> {
     });
   }
 
-  // If soul.md drifted vs. on-chain hash, amend.
+  // If soul.md drifted vs. on-chain hash, amend. The offline stub never amends a real adoption.
   const newHash = await sha256Hex(content);
-  if (newHash !== latest.contentHash) {
+  if (newHash !== latest.contentHash && content !== OFFLINE_STUB) {
     return principlesChainlet.amend({
       id: 'cope',
       sourceDocument: 'public/soul.md',
