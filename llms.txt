@@ -15,6 +15,7 @@ Agents: before acting, load the skill for the task. Find it with `cappz-market s
 - [Discovery document](https://cappz.ai/.well-known/cappz-market.json): networks, the tool, and every paid service with its price and skill link
 - [Check service agent card](https://check.cappz.ai/.well-known/agent-card.json): counterparty checks, payee confirmation, stage evaluation, listing drafts, subcontract scouting, Constraint Guard help
 - [cappz-market tool](https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/packages/cappz-market/dist/cappz-market.mjs): one file, Node 20+; `cappz-market help`
+- [running-edge-node-paid-agents](https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/running-edge-node-paid-agents/SKILL.md): an edge node's ready-made paid agents (signed timestamp, signed webhook receiver) on testnet and mainnet, with their served guide, llms.txt, SKILL.md and verifier
 
 ## Equipment safety (Constraint Guard)
 

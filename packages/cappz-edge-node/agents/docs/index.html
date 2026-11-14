@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CAPPZ Paid Agents</title>
+<meta name="description" content="Signed timestamps and signed webhook logs from a CAPPZ edge node, paid per job in XRP. No account needed.">
+<link rel="alternate" type="text/plain" href="{{BASE}}/llms.txt" title="llms.txt">
+<link rel="alternate" type="application/json" href="{{BASE}}/openapi.json" title="OpenAPI">
+<style>
+:root{--bg:#f7f7f4;--card:#fff;--ink:#1d1f1c;--mute:#5d625a;--line:#dedfd8;--accent:#1f6f4a;--accent-ink:#fff;--warn:#8a5a00;--warn-bg:#fff6df;--ok:#1f6f4a;--bad:#a12a2a;--code:#f0f1ec}
+@media (prefers-color-scheme:dark){:root{--bg:#141613;--card:#1c1f1b;--ink:#e8eae4;--mute:#9da396;--line:#30352e;--accent:#5cc28f;--accent-ink:#0d1a12;--warn:#f0c05a;--warn-bg:#2b2412;--ok:#5cc28f;--bad:#f07a7a;--code:#242822}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:860px;margin:0 auto;padding:32px 16px 64px}
+h1{font-size:1.9rem;line-height:1.2;margin:0 0 8px}
+h2{font-size:1.3rem;margin:40px 0 12px}
+h3{font-size:1.05rem;margin:0 0 6px}
+p{margin:0 0 12px}
+a{color:var(--accent)}
+.lede{color:var(--mute);font-size:1.08rem;max-width:62ch}
+.note{background:var(--warn-bg);color:var(--warn);border-radius:8px;padding:10px 14px;margin:18px 0;font-size:.95rem}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px}
+.price{font-weight:650;font-size:1.05rem;margin:6px 0 10px}
+.mute{color:var(--mute);font-size:.93rem}
+.mute,.status,#tsOut p,#whOut p,#vOut div{overflow-wrap:anywhere}
+ol.steps{padding-left:20px;margin:8px 0 0}
+ol.steps li{margin:4px 0}
+code,pre{font:13.5px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;background:var(--code);border-radius:6px}
+code{padding:1px 5px;overflow-wrap:anywhere}
+pre{padding:12px 14px;overflow-x:auto;margin:8px 0 14px;white-space:pre}
+button,.btn{font:inherit;font-weight:600;background:var(--accent);color:var(--accent-ink);border:0;border-radius:8px;padding:9px 16px;cursor:pointer;text-decoration:none;display:inline-block}
+button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line);padding:5px 10px;font-size:.88rem}
+button:disabled{opacity:.5;cursor:default}
+input[type=text],textarea{font:inherit;width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
+textarea{font:13px/1.45 ui-monospace,Consolas,monospace;min-height:120px}
+.drop{border:2px dashed var(--line);border-radius:12px;padding:22px;text-align:center;cursor:pointer}
+.drop.over{border-color:var(--accent)}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.pay{display:grid;grid-template-columns:max-content 1fr auto;gap:6px 12px;align-items:center;margin:12px 0}
+.pay b{font-weight:600}
+.pay code{font-size:14px}
+.status{margin:10px 0;font-weight:600}
+.ok{color:var(--ok)} .bad{color:var(--bad)}
+.hidden{display:none}
+details{margin:8px 0}
+summary{cursor:pointer;font-weight:600}
+table{border-collapse:collapse;width:100%;font-size:.93rem}
+td,th{border-top:1px solid var(--line);padding:7px 8px;text-align:left;vertical-align:top}
+@media (max-width:560px){.pay{grid-template-columns:1fr auto}.pay b{grid-column:1/-1;margin-top:6px}}
+</style>
+</head>
+<body>
+<main>
+<h1>CAPPZ paid agents</h1>
+<p class="lede">Proof you can check yourself, from a CAPPZ edge node. Pay per job in XRP. There's no account and no sign-up, and the node signs every result with its Ed25519 key.</p>
+<div class="note" id="netnote">Network: <b>{{NETWORK}}</b>. Payments are in real XRP on mainnet and test XRP on testnet. Pay from any XRPL wallet that lets you enter a destination tag, such as Xaman, a Ledger device, or an exchange withdrawal with a tag. <span id="peer">The same agents run on {{PEER_NETWORK}}: <a href="{{PEER_BASE}}/">{{PEER_BASE}}/</a>. Use testnet (free test XRP from the <a href="https://xrpl.org/resources/dev-tools/xrp-faucets" target="_blank" rel="noopener">XRPL faucet</a>) to try a flow before paying real XRP. Every receipt states its network.</span></div>
+
+<div class="grid">
+  <div class="card" id="timestamp">
+    <h3>Signed timestamp</h3>
+    <div class="price">{{TS_PRICE}} XRP per receipt</div>
+    <p class="mute">Prove a file existed at a point in time without uploading it. Only its fingerprint (SHA-256) is sent. You see the receipt's fingerprint first, then pay.</p>
+    <a class="btn" href="#try-timestamp">Timestamp a file</a>
+  </div>
+  <div class="card" id="webhook">
+    <h3>Signed webhook receiver</h3>
+    <div class="price">{{WH_PRICE}} XRP for {{DAYS}} days</div>
+    <p class="mute">A webhook URL whose log you can't secretly edit. Every POST is signed on arrival, and at the end you get the signed bundle. {{WH_DEPOSIT}} XRP opens it; {{WH_REST}} XRP is due when the bundle is ready.</p>
+    <a class="btn" href="#try-webhook">Open a webhook URL</a>
+  </div>
+</div>
+
+<h2 id="try-timestamp">Timestamp a file</h2>
+<div class="card">
+  <div class="drop" id="drop" tabindex="0">Drop a file here or click to choose one. It is hashed in your browser and never uploaded.<input type="file" id="file" class="hidden"></div>
+  <div class="row"><span class="mute">or paste a SHA-256:</span><input type="text" id="sha" placeholder="64 hex characters" style="flex:1;min-width:220px"></div>
+  <div class="row"><input type="text" id="note" maxlength="200" placeholder="Note (optional, shown in the receipt), e.g. contract v3 final"></div>
+  <button id="tsGo" disabled>Get receipt</button>
+  <div id="tsOut"></div>
+</div>
+
+<h2 id="try-webhook">Open a webhook URL</h2>
+<div class="card">
+  <div class="row"><input type="text" id="label" maxlength="100" placeholder="Label (optional), e.g. stripe prod"></div>
+  <button id="whGo">Open webhook job</button>
+  <div id="whOut"></div>
+</div>
+
+<h2 id="verify">Check a receipt or bundle</h2>
+<div class="card">
+  <p class="mute">Paste a receipt or webhook bundle (JSON). It's checked in your browser with the Web Crypto API, so the result doesn't depend on trusting this site.</p>
+  <textarea id="vIn" placeholder='{"receipt":{…}}  or  {"bundle":{…},"records":[…]}'></textarea>
+  <div class="row"><button id="vGo">Check</button><span class="mute">Expected signer: <code>{{NODE}}</code></span></div>
+  <div id="vOut"></div>
+  <details><summary>Check offline instead</summary>
+  <pre>curl -fsSLO {{BASE}}/verify.mjs
+node verify.mjs receipt.json {{NODE}}</pre>
+  <p class="mute">The record's <code>txHash</code> is the SHA-256 of its canonical JSON (keys sorted, without <code>txHash</code>, <code>signature</code> and <code>signerPublicKey</code>). <code>signature</code> is Ed25519 over that hex string. Change any field and the check fails.</p></details>
+</div>
+
+<h2 id="for-agents">For AI agents and developers</h2>
+<div class="card">
+  <p>Everything above works over plain HTTP with any XRPL wallet. These files are written for agents to read:</p>
+  <table>
+    <tr><td><a href="{{BASE}}/llms.txt">llms.txt</a></td><td>A one-page overview and the fastest path.</td></tr>
+    <tr><td><a href="{{BASE}}/timestamp/SKILL.md">timestamp/SKILL.md</a></td><td>Agent skill for the timestamp agent (drop it in <code>.claude/skills/</code>).</td></tr>
+    <tr><td><a href="{{BASE}}/webhook/SKILL.md">webhook/SKILL.md</a></td><td>Agent skill for the webhook receiver.</td></tr>
+    <tr><td><a href="{{BASE}}/openapi.json">openapi.json</a></td><td>OpenAPI 3.1 for every route.</td></tr>
+    <tr><td><a href="{{BASE}}/timestamp/agent">timestamp/agent</a> · <a href="{{BASE}}/webhook/agent">webhook/agent</a></td><td>Agent cards: price, stages, payTo, network, signer.</td></tr>
+  </table>
+  <p style="margin-top:14px">One command with the <a href="https://github.com/CAPPZ-ai/cappz-sdk/blob/main/skills/using-cappz-marketplace/SKILL.md">cappz-market</a> tool:</p>
+  <pre>cappz-market hire {{BASE}}/timestamp --input '{"sha256":"&lt;64 hex&gt;"}' --max {{TS_PRICE}}</pre>
+  <details><summary>The protocol in five steps</summary>
+  <ol class="steps">
+    <li><code>POST {{BASE}}/&lt;agent&gt;/jobs</code> with <code>{"input":…}</code> returns <code>{job, pay}</code>.</li>
+    <li>Pay <code>pay.amount</code> to <code>pay.destination</code> <b>with</b> <code>pay.destinationTag</code>, or sign <code>pay.preparedTx</code>.</li>
+    <li>Optional: <code>POST …/jobs/&lt;id&gt;/payments</code> with <code>{"txHash":"…"}</code>. Otherwise payments are matched within about 15 s.</li>
+    <li><code>GET …/jobs/&lt;id&gt;/stages/&lt;n&gt;/result</code> returns 402 with <code>pay</code> and <code>resultSha256</code> until paid, then 200 with the bytes.</li>
+    <li>Check <code>sha256(bytes) == resultSha256</code> and verify the signature.</li>
+  </ol></details>
+</div>
+
+<p class="mute" style="margin-top:28px">Payments go to <code>{{PAYTO}}</code> on {{NETWORK}}. Results are signed by node <code>{{NODE}}</code>. Part of the <a href="https://cappz.ai/marketplace">CAPPZ Marketplace</a>.</p>
+</main>
+<script>
+const BASE = '{{BASE}}', NODE = '{{NODE}}';
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const enc = (s) => new TextEncoder().encode(s);
+const toHex = (b) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('');
+const fromHex = (h) => new Uint8Array(h.match(/../g).map((x) => parseInt(x, 16)));
+const sha256 = async (data) => toHex(await crypto.subtle.digest('SHA-256', typeof data === 'string' ? enc(data) : data));
+const canonical = (v) => v === null || typeof v !== 'object' ? JSON.stringify(v) : Array.isArray(v) ? `[${v.map(canonical).join(',')}]` : `{${Object.keys(v).filter((k) => v[k] !== undefined).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(',')}}`;
+async function verifyTx(tx) {
+  const { txHash, signature, signerPublicKey, ...unsigned } = tx;
+  if ((await sha256(canonical(unsigned))) !== txHash) return false;
+  const key = await crypto.subtle.importKey('raw', fromHex(signerPublicKey), { name: 'Ed25519' }, false, ['verify']);
+  return crypto.subtle.verify('Ed25519', key, fromHex(signature), enc(txHash));
+}
+const api = async (path, body) => {
+  const r = await fetch(BASE + path, body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const text = await r.text(); let json = null; try { json = JSON.parse(text); } catch {}
+  return { status: r.status, json, text };
+};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const copyBtn = (v) => `<button class="ghost" onclick="navigator.clipboard.writeText('${esc(v)}');this.textContent='Copied'">Copy</button>`;
+const payBox = (pay, what) => `
+  <p><b>Pay ${esc(pay.amount)} XRP</b> ${esc(what)} from any XRPL wallet on {{NETWORK}}. Include the destination tag; it identifies your job.</p>
+  <div class="pay">
+    <b>To</b><code>${esc(pay.destination)}</code>${copyBtn(pay.destination)}
+    <b>Destination tag</b><code>${esc(pay.destinationTag)}</code>${copyBtn(pay.destinationTag)}
+    <b>Amount</b><code>${esc(pay.amount)} XRP</code>${copyBtn(pay.amount)}
+  </div>
+  <details><summary>Already paid? Paste the transaction hash to speed it up</summary>
+    <div class="row"><input type="text" class="txh" placeholder="Transaction hash" style="flex:1;min-width:220px"><button class="ghost claim">Submit</button></div>
+  </details>`;
+function wireClaim(root, agent, jobId) {
+  root.querySelectorAll('.claim').forEach((b) => b.onclick = async () => {
+    const h = b.parentElement.querySelector('.txh').value.trim(); if (!h) return;
+    const r = await api(`/${agent}/jobs/${jobId}/payments`, { txHash: h });
+    b.textContent = r.status === 200 ? 'Received' : (r.json?.error ?? 'Not matched yet');
+  });
+}
+const download = (name, text) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' })); a.download = name; a.click(); };
+
+// ── Timestamp ──
+const drop = $('drop'), fileIn = $('file');
+const setSha = (h) => { $('sha').value = h; $('tsGo').disabled = !/^[0-9a-f]{64}$/i.test(h); };
+drop.onclick = () => fileIn.click();
+drop.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') fileIn.click(); };
+drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+const hashFile = async (f) => { drop.textContent = `Hashing ${f.name}…`; const h = await sha256(await f.arrayBuffer()); drop.innerHTML = `<b>${esc(f.name)}</b><br><code>${h}</code>`; setSha(h); };
+drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) hashFile(e.dataTransfer.files[0]); };
+fileIn.onchange = () => fileIn.files[0] && hashFile(fileIn.files[0]);
+$('sha').oninput = (e) => setSha(e.target.value.trim());
+$('tsGo').onclick = async () => {
+  const out = $('tsOut'); $('tsGo').disabled = true;
+  const sha = $('sha').value.trim().toLowerCase(), note = $('note').value.trim();
+  out.innerHTML = '<p class="status">Opening job…</p>';
+  const o = await api('/timestamp/jobs', { input: note ? { sha256: sha, note } : { sha256: sha } });
+  if (o.status !== 200) { out.innerHTML = `<p class="status bad">${esc(o.json?.error ?? o.text)}</p>`; $('tsGo').disabled = false; return; }
+  const jobId = o.json.job.jobId; let shown = false, promised = null;
+  for (let i = 0; i < 900; i++) {
+    const r = await api(`/timestamp/jobs/${jobId}/stages/0/result`);
+    if (r.status === 402 && !shown) {
+      shown = true; promised = r.json.resultSha256;
+      out.innerHTML = `<p class="status">Receipt ready. Its fingerprint is <code>${esc(r.json.resultSha256)}</code></p>${payBox(r.json.pay, 'to release it')}<p class="mute" id="tsWait">Waiting for your payment… This page checks every few seconds. Job <code>${esc(jobId)}</code></p>`;
+      wireClaim(out, 'timestamp', jobId);
+    } else if (r.status === 200) {
+      const fp = await sha256(r.text), receipt = r.json.receipt, valid = await verifyTx(receipt);
+      out.innerHTML = `<p class="status ok">Paid. Here is your receipt.</p>
+        <p>Bytes match the fingerprint you were shown: <b class="${fp === promised ? 'ok' : 'bad'}">${fp === promised ? 'yes' : 'no'}</b> ·
+        Signature: <b class="${valid ? 'ok' : 'bad'}">${valid ? 'valid' : 'INVALID'}</b> ·
+        Signer is this node: <b class="${receipt.signerPublicKey === NODE ? 'ok' : 'bad'}">${receipt.signerPublicKey === NODE ? 'yes' : 'no'}</b></p>
+        <p class="mute">${esc(receipt.payload.sha256)} at ${esc(receipt.timestamp)}</p>
+        <button id="tsDl">Download receipt.json</button>`;
+      $('tsDl').onclick = () => download(`receipt-${sha.slice(0, 12)}.json`, r.text);
+      return;
+    }
+    await sleep(shown ? 4000 : 1000);
+  }
+  out.insertAdjacentHTML('beforeend', `<p class="mute">Still waiting. Your job is kept: reopen <code>${esc(BASE)}/timestamp/jobs/${esc(jobId)}/stages/0/result</code> after paying.</p>`);
+};
+
+// ── Webhook ──
+$('whGo').onclick = async () => {
+  const out = $('whOut'); $('whGo').disabled = true;
+  const label = $('label').value.trim();
+  const o = await api('/webhook/jobs', { input: label ? { label } : {} });
+  if (o.status !== 200) { out.innerHTML = `<p class="status bad">${esc(o.json?.error ?? o.text)}</p>`; $('whGo').disabled = false; return; }
+  const jobId = o.json.job.jobId, hook = `${BASE}/webhook/hooks/${jobId}`;
+  out.innerHTML = `<p class="status">Job <code>${esc(jobId)}</code> opened. Save this ID: you'll need it to collect the bundle.</p>${payBox(o.json.pay, 'deposit to open the URL')}<p class="mute">Waiting for the deposit…</p>`;
+  wireClaim(out, 'webhook', jobId);
+  for (let i = 0; i < 900; i++) {
+    const s = await api(`/webhook/hooks/${jobId}`);
+    if (s.json?.active) {
+      out.innerHTML = `<p class="status ok">Your webhook URL is open until ${esc(new Date(s.json.periodEnd).toLocaleString())}.</p>
+        <div class="pay"><b>URL</b><code>${esc(hook)}</code>${copyBtn(hook)}</div>
+        <p>Give it to the sending service, or test it:</p>
+        <pre>curl -X POST ${esc(hook)} -H 'content-type: application/json' -d '{"hello":"world"}'</pre>
+        <p class="mute">Status (count only): <a href="${esc(hook)}" target="_blank">${esc(hook)}</a>. After the period, get the bundle:</p>
+        <pre>cappz-market hire ${esc(BASE)}/webhook --job ${esc(jobId)} --max {{WH_REST}}</pre>
+        <p class="mute">Or open <code>${esc(BASE)}/webhook/jobs/${esc(jobId)}/stages/1/result</code>. It shows what to pay ({{WH_REST}} XRP), then returns the bundle.</p>`;
+      return;
+    }
+    await sleep(4000);
+  }
+};
+
+// ── Verify ──
+$('vGo').onclick = async () => {
+  const out = $('vOut'); let doc;
+  try { doc = JSON.parse($('vIn').value); } catch { out.innerHTML = '<p class="status bad">That is not JSON.</p>'; return; }
+  const main = doc.receipt ?? doc.bundle ?? doc, records = Array.isArray(doc.records) ? doc.records : [];
+  const lines = [];
+  const line = (ok, t) => lines.push(`<div class="${ok ? 'ok' : 'bad'}">${ok ? '✓' : '✗'} ${esc(t)}</div>`);
+  try {
+    line(await verifyTx(main), `${main.eventType} signature`);
+    line(main.signerPublicKey === NODE, `signed by this node (${String(main.signerPublicKey).slice(0, 16)}…)`);
+    if (main.payload?.network) lines.push(`<div class="${main.payload.network === 'mainnet' ? 'ok' : 'bad'}">network: ${esc(main.payload.network)}${main.payload.network === 'mainnet' ? '' : ' (test record, no value as proof)'}</div>`);
+    if (main.payload?.sha256) lines.push(`<div class="mute">hash ${esc(main.payload.sha256)} at ${esc(main.timestamp)}</div>`);
+    if (doc.bundle) {
+      line(main.payload.count === records.length, `bundle covers ${records.length} records`);
+      line(main.payload.recordsSha256 === (await sha256(JSON.stringify(records))), 'records hash matches the bundle');
+      let bad = 0; for (const r of records) if (!(await verifyTx(r)) || r.signerPublicKey !== main.signerPublicKey) bad++;
+      line(bad === 0, `every record signed (${records.length - bad}/${records.length})`);
+    }
+  } catch (e) { line(false, `could not check: ${e.message}`); }
+  out.innerHTML = `<div class="status">${lines.join('')}</div>`;
+};
+</script>
+</body>
+</html>

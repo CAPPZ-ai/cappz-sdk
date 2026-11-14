@@ -1,0 +1,35 @@
+# CAPPZ paid agents on {{HOST}} ({{NETWORK}})
+
+> Two pay-per-job agents on a CAPPZ edge node, paid in XRP on the XRP Ledger ({{NETWORK}}). Every result is signed with the node's Ed25519 key {{NODE}}, and anyone can check it offline. No account and no API key: open a job over HTTP, pay the stage it shows (with its destination tag), then collect the result. For a work stage you see the result's SHA-256 before you pay.
+
+Network: {{NETWORK}}. Pays to: {{PAYTO}}. Signer (node key): {{NODE}}.
+The same agents run on {{PEER_NETWORK}}: {{PEER_BASE}}/llms.txt. Validate a flow on testnet (free test XRP) before paying real XRP on mainnet. Every signed record states its network in `payload.network`; only mainnet records carry value as proof.
+
+## Agents
+
+- [Signed timestamp]({{BASE}}/timestamp/SKILL.md): send a SHA-256 of a file (the file stays with you) and get a signed receipt saying the node saw that hash at that time. {{TS_PRICE}} XRP, paid once the receipt is ready. Input: `{"sha256":"<64 hex>","note":"optional, ≤200 chars"}`.
+- [Signed webhook receiver]({{BASE}}/webhook/SKILL.md): a webhook URL open for {{DAYS}} days. Every POST becomes a signed record, and at the end you get the signed bundle of all records. {{WH_PRICE}} XRP: {{WH_DEPOSIT}} deposit opens the URL, {{WH_REST}} when the bundle is ready. Input: `{"label":"optional, ≤100 chars"}`.
+
+## Fastest path
+
+- With the CAPPZ tool: `cappz-market hire {{BASE}}/timestamp --input '{"sha256":"…"}' --max {{TS_PRICE}}`. It opens the job, pays and checks the hash. Install: `curl -fsSLO https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/packages/cappz-market/dist/cappz-market.mjs`, then `node cappz-market.mjs setup`.
+- With plain HTTP and any XRPL wallet:
+  1. `POST {{BASE}}/<agent>/jobs {"input":…}` returns `{job, pay}`.
+  2. Sign and submit `pay.preparedTx`, adding your `Account` and keeping `DestinationTag`.
+  3. `POST …/jobs/<id>/payments {"txHash"}`. Optional: payments are also matched automatically within about 15 s.
+  4. `GET …/jobs/<id>/stages/<n>/result`. It returns 402 with `pay` and `resultSha256` until the stage is paid, then 200 with the bytes.
+- Check a receipt: `node verify.mjs receipt.json` (download from {{BASE}}/verify.mjs), or paste it into the guide page.
+
+## Reference
+
+- [Guide for people, with try-it forms]({{BASE}}/)
+- [OpenAPI 3.1]({{BASE}}/openapi.json)
+- [Agent cards (JSON)]({{BASE}}/timestamp/agent) and [webhook card]({{BASE}}/webhook/agent)
+- [Receipt verifier, Node 20+ or Deno]({{BASE}}/verify.mjs)
+- [General skill: hiring CAPPZ paid agents](https://github.com/CAPPZ-ai/cappz-sdk/blob/main/skills/hiring-cappz-paid-agents/SKILL.md)
+
+## Rules
+
+- Never pay without the stage's `DestinationTag`, and never pay more than `pay.amount`.
+- This node is on {{NETWORK}}. Testnet XRP is free from the XRPL faucet. Move real XRP only with the OK of the person you act for.
+- Limits: webhook bodies up to 64 KB, and at most 10,000 records per period.

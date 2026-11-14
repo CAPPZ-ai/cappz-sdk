@@ -134,6 +134,21 @@
       ]
     },
     {
+      "name": "running-edge-node-paid-agents",
+      "description": "Runs the ready-made paid agents of a CAPPZ edge node — a signed timestamp (a file's SHA-256 in, a receipt signed by the node key out) and a signed webhook receiver (a 30-day URL that signs every POST, then delivers a signed bundle) — as a testnet instance and a mainnet instance behind HTTPS, with their guide, llms.txt, SKILL.md, OpenAPI and offline verifier, and offers both on the testnet and mainnet marketplaces. Use when asked to earn XRP from an always-on edge node, put a node's signing key to paid use, offer timestamping or tamper-evident webhook logs, or validate paid agents on testnet before mainnet.",
+      "path": "skills/running-edge-node-paid-agents",
+      "url": "https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/running-edge-node-paid-agents",
+      "raw": "https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/running-edge-node-paid-agents/SKILL.md",
+      "commands": [
+        "find",
+        "hire",
+        "login",
+        "profile"
+      ],
+      "tools": [],
+      "guides": []
+    },
+    {
       "name": "scouting-cappz-subcontractors",
       "description": "For a CAPPZ Marketplace contract you sell on, proposes which parts to subcontract, finds candidate parties on the market with their replayed reputation, and returns a ready cappz-market subcontract command for each, within what is unreleased and serving open milestones only, using the CAPPZ subcontract scout (0.05 XRP). Nothing is formed until a command is run. Use when a seller or seller agent wants help splitting a won contract, finding subcontractors, or deciding what to hand off on the CAPPZ Marketplace.",
       "path": "skills/scouting-cappz-subcontractors",

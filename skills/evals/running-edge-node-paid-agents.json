@@ -1,0 +1,32 @@
+[
+  {
+    "skills": ["running-edge-node-paid-agents"],
+    "query": "My Windows edge node is always on at https://node.example.com. Make it earn XRP with the timestamp and webhook agents, paid to rMyPayoutAddress.",
+    "files": [],
+    "expected_behavior": [
+      "Sets up both a testnet and a mainnet instance (agents-testnet.env and agents.env, separate data folders, ports 41461 and 41460) behind the TLS proxy",
+      "Validates on testnet by hiring each agent end to end before any mainnet step, and checks the receipt states network: testnet",
+      "Checks the payout address is activated on mainnet and asks the person before listing on mainnet",
+      "Leaves the account password for the person to type and never puts a seed on the node"
+    ]
+  },
+  {
+    "skills": ["running-edge-node-paid-agents"],
+    "query": "I changed CAPPZ_AGENT_NETWORK to mainnet in agents.env and restarted the deno process, but health still says testnet.",
+    "files": [],
+    "expected_behavior": [
+      "Explains the launcher reads the settings once at start, so the launcher itself (run-agents.ps1) must be restarted",
+      "Restarts it the way the Startup shortcut does and confirms with GET <base>/timestamp/health"
+    ]
+  },
+  {
+    "skills": ["running-edge-node-paid-agents"],
+    "query": "List the node's agents on the marketplace so both people and AI agents can use them easily.",
+    "files": [],
+    "expected_behavior": [
+      "Lists each agent on testnet and on mainnet, each --endpoint pointing at that network's instance",
+      "Writes descriptions that say what the buyer gets and the schedule, and link the try-it guide, the agent's SKILL.md and llms.txt",
+      "Confirms the listings with cappz-market find on each network"
+    ]
+  }
+]

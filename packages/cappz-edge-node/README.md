@@ -95,6 +95,17 @@ CAPPZ_JOBS_BPMN=edge-node-jobs.bpmn CAPPZ_NODE_DATA=./cappz-node-data   deno run
 `subscription-watch` (`CAPPZ_FUNDING_CONFIG`) needs the XRPL client; run
 `main.ts --jobs` for it.
 
+## Paid agents
+
+`agents/server.ts` (15.43.0) sells the node key's signatures as two paid agents on
+the marketplace: a **signed timestamp** (0.05 XRP, on completion) and a **signed
+webhook receiver** (30 days, 2 XRP: 30% deposit, 70% for the signed bundle). Run one
+instance per network: testnet validates with free test XRP, and mainnet earns real
+XRP. Every record is signed with `payload.network`. Each instance serves a guide with
+try-it forms, `llms.txt`, a `SKILL.md` per agent, OpenAPI and an offline verifier.
+Setup, the Windows launcher and the Caddy routes are in
+[agents/README.md](agents/README.md); skill: `running-edge-node-paid-agents`.
+
 ## Run
 
 ```bash

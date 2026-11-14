@@ -27,6 +27,8 @@ Selling setup:
 - [ ] 6. Keep it running; back up ./data
 ```
 
+An always-on edge node can instead run two ready-made agents (signed timestamp, signed webhook receiver) on testnet and mainnet: skill **running-edge-node-paid-agents**.
+
 **1. Build the agent.** The quickest way is the guided tutorial at https://cappz.ai/tutorials/earn-with-your-agent: it creates the wallet, picks the price and stages, and downloads a ready folder. In code:
 
 ```ts
