@@ -78,6 +78,23 @@ and a browser speak the same bytes.
   shipped through `@cappz/sdk` (`src/sdk/transports.ts`); `main.ts` does not
   start it yet.
 
+## Timers only
+
+`timers.ts` (15.41.0) runs just the BPMN timers: no peer, relay, gateway or
+directory listener, and no npm package in its module graph (4 local files,
+~22 KB; the key is imported with WebCrypto in `signingKey.ts`). The jobs HTTP
+server binds `127.0.0.1` (`CAPPZ_JOBS_HOST` to change it). Ticks need outbound
+HTTPS only. It exits 1 without a node key or a readable `CAPPZ_JOBS_BPMN`.
+`--no-config` keeps Deno from installing the repository's `package.json`.
+
+```bash
+deno cache --no-config packages/cappz-edge-node/timers.ts
+CAPPZ_JOBS_BPMN=edge-node-jobs.bpmn CAPPZ_NODE_DATA=./cappz-node-data   deno run --cached-only --no-config --allow-net --allow-read --allow-write --allow-env   packages/cappz-edge-node/timers.ts --jobs 41444
+```
+
+`subscription-watch` (`CAPPZ_FUNDING_CONFIG`) needs the XRPL client; run
+`main.ts --jobs` for it.
+
 ## Run
 
 ```bash
@@ -160,6 +177,13 @@ v15-09-00 (details: [docs/IDENTITY_TRUST_TRANSPORTS.md](../../docs/IDENTITY_TRUS
   `joinMulticast` is not a Deno API, so beacons never left the host before v15-09-00. Sockets
   now bind `0.0.0.0` and join per interface (`--allow-sys=networkInterfaces`; or pin
   `CAPPZ_MULTICAST_IF`).
+
+Only the services named on the command line start (15.41.0): `--tcp` (with the
+LAN beacons and wallet groups), `--quic`, `--ws`, `--relay`, `--verify`,
+`--legacy`, `--ftps`, `--ldap`, `--routes`, `--saml`, `--constraints`, `--jobs`. With no service flag every
+service starts, as before. Each service starts on its own: one that cannot bind
+its port is logged and the others keep running; the node exits 1 only when every
+service it was asked for failed.
 
 Ports default to 41441 (TCP), 41443 (QUIC), 41442 (WS bridge, bound to
 127.0.0.1), 41444 (jobs) and 41445 (relay). `CAPPZ_POW` names the node's POW

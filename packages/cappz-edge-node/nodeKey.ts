@@ -13,15 +13,10 @@
  * operator list can no longer keep a revoked key alive.
  */
 
-import { importSigningKey, type SigningKey } from '../../src/lib/sync/helloSignature.ts';
 import { withoutRevokedKeys, type KeyRevocation } from '../../src/lib/identity/keyDeclaration.ts';
 
-export async function loadNodeKey(): Promise<(SigningKey & { privateKey: CryptoKey }) | null> {
-  const pkcs8 = Deno.env.get('CAPPZ_NODE_KEY');
-  const pub = Deno.env.get('CAPPZ_NODE_PUB');
-  if (!pkcs8 || !pub) return null;
-  return importSigningKey(pkcs8, pub);
-}
+// v15-41-00: the loader moved to signingKey.ts (WebCrypto only, no imports) so the timers node stays dependency-free.
+export { loadNodeKey } from './signingKey.ts';
 
 /** Wallet → declared public keys, re-read on change; null when the operator keeps no list. */
 export function declaredKeysFrom(dataDir: string): (walletAddress: string) => Promise<readonly string[] | null> {

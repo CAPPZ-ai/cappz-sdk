@@ -218,6 +218,7 @@ export async function serveLegacy(o: { port: number; dataDir: string; nodeAddres
   console.log(`[edge-node] legacy ${hostname}:${o.port}/legacy/v1  require ${policy.required.join(',')}  operators ${policy.operators.length}  scan ${scan ? 'on' : 'off'}`);
   void runPulls(o.dataDir, o.nodeAddress, store, policy, scan);
   Deno.serve({ port: o.port, hostname }, (req) => gw.handle(req));
-  if (o.ftpsPort && o.tls) void serveFtps(o.ftpsPort, o.dataDir, o.tls, gw, policy.maxBytes);
+  // v15-41-00: a busy FTPS port is logged, not an unhandled rejection that ends the node.
+  if (o.ftpsPort && o.tls) serveFtps(o.ftpsPort, o.dataDir, o.tls, gw, policy.maxBytes).catch((e) => console.error(`[edge-node] ftps :${o.ftpsPort} did not start: ${e instanceof Error ? e.message : e}`));
   else if (o.ftpsPort) console.log('[edge-node] ftps off: needs TLS (CAPPZ_TLS_CERT/CAPPZ_TLS_KEY or CAPPZ_TLS_AUTO=1)');
 }

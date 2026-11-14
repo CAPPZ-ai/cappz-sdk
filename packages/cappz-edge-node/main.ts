@@ -46,6 +46,13 @@
  *
  * v15-10-00: TLS rotates without restart; --ftps 41449 (implicit FTPS drop box
  * into quarantine, legacy.ts) and --ldap 41389 (read-only directory, ldap.ts).
+ *
+ * v15-41-00: only the services named on the command line start (--tcp also runs
+ * the LAN beacons and wallet groups; --quic, --ws, --relay, --verify, --legacy,
+ * --ftps, --ldap, --routes, --jobs). With no service flag every service starts,
+ * as before. Each service starts on its own: one that cannot bind its port is
+ * logged and the rest keep running; the node exits only when every service it
+ * was asked for failed. A timers-only node runs timers.ts instead (no npm graph).
  */
 
 import { serveTcp, dialTcp } from './tcp.ts';
@@ -68,6 +75,7 @@ import { serveRelay, webTransportPossible } from './relay.ts';
 import { nodeEndpointsFromEnv, registerNodeRecord } from './directory.ts';
 import type { EndpointRecord } from '../../src/lib/sync/endpointDirectory.ts';
 import { loadNodeKey, declaredKeysFrom } from './nodeKey.ts';
+import { pathFromFileUrl } from './signingKey.ts';
 import { nodeHello, runPeerSession, type NodeIdentity } from './peers.ts';
 import { fileBodyStore } from './objects.ts';
 import type { EdgeSessionOptions } from '../../src/lib/sync/edgeSession.ts';
@@ -88,6 +96,11 @@ const ftpsPort = arg('ftps', 41449);
 const ldapPort = arg('ldap', 41389);
 const routesPort = arg('routes', 41450);
 const samlPort = arg('saml', 41451);
+// v15-41-00: service flags select what starts; none named = all (the pre-15.41 behaviour).
+const SERVICES = ['tcp', 'quic', 'ws', 'relay', 'verify', 'legacy', 'ftps', 'ldap', 'routes', 'saml', 'constraints', 'jobs'] as const;
+type Service = (typeof SERVICES)[number];
+const named = SERVICES.filter((s) => Deno.args.includes(`--${s}`));
+const on = (s: Service) => named.length === 0 || named.includes(s);
 const powAddress = Deno.env.get('CAPPZ_POW') ?? 'unset-pow';
 const dataDir = Deno.env.get('CAPPZ_NODE_DATA') ?? './cappz-node-data';
 const key = await loadNodeKey();
@@ -126,8 +139,8 @@ const hello = () => nodeHello(id);
 const onSession = (via: string) => (s: Parameters<typeof runPeerSession>[1]) => runPeerSession(id, s, via);
 
 console.log(`[edge-node] POW ${powAddress}${key ? `  key ${key.publicKeyHex.slice(0, 16)}…` : '  (no node key: peer sessions, beacons and jobs off)'}`);
-console.log(`[edge-node] tcp :${tcpPort}  quic :${quicOn ? quicPort : 'off'}  ws :${wsPort}  relay :${relayPort}`);
-if (!quicOn) console.log('[edge-node] quic off: needs --unstable-net and TLS (CAPPZ_TLS_CERT/CAPPZ_TLS_KEY or CAPPZ_TLS_AUTO=1)');
+if (on('tcp') || on('quic') || on('ws') || on('relay')) console.log(`[edge-node] ${[on('tcp') && `tcp :${tcpPort}`, on('quic') && `quic :${quicOn ? quicPort : 'off'}`, on('ws') && `ws :${wsPort}`, on('relay') && `relay :${relayPort}`].filter(Boolean).join('  ')}`);
+if (on('quic') && !quicOn) console.log('[edge-node] quic off: needs --unstable-net and TLS (CAPPZ_TLS_CERT/CAPPZ_TLS_KEY or CAPPZ_TLS_AUTO=1)');
 
 // The ontology is the directory: member records, placed only by explicit edges (none on a bare node: listed unplaced).
 const directoryRows = async () => projectDirectory({ members: await memberTableFromStore(store), aliases: Deno.env.get('CAPPZ_NODE_NAME') ? { [powAddress]: { name: Deno.env.get('CAPPZ_NODE_NAME')! } } : undefined });
@@ -154,62 +167,71 @@ async function kickOffSideChannels(): Promise<void> {
   }
 }
 
-await Promise.all([
-  key ? serveTcp(tcpPort, hello, onSession('tcp'), sessionOpts) : Promise.resolve(),
-  quicOn && key
-    ? serveQuic(quicPort, tls!, hello, onSession('quic'), sessionOpts)
-    : Promise.resolve(),
-  startBeacon(powAddress, endpoints, key, () => heads),
-  key
-    ? listenBeacons(powAddress, (hint) => {
-        // A verified beacon on the LAN: dial it once at a time and gossip heads.
-        if (dialing.has(hint.powAddress)) return;
-        const m = /^tcp:\/\/([^:/]+):(\d+)/.exec(hint.endpoint);
-        if (!m) return;
-        dialing.add(hint.powAddress);
-        (async () => {
-          const session = await dialTcp(m[1], Number(m[2]), await hello(), sessionOpts);
-          if (session.remoteHello.walletAddress !== hint.powAddress || session.remoteHello.publicKey !== hint.publicKey) {
-            session.close();
-            throw new Error('peer hello does not match the beacon it answered');
-          }
-          await runPeerSession(id, session, 'udp-beacon dial');
-        })().catch((err) => console.warn('[edge-node] dial after beacon failed:', err?.message ?? err))
-          .finally(() => dialing.delete(hint.powAddress));
-      })
-    : Promise.resolve(),
-  key ? serveBrowserBridge(wsPort, hello, onSession('ws-bridge'), sessionOpts) : Promise.resolve(),
-  serveRelay(relayPort, powAddress, dataDir, () => endpointRecord, tls),
-  serveVerifyGateway(verifyPort, dataDir),
-  serveLegacy({
-    port: legacyPort, dataDir, nodeAddress: powAddress, key, bodies: store, verify: verifyGatewayFor(dataDir),
-    directory: async () => ({ node: { address: powAddress, name: Deno.env.get('CAPPZ_NODE_NAME') ?? null }, entries: await directoryRows() }),
-    ftpsPort, tls,
-  }),
-  serveLdap(ldapPort, directoryRows),
-  // v15-12-00: the route host runs when there is a port module or a legacy app to front.
-  Deno.env.get('CAPPZ_ROUTES_MODULE') || Deno.env.get('CAPPZ_ROUTES_UPSTREAM') ? serveRoutes({ port: routesPort, dataDir, nodeAddress: powAddress }) : Promise.resolve(),
-  // v15-36-00: SAML Guard in front of a SAML service provider you host (samlGuard.ts), when configured.
-  Deno.env.get('CAPPZ_SAML_CONFIG') ? serveSamlGuard(samlPort, dataDir) : Promise.resolve(),
-  // v15-40-00: Constraint Guard in front of controllers' write paths (constraintGuard.ts), when configured.
-  Deno.env.get('CAPPZ_CONSTRAINTS_CONFIG') ? serveConstraintGuard(dataDir, key) : Promise.resolve(),
-  key && serveWallets.length
-    ? listenWalletGroups({
-        wallets: serveWallets, key, endpoints: groupEndpoints, declaredKeys: sessionOpts.declaredKeysFor,
-        record: async (eventType, data) => {
-          const tx = { txId: `${eventType}-${crypto.randomUUID()}`, timestamp: new Date().toISOString(), eventType, sourceAddress: powAddress, targetAddress: `${powAddress}/admin/in-queue`, payload: { ...data, bpmnPath: "m/44'/144'/100'/bpmn/substrate/replica-connect", governingPrinciple: "m/44'/144'/100'/principles/cope/v1#local-first" } };
-          await Deno.writeTextFile(`${dataDir}/edge-txs.jsonl`, JSON.stringify(await signEdgeTx(tx, key)) + '\n', { append: true });
-        },
-      })
-    : Promise.resolve(),
-  key && serveWallets.length ? kickOffSideChannels() : Promise.resolve(),
-  serveJobs({
-    port: jobsPort,
-    nodeAddress: powAddress,
-    dataDir,
-    // The app's process file (e.g. cappz/src/bpmn/substrate/functions/edge-node-jobs.bpmn); CAPPZ_JOBS_BPMN overrides.
-    bpmnPath: Deno.env.get('CAPPZ_JOBS_BPMN') ?? new URL('../../src/bpmn/substrate/functions/edge-node-jobs.bpmn', import.meta.url).pathname,
-    // v15-23-01: subscription-watch, when CAPPZ_FUNDING_CONFIG is set (funding.ts).
-    timerJobs: await fundingJobFromEnv(dataDir).then((j) => (j ? { [j.functionName]: j } : {})),
-  }),
-]);
+// Each service starts on its own (v15-41-00): a failure is logged, the others keep running.
+const wanted: Array<[string, () => Promise<unknown>]> = [];
+const add = (name: string, when: boolean, start: () => Promise<unknown>) => { if (when) wanted.push([name, start]); };
+
+add('tcp', on('tcp') && Boolean(key), () => serveTcp(tcpPort, hello, onSession('tcp'), sessionOpts));
+add('quic', on('quic') && quicOn && Boolean(key), () => serveQuic(quicPort, tls!, hello, onSession('quic'), sessionOpts));
+add('beacon', on('tcp'), () => startBeacon(powAddress, endpoints, key, () => heads));
+add('beacon listener', on('tcp') && Boolean(key), () => listenBeacons(powAddress, (hint) => {
+  // A verified beacon on the LAN: dial it once at a time and gossip heads.
+  if (dialing.has(hint.powAddress)) return;
+  const m = /^tcp:\/\/([^:/]+):(\d+)/.exec(hint.endpoint);
+  if (!m) return;
+  dialing.add(hint.powAddress);
+  (async () => {
+    const session = await dialTcp(m[1], Number(m[2]), await hello(), sessionOpts);
+    if (session.remoteHello.walletAddress !== hint.powAddress || session.remoteHello.publicKey !== hint.publicKey) {
+      session.close();
+      throw new Error('peer hello does not match the beacon it answered');
+    }
+    await runPeerSession(id, session, 'udp-beacon dial');
+  })().catch((err) => console.warn('[edge-node] dial after beacon failed:', err?.message ?? err))
+    .finally(() => dialing.delete(hint.powAddress));
+}));
+add('ws bridge', on('ws') && Boolean(key), () => serveBrowserBridge(wsPort, hello, onSession('ws-bridge'), sessionOpts));
+add('relay', on('relay'), () => serveRelay(relayPort, powAddress, dataDir, () => endpointRecord, tls));
+add('verify', on('verify'), () => serveVerifyGateway(verifyPort, dataDir));
+add('legacy', on('legacy') || on('ftps'), () => serveLegacy({
+  port: legacyPort, dataDir, nodeAddress: powAddress, key, bodies: store, verify: verifyGatewayFor(dataDir),
+  directory: async () => ({ node: { address: powAddress, name: Deno.env.get('CAPPZ_NODE_NAME') ?? null }, entries: await directoryRows() }),
+  ftpsPort: on('ftps') ? ftpsPort : 0, tls,
+}));
+add('ldap', on('ldap'), () => serveLdap(ldapPort, directoryRows));
+// v15-12-00: the route host runs when there is a port module or a legacy app to front.
+add('routes', on('routes') && Boolean(Deno.env.get('CAPPZ_ROUTES_MODULE') || Deno.env.get('CAPPZ_ROUTES_UPSTREAM')), () => serveRoutes({ port: routesPort, dataDir, nodeAddress: powAddress }));
+// v15-36-00: SAML Guard in front of a SAML service provider you host (samlGuard.ts), when configured.
+add('saml', on('saml') && Boolean(Deno.env.get('CAPPZ_SAML_CONFIG')), () => serveSamlGuard(samlPort, dataDir));
+// v15-40-00: Constraint Guard in front of controllers' write paths (constraintGuard.ts), when configured.
+add('constraints', on('constraints') && Boolean(Deno.env.get('CAPPZ_CONSTRAINTS_CONFIG')), () => serveConstraintGuard(dataDir, key));
+add('wallet groups', on('tcp') && Boolean(key) && serveWallets.length > 0, () => listenWalletGroups({
+  wallets: serveWallets, key: key!, endpoints: groupEndpoints, declaredKeys: sessionOpts.declaredKeysFor,
+  record: async (eventType, data) => {
+    const tx = { txId: `${eventType}-${crypto.randomUUID()}`, timestamp: new Date().toISOString(), eventType, sourceAddress: powAddress, targetAddress: `${powAddress}/admin/in-queue`, payload: { ...data, bpmnPath: "m/44'/144'/100'/bpmn/substrate/replica-connect", governingPrinciple: "m/44'/144'/100'/principles/cope/v1#local-first" } };
+    await Deno.writeTextFile(`${dataDir}/edge-txs.jsonl`, JSON.stringify(await signEdgeTx(tx, key!)) + '\n', { append: true });
+  },
+}));
+add('wallet group offers', on('tcp') && Boolean(key) && serveWallets.length > 0, () => kickOffSideChannels());
+add('jobs', on('jobs'), async () => serveJobs({
+  port: jobsPort,
+  nodeAddress: powAddress,
+  dataDir,
+  // The app's process file (e.g. cappz/src/bpmn/substrate/functions/edge-node-jobs.bpmn); CAPPZ_JOBS_BPMN overrides.
+  bpmnPath: Deno.env.get('CAPPZ_JOBS_BPMN') ?? pathFromFileUrl(new URL('../../src/bpmn/substrate/functions/edge-node-jobs.bpmn', import.meta.url)),
+  // v15-23-01: subscription-watch, when CAPPZ_FUNDING_CONFIG is set (funding.ts).
+  timerJobs: await fundingJobFromEnv(dataDir).then((j) => (j ? { [j.functionName]: j } : {})),
+}));
+
+if (named.length) console.log(`[edge-node] services: ${named.join(', ')}`);
+let failures = 0;
+await Promise.all(wanted.map(([name, start]) =>
+  // Promise.resolve().then: a service that throws before its first await is caught too.
+  Promise.resolve().then(start).catch((err) => {
+    failures++;
+    console.error(`[edge-node] ${name} did not start: ${err instanceof Error ? err.message : err}`);
+    if (failures === wanted.length) {
+      console.error('[edge-node] no service is running; exiting');
+      Deno.exit(1);
+    }
+  })));

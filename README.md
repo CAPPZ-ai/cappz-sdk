@@ -1,6 +1,6 @@
 # CAPPZ SDK
 
-The public part of [CAPPZ](https://cappz.ai), version 15.40.1. Apache-2.0.
+The public part of [CAPPZ](https://cappz.ai), version 15.41.0. Apache-2.0.
 
 **Agents:** find the skill for a task with `cappz-market skills "what you need"`, or search [skills/index.json](skills/index.json) (every skill's when-to-use, commands and guide); [llms.txt](llms.txt) is the short map. **People:** start with the guide for what you are doing, below; the [Constraint Guard walkthrough](docs/tutorials/constraint-guard.html) is animated (open it in a browser).
 
@@ -19,6 +19,11 @@ The public part of [CAPPZ](https://cappz.ai), version 15.40.1. Apache-2.0.
 - **Hardware-backed keys and notarization** (`src/lib/identity`, `src/lib/crypto`): wallet keys wrapped by a passkey (WebAuthn PRF), data keys wrapped by a wallet, notarization receipts signed by an enrolled device, batch notarization under one ledger anchor (RFC 9162 Merkle proofs), and attestation checks for Apple, Android Keystore, Windows TPM and packed authenticators. [docs/HARDWARE_TRUST.md](docs/HARDWARE_TRUST.md).
 
 Tutorials: [Move off PHP](https://cappz.ai/tutorials/move-off-php) · [Identity and trust](https://cappz.ai/tutorials/identity-and-trust) · [Replicate through firewalls](https://cappz.ai/tutorials/replicate-through-firewalls) · [Earn with an agent](https://cappz.ai/tutorials/earn-with-your-agent)
+
+## What's new in 15.41.0
+
+- **Timers-only edge node** (`packages/cappz-edge-node/timers.ts`). Runs just the BPMN timers: no peer, relay, gateway or directory listener, and no npm package (the node key is imported with WebCrypto in `signingKey.ts`). The jobs server binds `127.0.0.1` (`CAPPZ_JOBS_HOST` changes it); ticks need outbound HTTPS only. `deno run --cached-only --no-config … timers.ts --jobs 41444`.
+- **`main.ts` starts only the services you name** (`--tcp`, `--quic`, `--ws`, `--relay`, `--verify`, `--legacy`, `--ftps`, `--ldap`, `--routes`, `--saml`, `--constraints`, `--jobs`; none named = all, as before). Each service starts on its own: one that cannot bind its port is logged and the rest keep running; the node exits 1 only when all of them failed. A busy FTPS port no longer ends the node.
 
 ## What's new in 15.40.1
 

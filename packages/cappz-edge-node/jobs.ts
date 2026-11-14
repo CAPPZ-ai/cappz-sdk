@@ -13,7 +13,7 @@
  * runs no job — it never writes an unsigned TX.
  */
 
-import { loadNodeKey } from './nodeKey.ts';
+import { loadNodeKey } from './signingKey.ts';
 import {
   EDGE_TIMER_JOBS,
   EDGE_WEBHOOK_JOBS,
@@ -30,6 +30,8 @@ const GOVERNING_PRINCIPLE = "m/44'/144'/100'/principles/cope/v1#local-first";
 
 export interface JobRunnerOptions {
   port: number;
+  /** Address the jobs HTTP server binds (default every interface; timers.ts passes 127.0.0.1). */
+  hostname?: string;
   nodeAddress: string;
   dataDir: string;
   bpmnPath: string;
@@ -86,7 +88,7 @@ export async function serveJobs(opts: JobRunnerOptions): Promise<void> {
     }, opts.tickMs ?? 30_000);
   }
 
-  Deno.serve({ port: opts.port }, async (req) => {
+  Deno.serve({ port: opts.port, hostname: opts.hostname ?? '0.0.0.0', onListen: ({ hostname, port }) => console.log(`[edge-node] jobs listening on ${hostname}:${port}`) }, async (req) => {
     const url = new URL(req.url);
     if (req.method === 'GET' && url.pathname === '/txs') {
       const since = url.searchParams.get('since') ?? '';
