@@ -187,6 +187,21 @@ export async function verifyEdgeTx(tx: SignedEdgeTx): Promise<boolean> {
   return crypto.subtle.verify('Ed25519', pub, hex(signature), new TextEncoder().encode(txHash));
 }
 
+// ─── Jobs server address (15.42.0) ──────────────────────────────
+
+/**
+ * The jobs HTTP server (GET /txs, POST /hooks/<path>) binds loopback unless the
+ * operator names another address: timer ticks need outbound HTTPS only, and
+ * GET /txs lists the node's signed job history to whoever can reach it.
+ */
+export const DEFAULT_JOBS_HOST = '127.0.0.1';
+
+/** CAPPZ_JOBS_HOST, or loopback when it is unset or blank (`0.0.0.0` opens every interface). */
+export function jobsHostFrom(value: string | undefined | null): string {
+  const v = value?.trim();
+  return v ? v : DEFAULT_JOBS_HOST;
+}
+
 // ─── Triggers (15.19.0) ─────────────────────────────────────────
 
 export const TIMER_FIRED = 'TimerFired';

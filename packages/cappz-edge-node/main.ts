@@ -53,6 +53,9 @@
  * as before. Each service starts on its own: one that cannot bind its port is
  * logged and the rest keep running; the node exits only when every service it
  * was asked for failed. A timers-only node runs timers.ts instead (no npm graph).
+ *
+ * v15-42-00: the jobs server binds 127.0.0.1, as in timers.ts; CAPPZ_JOBS_HOST
+ * names another address (0.0.0.0 for peers or webhook senders on the network).
  */
 
 import { serveTcp, dialTcp } from './tcp.ts';
@@ -67,7 +70,7 @@ import { serveLegacy } from './legacy.ts';
 import { serveLdap } from './ldap.ts';
 import { memberTableFromStore } from './directory.ts';
 import { projectDirectory } from '../../src/lib/sync/directoryView.ts';
-import { signEdgeTx } from '../../src/lib/functions/edgeJobs.ts';
+import { signEdgeTx, jobsHostFrom } from '../../src/lib/functions/edgeJobs.ts';
 import { serveBrowserBridge } from './bridge.ts';
 import { serveJobs } from './jobs.ts';
 import { fundingJobFromEnv } from './funding.ts';
@@ -215,6 +218,8 @@ add('wallet groups', on('tcp') && Boolean(key) && serveWallets.length > 0, () =>
 add('wallet group offers', on('tcp') && Boolean(key) && serveWallets.length > 0, () => kickOffSideChannels());
 add('jobs', on('jobs'), async () => serveJobs({
   port: jobsPort,
+  // v15-42-00: loopback unless CAPPZ_JOBS_HOST names another address (was every interface).
+  hostname: jobsHostFrom(Deno.env.get('CAPPZ_JOBS_HOST')),
   nodeAddress: powAddress,
   dataDir,
   // The app's process file (e.g. cappz/src/bpmn/substrate/functions/edge-node-jobs.bpmn); CAPPZ_JOBS_BPMN overrides.

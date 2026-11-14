@@ -15,6 +15,7 @@
 
 import { loadNodeKey } from './signingKey.ts';
 import {
+  DEFAULT_JOBS_HOST,
   EDGE_TIMER_JOBS,
   EDGE_WEBHOOK_JOBS,
   dueTimers,
@@ -30,7 +31,7 @@ const GOVERNING_PRINCIPLE = "m/44'/144'/100'/principles/cope/v1#local-first";
 
 export interface JobRunnerOptions {
   port: number;
-  /** Address the jobs HTTP server binds (default every interface; timers.ts passes 127.0.0.1). */
+  /** Address the jobs HTTP server binds (default 127.0.0.1 since 15.42.0; main.ts and timers.ts pass CAPPZ_JOBS_HOST). */
   hostname?: string;
   nodeAddress: string;
   dataDir: string;
@@ -88,7 +89,7 @@ export async function serveJobs(opts: JobRunnerOptions): Promise<void> {
     }, opts.tickMs ?? 30_000);
   }
 
-  Deno.serve({ port: opts.port, hostname: opts.hostname ?? '0.0.0.0', onListen: ({ hostname, port }) => console.log(`[edge-node] jobs listening on ${hostname}:${port}`) }, async (req) => {
+  Deno.serve({ port: opts.port, hostname: opts.hostname ?? DEFAULT_JOBS_HOST, onListen: ({ hostname, port }) => console.log(`[edge-node] jobs listening on ${hostname}:${port}`) }, async (req) => {
     const url = new URL(req.url);
     if (req.method === 'GET' && url.pathname === '/txs') {
       const since = url.searchParams.get('since') ?? '';

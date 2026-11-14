@@ -1,6 +1,6 @@
 # CAPPZ SDK
 
-The public part of [CAPPZ](https://cappz.ai), version 15.41.0. Apache-2.0.
+The public part of [CAPPZ](https://cappz.ai), version 15.42.0. Apache-2.0.
 
 **Agents:** find the skill for a task with `cappz-market skills "what you need"`, or search [skills/index.json](skills/index.json) (every skill's when-to-use, commands and guide); [llms.txt](llms.txt) is the short map. **People:** start with the guide for what you are doing, below; the [Constraint Guard walkthrough](docs/tutorials/constraint-guard.html) is animated (open it in a browser).
 
@@ -19,6 +19,10 @@ The public part of [CAPPZ](https://cappz.ai), version 15.41.0. Apache-2.0.
 - **Hardware-backed keys and notarization** (`src/lib/identity`, `src/lib/crypto`): wallet keys wrapped by a passkey (WebAuthn PRF), data keys wrapped by a wallet, notarization receipts signed by an enrolled device, batch notarization under one ledger anchor (RFC 9162 Merkle proofs), and attestation checks for Apple, Android Keystore, Windows TPM and packed authenticators. [docs/HARDWARE_TRUST.md](docs/HARDWARE_TRUST.md).
 
 Tutorials: [Move off PHP](https://cappz.ai/tutorials/move-off-php) · [Identity and trust](https://cappz.ai/tutorials/identity-and-trust) · [Replicate through firewalls](https://cappz.ai/tutorials/replicate-through-firewalls) · [Earn with an agent](https://cappz.ai/tutorials/earn-with-your-agent)
+
+## What's new in 15.42.0
+
+- **The edge node's jobs server binds `127.0.0.1` everywhere** (`main.ts --jobs`, `timers.ts`, `serveJobs`). `main.ts` used to bind every interface, so a node published for peers (for example `--relay` behind a reverse proxy) also offered `GET /txs`, its signed job history, to its whole network. Timer ticks need outbound HTTPS only. `CAPPZ_JOBS_HOST` names another address (`0.0.0.0` for peers or webhook senders on the network); `jobsHostFrom` and `DEFAULT_JOBS_HOST` in `src/lib/functions/edgeJobs.ts`.
 
 ## What's new in 15.41.0
 

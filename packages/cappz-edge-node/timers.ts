@@ -20,10 +20,11 @@
 
 import { loadNodeKey } from './signingKey.ts';
 import { serveJobs } from './jobs.ts';
+import { jobsHostFrom } from '../../src/lib/functions/edgeJobs.ts';
 
 const i = Deno.args.indexOf('--jobs');
 const port = i >= 0 ? Number(Deno.args[i + 1]) : 41444;
-const hostname = Deno.env.get('CAPPZ_JOBS_HOST') ?? '127.0.0.1';
+const hostname = jobsHostFrom(Deno.env.get('CAPPZ_JOBS_HOST'));
 const bpmnPath = Deno.env.get('CAPPZ_JOBS_BPMN');
 const dataDir = Deno.env.get('CAPPZ_NODE_DATA') ?? './cappz-node-data';
 const powAddress = Deno.env.get('CAPPZ_POW') ?? 'unset-pow';

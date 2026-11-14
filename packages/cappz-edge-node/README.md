@@ -186,7 +186,8 @@ its port is logged and the others keep running; the node exits 1 only when every
 service it was asked for failed.
 
 Ports default to 41441 (TCP), 41443 (QUIC), 41442 (WS bridge, bound to
-127.0.0.1), 41444 (jobs) and 41445 (relay). `CAPPZ_POW` names the node's POW
+127.0.0.1), 41444 (jobs, bound to 127.0.0.1 since 15.42.0; `CAPPZ_JOBS_HOST`
+names another address) and 41445 (relay). `CAPPZ_POW` names the node's POW
 wallet (defaults to `unset-pow`). Without `--unstable-net` the node runs
 without beacons and QUIC; without the TLS pair, without QUIC.
 
