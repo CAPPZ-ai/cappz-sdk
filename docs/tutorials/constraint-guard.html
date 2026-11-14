@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Open this file in a browser (it works offline; fonts fall back without a connection).
+     Edit it here; it is also published as a page. Keep it in step with docs/CONSTRAINT_GUARD.md:
+     src/test/constraints-docs.test.ts checks its commands, flags and links. -->
+<title>Constraint Guard Walkthrough</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="An animated, step-by-step walkthrough of the CAPPZ Constraint Guard on a bakery oven: the attack, the envelope, detection, shadow, signed commands, enforcement.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a control-room console. Scene menu on the left (top on phones), the plant schematic as the stage,
+   the narrative and the command to try underneath. Grey HMI ground; colour is reserved for state (ISA-101 habit). */
+:root {
+  --bg: #e9ecee; --panel: #f7f8f9; --ink: #1c2227; --muted: #56626c; --line: #c3cbd1; --wire: #8c98a2;
+  --accent: #2a5d88; --ok: #1d7553; --bad: #b0281f; --warn: #a96300; --code-bg: #20262b; --code-ink: #e4e9ec;
+  --display: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #14181b; --panel: #1c2125; --ink: #e2e6e9; --muted: #9aa5ad; --line: #333b41; --wire: #5f6b74;
+  --accent: #82b3dd; --ok: #4fc395; --bad: #ff7d71; --warn: #f0b04a; --code-bg: #0d1012; --code-ink: #dfe5e8; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #14181b; --panel: #1c2125; --ink: #e2e6e9; --muted: #9aa5ad; --line: #333b41; --wire: #5f6b74;
+  --accent: #82b3dd; --ok: #4fc395; --bad: #ff7d71; --warn: #f0b04a; --code-bg: #0d1012; --code-ink: #dfe5e8; color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--body); margin: 0; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: 20px 40px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 18px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 20px; }
+h1 { font: 600 clamp(26px, 4vw, 34px)/1.1 var(--display); letter-spacing: .01em; margin: 0; text-wrap: balance; }
+.sub { color: var(--muted); margin: 4px 0 0; max-width: 62ch; }
+header nav { display: flex; gap: 14px; font-size: 14px; flex-wrap: wrap; }
+a { color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+.console { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 18px; align-items: start; }
+.menu { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px; display: grid; gap: 2px; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px); }
+.menu .label { font: 600 12px/1 var(--display); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); padding: 8px 10px 6px; }
+.menu button { all: unset; cursor: pointer; display: grid; grid-template-columns: 22px 1fr; gap: 8px; align-items: baseline; padding: 8px 10px; border-radius: 6px; color: var(--ink); font-size: 14px; }
+.menu button .n { font: 500 12px var(--mono); color: var(--muted); }
+.menu button:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.menu button[aria-current="step"] { background: color-mix(in srgb, var(--accent) 16%, transparent); font-weight: 600; }
+.menu button[aria-current="step"] .n { color: var(--accent); }
+.menu button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.menu .done .n::after { content: " ✓"; color: var(--ok); }
+
+.main { display: grid; gap: 14px; min-width: 0; }
+.stage { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.stage .scroll { overflow-x: auto; }
+.stage svg { display: block; width: 100%; height: auto; }
+.bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-top: 1px solid var(--line); }
+.progress { font: 500 13px var(--mono); color: var(--muted); }
+.controls { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn { font: 500 14px var(--body); border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 6px; padding: 7px 14px; cursor: pointer; }
+.btn:hover { border-color: var(--wire); }
+.btn.primary { background: var(--accent); color: var(--panel); border-color: var(--accent); }
+.btn:disabled { opacity: .45; cursor: default; }
+.auto { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+
+.story { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 14px; }
+.text { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; min-width: 0; }
+.text h2 { font: 600 24px/1.15 var(--display); margin: 0 0 8px; text-wrap: balance; }
+.text p { margin: 0 0 10px; max-width: 64ch; }
+.text .more { font-size: 14px; display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 4px; }
+.side { display: grid; gap: 14px; min-width: 0; align-content: start; }
+.code, .log { background: var(--code-bg); color: var(--code-ink); border-radius: 8px; min-width: 0; }
+.code header, .log header { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid color-mix(in srgb, var(--code-ink) 14%, transparent); }
+.code header span, .log header span { font: 600 12px var(--display); letter-spacing: .12em; text-transform: uppercase; opacity: .75; }
+.code pre, .log pre { margin: 0; padding: 10px 12px 12px; font: 12.5px/1.6 var(--mono); overflow-x: auto; white-space: pre; }
+.copy { font: 500 12px var(--body); background: transparent; color: var(--code-ink); border: 1px solid color-mix(in srgb, var(--code-ink) 30%, transparent); border-radius: 4px; padding: 3px 9px; cursor: pointer; }
+.log pre { min-height: 7.5em; }
+.log .ok { color: #6fd3a8; } .log .bad { color: #ff8f85; } .log .warn { color: #f3bd62; } .log .dim { opacity: .6; }
+
+footer { color: var(--muted); font-size: 13.5px; display: grid; gap: 6px; }
+footer code, .text code { font: 13px var(--mono); background: color-mix(in srgb, var(--ink) 7%, transparent); padding: 1px 5px; border-radius: 4px; }
+
+/* SVG schematic */
+.wire { fill: none; stroke: var(--wire); stroke-width: 2; stroke-dasharray: 5 5; }
+.box { fill: var(--bg); stroke: var(--line); stroke-width: 1.5; }
+.t-label { font: 600 13px var(--display); letter-spacing: .04em; fill: var(--ink); }
+.t-small { font: 12px var(--body); fill: var(--muted); }
+.t-mono { font: 500 12px var(--mono); fill: var(--muted); }
+.readout { fill: var(--code-bg); }
+.digits { font: 500 26px var(--mono); fill: #6fd3a8; }
+.digits.warn { fill: #f3bd62; } .digits.bad { fill: #ff8f85; }
+.unit { font: 12px var(--mono); fill: #9fb0ba; }
+.lamp-ok { fill: var(--ok); } .lamp-bad { fill: var(--bad); } .lamp-warn { fill: var(--warn); }
+.guard-body { fill: var(--panel); stroke: var(--accent); stroke-width: 2; }
+.badge { font: 600 11px var(--display); letter-spacing: .14em; }
+.pkt rect { stroke-width: 1.5; }
+.pkt text { font: 500 11.5px var(--mono); }
+.flash { font: 600 12px var(--display); letter-spacing: .05em; }
+.envcard rect.card { fill: var(--panel); stroke: var(--accent); stroke-width: 1.5; }
+.envcard text { font: 12.5px var(--body); fill: var(--ink); }
+.envcard text.k { font: 500 11.5px var(--mono); fill: var(--muted); }
+.envcard text.h { font: 600 15px var(--display); fill: var(--ink); letter-spacing: .03em; }
+.fade { transition: opacity .45s ease; }
+
+@media (max-width: 880px) {
+  .console { grid-template-columns: minmax(0, 1fr); }
+  .menu { position: static; display: flex; overflow-x: auto; gap: 4px; padding: 6px; }
+  .menu .label { display: none; }
+  .menu button { flex: 0 0 auto; grid-template-columns: auto auto; }
+  .story { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 600px) {
+  .t-label { font-size: 19px; } .t-small, .t-mono { display: none; }
+  .digits { font-size: 34px; } .unit { font-size: 15px; } .pkt text { font-size: 17px; } .flash { font-size: 19px; }
+  .envcard text { font-size: 16px; } .envcard text.k { display: none; } .envcard text.v { transform: translateX(-124px); } .envcard text.h { font-size: 19px; }
+}
+@media (prefers-reduced-motion: reduce) { .fade { transition: none; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Constraint Guard, in seven scenes</h1>
+      <p class="sub">A bakery oven, <code>oven-3</code>, from the guide's worked example. Someone with remote access sets it to 400 °C. Watch how the envelope, reconciliation and the guard catch and then stop it.</p>
+    </div>
+    <nav aria-label="Related">
+      <a href="https://github.com/CAPPZ-ai/cappz-sdk/blob/main/docs/CONSTRAINT_GUARD.md">Guide</a>
+      <a href="https://github.com/CAPPZ-ai/cappz-sdk/tree/main/packages/cappz-sdk/examples/constraints">Example files</a>
+      <a href="https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/securing-control-systems">Skill for agents</a>
+    </nav>
+  </header>
+
+  <div class="console">
+    <nav class="menu" id="menu" aria-label="Scenes"><div class="label">Scenes</div></nav>
+
+    <div class="main">
+      <section class="stage" aria-label="Animated schematic">
+        <div class="scroll"><svg id="svg" viewBox="0 0 760 330" role="img" aria-labelledby="svgTitle">
+          <title id="svgTitle">Schematic: a technician and a remote-access path both reach oven-3's controller, through the guard when it is installed; the historian feeds reconciliation.</title>
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--wire)"/></marker>
+          </defs>
+          <!-- wires -->
+          <path id="pTech" class="wire" d="M150,78 L380,150 L560,150" marker-end="url(#arrow)"/>
+          <path id="pAtk" class="wire" d="M150,232 L380,170 L560,170" marker-end="url(#arrow)"/>
+          <path id="pHist" class="wire" d="M640,250 L640,286 L470,286"/>
+          <!-- technician -->
+          <g transform="translate(24,48)">
+            <rect class="box" width="126" height="62" rx="6"/>
+            <text class="t-label" x="12" y="24">Technician</text>
+            <text class="t-small" x="12" y="44">holds a signing key</text>
+          </g>
+          <!-- remote access / attacker -->
+          <g transform="translate(24,202)">
+            <rect class="box" id="atkBox" width="126" height="62" rx="6"/>
+            <text class="t-label" x="12" y="24" id="atkLabel">Remote access</text>
+            <text class="t-small" x="12" y="44" id="atkSub">vendor VPN, web panel</text>
+          </g>
+          <!-- guard -->
+          <g id="guard" class="fade" transform="translate(326,112)">
+            <path class="guard-body" d="M54,0 L108,16 L108,58 C108,86 82,102 54,112 C26,102 0,86 0,58 L0,16 Z"/>
+            <text class="t-label" x="54" y="46" text-anchor="middle">Guard</text>
+            <rect id="modeChip" x="20" y="58" width="68" height="20" rx="10" fill="var(--warn)"/>
+            <text id="modeText" class="badge" x="54" y="72" text-anchor="middle" fill="var(--panel)">SHADOW</text>
+          </g>
+          <text id="flash" class="flash" x="380" y="100" text-anchor="middle" opacity="0"></text>
+          <!-- controller -->
+          <g transform="translate(560,70)">
+            <rect class="box" width="176" height="180" rx="8"/>
+            <text class="t-label" x="14" y="24">oven-3</text>
+            <circle id="lamp" class="lamp-ok" cx="156" cy="19" r="6"/>
+            <text id="lampText" class="t-mono" x="144" y="23" text-anchor="end">OK</text>
+            <rect class="readout" x="14" y="38" width="148" height="56" rx="5"/>
+            <text class="unit" x="24" y="56">SETPOINT</text>
+            <text id="sp" class="digits" x="24" y="84">200</text><text class="unit" x="120" y="84">°C</text>
+            <rect class="readout" x="14" y="102" width="148" height="56" rx="5"/>
+            <text class="unit" x="24" y="120">CHAMBER</text>
+            <text id="pv" class="digits" x="24" y="148">198</text><text class="unit" x="120" y="148">°C</text>
+            <text class="t-mono" x="14" y="174">limits 160–250 °C</text>
+          </g>
+          <!-- historian + reconciliation -->
+          <g transform="translate(600,262)"><rect class="box" width="136" height="50" rx="6"/><text class="t-label" x="12" y="22">Historian</text><text class="t-small" x="12" y="40">setpoint read-back</text></g>
+          <g id="recon" class="fade" transform="translate(300,262)"><rect class="box" width="170" height="50" rx="6"/><text class="t-label" x="12" y="22">Reconciliation</text><text class="t-small" x="12" y="40" id="reconSub">read-only check</text></g>
+          <!-- packets and envelope card are added by script -->
+          <g id="packets"></g>
+          <g id="envcard" class="envcard fade" opacity="0" transform="translate(170,34)">
+            <rect class="card" width="370" height="226" rx="8"/>
+            <text class="h" x="16" y="28">Envelope · site-17/oven-3 · version 1</text>
+            <text class="k" x="16" y="52">setpoint-range</text><text class="v" x="140" y="52">setpoint 160–250 °C</text>
+            <text class="k" x="16" y="76">setpoint-step</text><text class="v" x="140" y="76">at most 20 °C per change</text>
+            <text class="k" x="16" y="100">value-range</text><text class="v" x="140" y="100">chamber 150–260 °C while baking</text>
+            <text class="k" x="16" y="124">probes-agree</text><text class="v" x="140" y="124">two probes within 6 °C</text>
+            <text class="k" x="16" y="148">setpoint-follows</text><text class="v" x="140" y="148">a change must move the temperature</text>
+            <text class="k" x="16" y="172">who</text><text class="v" x="140" y="172">technician's key, Mon–Sat 04:00–20:00</text>
+            <text class="k" x="16" y="204">signed</text><text class="v" x="140" y="204">2 operators; loosening waits 72 h</text>
+          </g>
+        </svg></div>
+        <div class="bar">
+          <span class="progress" id="progress" aria-live="polite">Scene 1 of 7</span>
+          <div class="controls">
+            <label class="auto"><input type="checkbox" id="autoplay"> Play all</label>
+            <button class="btn" id="back" type="button">← Back</button>
+            <button class="btn" id="replay" type="button">Replay</button>
+            <button class="btn primary" id="next" type="button">Next →</button>
+          </div>
+        </div>
+      </section>
+
+      <div class="story">
+        <article class="text" id="text" aria-live="polite"></article>
+        <div class="side">
+          <div class="code"><header><span id="codeTitle">Try it</span><button class="copy" id="copy" type="button">Copy</button></header><pre id="code"></pre></div>
+          <div class="log"><header><span id="logTitle">Output</span></header><pre id="log"></pre></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <div>Keyboard: ← and → move between scenes, R replays. Each scene has its own link (for example <code>#detect</code>).</div>
+    <div>Agents: run <code>cappz-market skills "oven setpoint hacked"</code>, or load the skills <a href="https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/securing-control-systems">securing-control-systems</a> and <a href="https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/monitoring-constraints">monitoring-constraints</a>. Outputs follow the guide's real outputs, shortened to fit; the refusal reasons are the guard's own words.</div>
+  </footer>
+</div>
+
+<script>
+(() => {
+  const G = 'https://github.com/CAPPZ-ai/cappz-sdk/blob/main/docs/CONSTRAINT_GUARD.md';
+  const T = 'deno run -A packages/cappz-edge-node/tools';
+  const $ = (id) => document.getElementById(id);
+  const svg = $('svg'); const NS = 'http://www.w3.org/2000/svg';
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const narrow = matchMedia('(max-width: 600px)');
+
+  // ── scene state helpers ───────────────────────────────────────────────
+  let token = { cancelled: false };
+  const check = (tk) => { if (tk.cancelled) throw new Error('cancelled'); };
+  const wait = (ms, tk) => new Promise((res, rej) => { if (reduce) ms = 0; setTimeout(() => tk.cancelled ? rej(new Error('cancelled')) : res(), ms); });
+  const setText = (id, v) => { $(id).textContent = String(v); };
+  const digits = (id, v, cls) => { const el = $(id); el.textContent = String(v); el.setAttribute('class', 'digits' + (cls ? ' ' + cls : '')); };
+  const lamp = (state, text) => { $('lamp').setAttribute('class', 'lamp-' + state); setText('lampText', text); };
+  const show = (id, on) => { $(id).setAttribute('opacity', on ? '1' : '0'); };
+  const mode = (m) => { if (!m) { show('guard', false); return; } show('guard', true); setText('modeText', m.toUpperCase()); $('modeChip').setAttribute('fill', m === 'enforce' ? 'var(--ok)' : 'var(--warn)'); };
+  const attacker = (on) => { setText('atkLabel', on ? 'Attacker' : 'Remote access'); setText('atkSub', on ? 'via vendor remote access' : 'vendor VPN, web panel'); $('atkBox').style.stroke = on ? 'var(--bad)' : ''; };
+  const logEl = $('log');
+  const log = (line, cls) => { const s = document.createElement('span'); if (cls) s.className = cls; s.textContent = line + '\n'; logEl.appendChild(s); };
+  const flash = async (text, color, tk) => { const f = $('flash'); f.textContent = text; f.setAttribute('fill', color); f.setAttribute('opacity', '1'); await wait(1300, tk); f.setAttribute('opacity', '0'); };
+
+  async function ramp(id, from, to, ms, tk, cls) {
+    if (reduce) { digits(id, to, cls?.(to)); return; }
+    const t0 = performance.now();
+    await new Promise((res, rej) => { const step = (now) => { if (tk.cancelled) return rej(new Error('cancelled')); const k = Math.min(1, (now - t0) / ms); const v = Math.round(from + (to - from) * k); digits(id, v, cls?.(v)); k < 1 ? requestAnimationFrame(step) : res(); }; requestAnimationFrame(step); });
+  }
+
+  /** A labelled packet travelling a wire; stopAt (0..1) halts it at the guard. */
+  async function packet(pathId, label, color, tk, { stopAt = 1, ms = 1800, from = pathId === 'pHist' ? 0 : 0.16 } = {}) {
+    const path = $(pathId); const len = path.getTotalLength();
+    const g = document.createElementNS(NS, 'g'); g.setAttribute('class', 'pkt');
+    const w = label.length * (narrow.matches ? 10.6 : 7.2) + 18;
+    g.innerHTML = `<rect x="${-w / 2}" y="${narrow.matches ? -16 : -12}" width="${w}" height="${narrow.matches ? 32 : 24}" rx="${narrow.matches ? 16 : 12}" fill="var(--panel)" stroke="${color}"></rect><text x="0" y="${narrow.matches ? 6 : 4}" text-anchor="middle" fill="${color}"></text>`;
+    g.querySelector('text').textContent = label;
+    $('packets').appendChild(g);
+    const place = (k) => { const p = path.getPointAtLength(len * k); g.setAttribute('transform', `translate(${p.x},${p.y})`); };
+    if (reduce) { place(stopAt); return g; }
+    const t0 = performance.now(); const dur = ms * (stopAt - from);
+    await new Promise((res, rej) => { const step = (now) => { if (tk.cancelled) { g.remove(); return rej(new Error('cancelled')); } const k = Math.min(1, (now - t0) / dur); place(from + k * (stopAt - from)); k < 1 ? requestAnimationFrame(step) : res(); }; requestAnimationFrame(step); });
+    return g;
+  }
+  const GUARD_AT = 0.47; // where the guard sits along each wire
+
+  function reset(s) {
+    $('packets').innerHTML = ''; logEl.textContent = ''; show('envcard', false); show('flash', false);
+    mode(s.guard ?? null); attacker(!!s.attacker); show('recon', !!s.recon); $('pHist').style.opacity = s.recon ? '1' : '0'; setText('reconSub', 'read-only check');
+    digits('sp', s.sp ?? 200); digits('pv', s.pv ?? 198); lamp('ok', 'OK');
+    $('pTech').style.opacity = s.tech === false ? '.25' : '1';
+  }
+  const hot = (v) => (v > 250 ? 'bad' : v > 230 ? 'warn' : '');
+
+  // ── the seven scenes ─────────────────────────────────────────────────
+  const SCENES = [
+    { id: 'attack', name: 'The attack', guard: null, attacker: true, recon: false,
+      title: 'A setpoint changes through a back door',
+      body: ['Someone reaches the oven through the vendor\'s remote-access path and sets it to 400 °C. The controller accepts the write: nothing on that path checks who sent it or whether 400 °C is safe.',
+             'The panel keeps saying OK. Often the same access also edits what the controller records, so nobody notices for hours. The same thing happens to freezers, dosing pumps and breakers.'],
+      code: '# nothing to run yet: this is the problem', logTitle: 'Controller', more: [['Why this happens', G + '#constraint-guard-keep-physical-systems-inside-their-safe-envelope']],
+      async run(tk) {
+        await wait(500, tk); const p = await packet('pAtk', 'setpoint = 400', 'var(--bad)', tk); p.remove();
+        digits('sp', 400, 'bad'); log('04:07  oven-3/setpoint 200 → 400 °C  (accepted)', 'bad');
+        await ramp('pv', 198, 342, 4200, tk, hot); log('04:21  chamber 342 °C   panel status: OK', 'warn');
+      } },
+    { id: 'envelope', name: 'The envelope', guard: null, recon: false,
+      title: 'Write down what "allowed" means',
+      body: ['The envelope is a signed file for one device: its points, their limits, and whose key may change which setpoint, when. Every number comes from the manual or the people who run the oven, never a guess.',
+             'Tightening a limit takes effect at once. Loosening one needs two operators and a 72-hour wait, so a stolen key cannot quietly widen the limits.'],
+      code: `${T}/constraint-wizard.ts keygen\n${T}/constraint-wizard.ts init --envelope-id site-17/oven-3\n${T}/constraint-wizard.ts declare`, logTitle: 'constraint-wizard',
+      more: [['The envelope', G + '#the-envelope'], ['envelope-draft.json', 'https://github.com/CAPPZ-ai/cappz-sdk/blob/main/packages/cappz-sdk/examples/constraints/envelope-draft.json']],
+      async run(tk) {
+        await wait(400, tk); show('envcard', true);
+        await wait(900, tk); log('operator key written to cappz-constraints/operator.key (mode 600)', 'dim');
+        await wait(700, tk); log('config written to cappz-constraints/constraints.json', 'dim');
+        await wait(700, tk); log('declared site-17/oven-3 version 1 (9c41…)'); log('Tighter or equal: active now.', 'ok');
+      } },
+    { id: 'detect', name: 'Detect', guard: null, attacker: true, recon: true,
+      title: 'Find changes nobody authorised',
+      body: ['Reconciliation reads data you already have, here the setpoint read-back from the historian, and compares it with the envelope and with the commands that were authorised. It never touches the controller.',
+             'The jump to 400 °C had no authorised command behind it: an orphan change. It also breaks two limits. Schedule this every 5 to 15 minutes and the exit code tells you when to alert.'],
+      code: `${T}/constraint-reconcile.ts \\\n  --config cappz-constraints/constraints.json --data cappz-constraints/data \\\n  --config-readback setpoints-tampered.csv --readback-mapping readback-map.json`,
+      logTitle: 'constraint-reconcile (output, shortened)', more: [['Quick start, step 2', G + '#step-2-detect-with-no-change-to-the-control-system'], ['Monitoring skill', 'https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/monitoring-constraints']],
+      sp: 400, pv: 342,
+      async run(tk) {
+        digits('sp', 400, 'bad'); digits('pv', 342, 'bad');
+        for (const row of ['04:00  200', '04:05  200', '04:07  400']) { const p = await packet('pHist', row, row.endsWith('400') ? 'var(--bad)' : 'var(--muted)', tk, { ms: 1100 }); p.remove(); }
+        setText('reconSub', '3 findings'); lamp('bad', 'FINDINGS');
+        log('FINDINGS: 3 finding(s): 1 change(s) without an authorised command, 0 unauthorised command(s), 2 envelope breach(es), …', 'bad');
+        await wait(500, tk); log('04:07  orphan-change    oven-3/setpoint: 200 → 400 Cel with no authorised command in the 10 min before it');
+        await wait(500, tk); log('04:07  out-of-envelope  oven-3/setpoint [setpoint-range]: outside 160…250 Cel, worst 400 Cel');
+        await wait(500, tk); log('04:07  out-of-envelope  oven-3/setpoint [setpoint-step]: a setpoint step of 200 Cel exceeds 20 Cel');
+        log('exit code 1 → alert someone', 'warn');
+      } },
+    { id: 'shadow', name: 'Guard in shadow', guard: 'shadow', attacker: true,
+      title: 'Put the guard in the path, refusing nothing yet',
+      body: ['The guard sits between clients and the controller and speaks the controller\'s protocol: HTTP, Modbus, BACnet, DNP3, IEC 104, MQTT or Gremlin. In shadow it forwards every write and records what it would have refused.',
+             'Nothing can break on day one. After a week or two its report shows, point by point, whether enforcing would block anything legitimate.'],
+      code: `${T}/constraint-wizard.ts doctor        # must end with "doctor: ok"\nCAPPZ_CONSTRAINTS_CONFIG=cappz-constraints/constraints.json \\\n  deno run -A --unstable-net packages/cappz-edge-node/main.ts`,
+      logTitle: 'Verdict log (shortened)', more: [['Quick start, step 3', G + '#step-3-the-guard-in-shadow'], ['Protocols', G + '#protocols']],
+      async run(tk) {
+        await wait(400, tk); const p = await packet('pAtk', 'setpoint = 400', 'var(--bad)', tk, { stopAt: GUARD_AT });
+        await flash('WOULD REFUSE · forwarded', 'var(--warn)', tk);
+        await packet('pAtk', 'setpoint = 400', 'var(--bad)', tk, { ms: 700 }).then((q) => q.remove()); p.remove();
+        digits('sp', 400, 'bad'); log('shadow  oven-3/setpoint = 400  would refuse: unsigned — forwarded', 'warn');
+        log('        this point needs a signed command and the write carried none', 'dim');
+      } },
+    { id: 'signed', name: 'Signed commands', guard: 'shadow', tech: true,
+      title: 'Legitimate changes carry a signature',
+      body: ['The technician signs each change with their key: one point, one value, valid for at most 15 minutes, usable once. Web panels send it as a Cappz-Command header; for Modbus and other protocols the command is armed at the guard just before the write.',
+             'The guard checks the signature, the grant in the envelope, the time window and the limits. 200 → 210 °C passes every check.'],
+      code: `${T}/constraint-wizard.ts command --point oven-3/setpoint --value 210\n# Modbus, BACnet, DNP3, IEC 104, MQTT, Gremlin: add --arm http://guard:41452`,
+      logTitle: 'Verdict log (shortened)', more: [['Signed and armed commands', G + '#signed-and-armed-commands']],
+      async run(tk) {
+        await wait(400, tk); const p = await packet('pTech', '210 °C · signed', 'var(--ok)', tk, { stopAt: GUARD_AT });
+        await flash('AUTHORIZED', 'var(--ok)', tk); p.remove();
+        await packet('pTech', '210 °C · signed', 'var(--ok)', tk, { ms: 700 }).then((q) => q.remove());
+        digits('sp', 210); log('shadow  oven-3/setpoint = 210  authorized', 'ok'); log('        signed by a granted key (envelope-listed)', 'dim');
+        await ramp('pv', 198, 209, 1800, tk);
+      } },
+    { id: 'enforce', name: 'Enforce', guard: 'shadow', sp: 210, pv: 209,
+      title: 'Switch on enforcement, one point at a time',
+      body: ['The shadow report says a point is ready once it has seen enough writes over enough days and the recent ones were all clean (defaults: 20 writes, 7 days, the last 10 clean). Enforcing is a signed record that cites that report.',
+             'Rolling back is one command and takes effect within seconds.'],
+      code: `${T}/constraint-wizard.ts enforce --point oven-3/setpoint \\\n  --report http://guard:41452 --reason "shadow clean for 14 days"\n# roll back: constraint-wizard shadow --point oven-3/setpoint --reason "…"`,
+      logTitle: 'Shadow report and constraint-wizard (shortened)', more: [['Quick start, step 4', G + '#step-4-move-people-to-signed-commands-then-enforce'], ['Review agent', G + '#marketplace-agents']],
+      async run(tk) {
+        await wait(500, tk); log('report: oven-3/setpoint  24 writes · 9 days · last 10 clean → ready', 'ok');
+        await wait(1100, tk); log('oven-3/setpoint: enforce recorded on report 3f2a9b07c1d84e65… (the guard picks it up within seconds)');
+        await wait(600, tk); mode('enforce'); await flash('ENFORCING oven-3/setpoint', 'var(--ok)', tk);
+      } },
+    { id: 'refused', name: 'Attack refused', guard: 'enforce', attacker: true, sp: 210, pv: 209,
+      title: 'The same attack now stops at the guard',
+      body: ['The unsigned 400 °C write is refused with the protocol\'s own reply (HTTP 403, Modbus exception 03, BACnet write-access-denied), so the client sees a normal error and the controller never sees the write.',
+             'A copied old command is refused as a replay, and even the technician\'s own typo of 260 °C is refused as out of range. Reconciliation keeps running alongside, for every path that does not pass through the guard.'],
+      code: `curl http://guard:41452/cappz/constraints/report\n# or have an agent explain it:\ncappz-market constraints-review --guard http://guard:41452`,
+      logTitle: 'Verdict log (shortened)', more: [['Refusal reasons and what to do', G + '#refusal-reasons-and-what-to-do'], ['What it does not do', G + '#what-it-does-not-do']],
+      async run(tk) {
+        const refuse = async (path, label, color, reason, because) => {
+          const p = await packet(path, label, color, tk, { stopAt: GUARD_AT });
+          await flash('REFUSED · ' + reason, 'var(--bad)', tk); p.remove();
+          log(`enforce oven-3/setpoint = ${label.split(' ')[2]}  refused: ${reason}`, 'bad'); log('        ' + because, 'dim');
+        };
+        await wait(300, tk);
+        await refuse('pAtk', 'setpoint = 400', 'var(--bad)', 'unsigned', 'this point needs a signed command and the write carried none');
+        await refuse('pAtk', 'setpoint = 210 · copied', 'var(--bad)', 'replayed', 'this command was already used for a write');
+        await refuse('pTech', 'setpoint = 260 · signed', 'var(--warn)', 'out-of-range', '260 Cel is outside 160…250 Cel (setpoint-range)');
+        log('controller untouched: setpoint still 210 °C', 'ok');
+      } },
+  ];
+
+  // ── navigation ───────────────────────────────────────────────────────
+  const menu = $('menu'); const seen = new Set(); let cur = 0; let autoTimer = 0;
+  SCENES.forEach((s, i) => {
+    const b = document.createElement('button'); b.type = 'button'; b.id = 'scene-' + s.id;
+    b.innerHTML = `<span class="n">${i + 1}</span><span></span>`; b.lastChild.textContent = s.name;
+    b.addEventListener('click', () => go(i)); menu.appendChild(b);
+  });
+
+  function render(s) {
+    const t = $('text'); t.innerHTML = '';
+    const h = document.createElement('h2'); h.textContent = s.title; t.appendChild(h);
+    for (const para of s.body) { const p = document.createElement('p'); p.textContent = para; t.appendChild(p); }
+    const more = document.createElement('div'); more.className = 'more';
+    for (const [label, href] of s.more) { const a = document.createElement('a'); a.href = href; a.textContent = label + ' →'; more.appendChild(a); }
+    t.appendChild(more);
+    $('code').textContent = s.code; $('logTitle').textContent = s.logTitle;
+  }
+
+  async function go(i, { push = true } = {}) {
+    cur = Math.max(0, Math.min(SCENES.length - 1, i)); const s = SCENES[cur];
+    token.cancelled = true; token = { cancelled: false }; const tk = token; clearTimeout(autoTimer);
+    menu.querySelectorAll('button').forEach((b, j) => { b.toggleAttribute('aria-current', false); if (j === cur) b.setAttribute('aria-current', 'step'); b.classList.toggle('done', seen.has(j) && j !== cur); });
+    $('progress').textContent = `Scene ${cur + 1} of ${SCENES.length} · ${s.name}`;
+    $('back').disabled = cur === 0; $('next').disabled = cur === SCENES.length - 1;
+    if (push && location.hash !== '#' + s.id) history.replaceState(null, '', '#' + s.id);
+    render(s); reset(s);
+    try { await s.run(tk); seen.add(cur); if ($('autoplay').checked && cur < SCENES.length - 1) autoTimer = setTimeout(() => go(cur + 1), 2600); }
+    catch (e) { if (e.message !== 'cancelled') throw e; }
+  }
+
+  $('back').addEventListener('click', () => go(cur - 1));
+  $('next').addEventListener('click', () => go(cur + 1));
+  $('replay').addEventListener('click', () => go(cur));
+  $('autoplay').addEventListener('change', (e) => { if (e.target.checked) go(cur); });
+  addEventListener('keydown', (e) => {
+    if (e.target.closest && e.target.closest('input, textarea')) return;
+    if (e.key === 'ArrowRight') go(cur + 1); else if (e.key === 'ArrowLeft') go(cur - 1); else if (e.key === 'r' || e.key === 'R') go(cur);
+  });
+  addEventListener('hashchange', () => { const i = SCENES.findIndex((s) => '#' + s.id === location.hash); if (i >= 0 && i !== cur) go(i, { push: false }); });
+  $('copy').addEventListener('click', async () => {
+    const text = $('code').textContent; const btn = $('copy');
+    try { await navigator.clipboard.writeText(text); btn.textContent = 'Copied'; }
+    catch { const r = document.createRange(); r.selectNodeContents($('code')); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); btn.textContent = 'Selected'; }
+    setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+  });
+
+  const start = SCENES.findIndex((s) => '#' + s.id === location.hash);
+  go(start >= 0 ? start : 0, { push: false });
+})();
+</script>
+</html>

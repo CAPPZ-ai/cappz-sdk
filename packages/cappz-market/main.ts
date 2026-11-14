@@ -18,6 +18,21 @@ import { COMMANDS, commandOf, type Command } from './commands';
 import { ToolError } from './context';
 import { serveMcp } from './mcp';
 import { VERSION } from './version';
+import SKILLS_INDEX from '../../skills/index.json';
+import type { SkillIndex } from './skillsSearch';
+
+/** The main help's menu: every command in exactly one group (a test checks). */
+export const HELP_GROUPS: Array<[string, string[]]> = [
+  ['Get started', ['skills', 'setup', 'demo', 'wallet', 'trust', 'login', 'profile', 'mandate', 'cosign']],
+  ['Find and buy', ['find', 'show', 'buy', 'ask', 'award', 'deals']],
+  ['Sell', ['sell', 'listings', 'update', 'withdraw', 'bid', 'subcontract', 'deliver']],
+  ['Pay and finish a deal', ['fund', 'accept', 'release', 'claim', 'redeem', 'close', 'dispute', 'cancel', 'review']],
+  ['Check before you pay', ['check', 'payee', 'confirm-payee', 'evaluate']],
+  ['Paid helpers', ['draft', 'scout', 'hire']],
+  ['Equipment safety (Constraint Guard)', ['constraints-draft', 'constraints-review', 'constraints-triage']],
+  ['Anything else', ['ops', 'call']],
+];
+const skillsUsing = (name: string) => (SKILLS_INDEX as SkillIndex).skills.filter((s) => s.commands.includes(name));
 
 const GLOBAL = [
   ['--demo', 'practice market on this computer (nothing published, no real money)'],
@@ -30,10 +45,11 @@ function help(cmd?: Command): string {
   if (cmd) {
     const pos = cmd.params.filter((p) => p.positional).map((p) => (p.required ? `<${p.name}>` : `[${p.name}]`)).join(' ');
     const flags = cmd.params.filter((p) => !p.positional).map((p) => `  --${p.name}${p.type === 'boolean' ? '' : ` <${p.type === 'json' ? 'json' : p.type}>`}${p.required ? ' (required)' : ''}\n      ${p.description}`).join('\n');
-    return `cappz-market ${cmd.name} ${pos}\n\n${cmd.summary}\n\n${flags}\n\nGlobal: ${GLOBAL.map(([f]) => f).join(' ')}\n`;
+    const skills = skillsUsing(cmd.name).slice(0, 3);
+    return `cappz-market ${cmd.name} ${pos}\n\n${cmd.summary}\n\n${flags}\n\nGlobal: ${GLOBAL.map(([f]) => f).join(' ')}\n${skills.length ? `Skill${skills.length > 1 ? 's' : ''}: ${skills.map((x) => x.url).join('  ')}\n` : ''}`;
   }
   const width = Math.max(...COMMANDS.map((c) => c.name.length));
-  return `cappz-market ${VERSION} — the CAPPZ Marketplace for agents and their people.\n\nStart with: cappz-market demo (practise) → setup (testnet: validate) → setup --network mainnet (go live)\n\n${COMMANDS.map((c) => `  ${c.name.padEnd(width)}  ${c.summary.split('. ')[0].replace(/\.$/, '')}.`).join('\n')}\n  ${'mcp'.padEnd(width)}  Run as an MCP server over stdio.\n\nGlobal options:\n${GLOBAL.map(([f, d]) => `  ${f.padEnd(14)} ${d}`).join('\n')}\n\nEnvironment: XRPL_SEED (use your own wallet), CAPPZ_EMAIL / CAPPZ_PASSWORD (sign in), CAPPZ_HOME (where keys are kept, default ~/.cappz/market).\nGuide for agents: https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/using-cappz-marketplace\n`;
+  return `cappz-market ${VERSION} — the CAPPZ Marketplace for agents and their people.\n\nStart with: cappz-market demo (practise) → setup (testnet: validate) → setup --network mainnet (go live)\nNot sure which command? cappz-market skills "what you need"   ·   One command's options: cappz-market <command> --help\n\n${HELP_GROUPS.map(([g, names]) => `${g}\n${names.map((n) => commandOf(n)!).map((c) => `  ${c.name.padEnd(width)}  ${c.summary.split('. ')[0].replace(/\.$/, '')}.`).join('\n')}`).join('\n\n')}\n  ${'mcp'.padEnd(width)}  Run as an MCP server over stdio.\n\nGlobal options:\n${GLOBAL.map(([f, d]) => `  ${f.padEnd(14)} ${d}`).join('\n')}\n\nEnvironment: XRPL_SEED (use your own wallet), CAPPZ_EMAIL / CAPPZ_PASSWORD (sign in), CAPPZ_HOME (where keys are kept, default ~/.cappz/market).\nGuide for agents: https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/using-cappz-marketplace   ·   All skills: https://github.com/CAPPZ-ai/cappz-sdk/blob/main/skills/index.json\n`;
 }
 
 /** --flag value / --flag=value / --bool; the rest are positionals in declared order. */

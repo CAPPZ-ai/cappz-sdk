@@ -15,6 +15,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { RubricAnswer, RubricJudge } from '../../src/lib/marketplace/stageEvaluation';
 import { LISTING_DRAFT_INSTRUCTIONS, LISTING_DRAFT_SCHEMA, catalogBrief, type RawDraft } from '../../src/lib/marketplace/listingDraft';
 import { SCOUT_INSTRUCTIONS, SCOUT_PLAN_SCHEMA, type RawPackage, type ScoutPlanner } from '../../src/lib/marketplace/subcontractScout';
+import { ENVELOPE_DRAFT_INSTRUCTIONS, ENVELOPE_DRAFT_SCHEMA, type RawEnvelopeDraft } from '../../src/lib/constraints/advisor';
 
 export interface ModelEnv { ANTHROPIC_API_KEY?: string; MODEL?: string }
 export const DEFAULT_MODEL = 'claude-haiku-5-5';
@@ -50,11 +51,11 @@ async function structured<T>(client: Anthropic, model: string, system: string, u
   try { return JSON.parse(text) as T; } catch { throw new Error('the model returned no valid JSON'); }
 }
 
-export interface ModelPorts { model: string; judge: RubricJudge | null; drafter: null | { model: string; draft(text: string, hint: { intent?: 'sell' | 'ask' }): Promise<RawDraft> }; planner: ScoutPlanner | null }
+export interface ModelPorts { model: string; judge: RubricJudge | null; drafter: null | { model: string; draft(text: string, hint: { intent?: 'sell' | 'ask' }): Promise<RawDraft> }; planner: ScoutPlanner | null; envelopeDrafter: null | { model: string; draft(text: string, hint: { device?: string }): Promise<RawEnvelopeDraft> } }
 
 export function modelPorts(env: ModelEnv): ModelPorts {
   const model = env.MODEL || DEFAULT_MODEL;
-  if (!env.ANTHROPIC_API_KEY) return { model, judge: null, drafter: null, planner: null };
+  if (!env.ANTHROPIC_API_KEY) return { model, judge: null, drafter: null, planner: null, envelopeDrafter: null };
   const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 1, timeout: 25_000 });
   return {
     model,
@@ -69,6 +70,10 @@ export function modelPorts(env: ModelEnv): ModelPorts {
     drafter: {
       model,
       draft: (text, hint) => structured<RawDraft>(client, model, LISTING_DRAFT_INSTRUCTIONS + catalogBrief(), `${hint.intent ? `The person wants to ${hint.intent}.\n` : ''}<text>\n${text}\n</text>`, LISTING_DRAFT_SCHEMA as unknown as Record<string, unknown>, 4_000),
+    },
+    envelopeDrafter: {
+      model,
+      draft: (text, hint) => structured<RawEnvelopeDraft>(client, model, ENVELOPE_DRAFT_INSTRUCTIONS, `${hint.device ? `The device: ${hint.device}\n` : ''}<documents>\n${text}\n</documents>`, ENVELOPE_DRAFT_SCHEMA as unknown as Record<string, unknown>, 6_000),
     },
     planner: {
       model,

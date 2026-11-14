@@ -1,0 +1,9 @@
+{
+  "format": "long",
+  "at": "Timestamp",
+  "tag": "TagName",
+  "value": "Value",
+  "unit": "EngUnits",
+  "quality": "Quality",
+  "tags": { "OVEN3.CHAMBER.PV": "oven-3/value", "OVEN3.PROBE2.PV": "oven-3/probe", "OVEN3.MODE": "oven-3/mode" }
+}

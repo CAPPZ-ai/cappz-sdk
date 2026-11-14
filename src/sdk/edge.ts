@@ -25,3 +25,8 @@ export { exclusiveC14n, verifyEnvelopedSignature } from '../lib/identity/samlXml
 export type { DsigResult } from '../lib/identity/samlXmlDsig';
 export { idpFromMetadata, lintSamlTenants } from '../lib/identity/samlTenants';
 export type { IdpMetadata, LintFinding, LintReport, LintSeverity } from '../lib/identity/samlTenants';
+// v15-40-00 — Constraint Guard: an independent check in front of any controller's write path (HTTP, Modbus, BACnet, DNP3, IEC 104, MQTT/Sparkplug, Gremlin); shadow, then enforce per point.
+export { createConstraintGuard, signPointMode, replayPointModes, DEFAULT_GATE } from '../lib/constraints/guard';
+export type { ConstraintGuard, ConstraintGuardOptions, GuardVerdict, GuardReport, GuardState, GuardMode, PointModeRecord, GatePolicy, RefusalReason } from '../lib/constraints/guard';
+export { createHttpControlGuard, createModbusGateway, createBacnetGateway, createDnp3Gateway, createIec104Gateway, createMqttGateway, createGremlinGateway } from '../lib/constraints/gateways';
+export type { HttpRoute, HttpGuardOptions, GatewayResult } from '../lib/constraints/gateways';

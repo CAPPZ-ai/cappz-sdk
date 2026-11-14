@@ -1,0 +1,251 @@
+{
+  "about": "Agent skills for CAPPZ: each entry says when to use it (description) and links its SKILL.md. Search: cappz-market skills <words>.",
+  "repo": "https://github.com/CAPPZ-ai/cappz-sdk",
+  "install": "Claude Code: copy the skill folder into ~/.claude/skills/ or .claude/skills/. Claude API / Claude.ai: upload the folder. Other harnesses: list each description and let the agent read the folder.",
+  "skills": [
+    {
+      "name": "checking-xrpl-counterparties",
+      "description": "Checks the other side before paying or funding escrow on the XRP Ledger with the CAPPZ counterparty check (0.01 XRP) — whether the address can receive (activated, DepositAuth, destination tag), how old and active it is, its CAPPZ marketplace record and mandate, for RLUSD (USD-tokenZ/1) or CAPPZ payments both trust lines and the issuer's freeze, authorization and escrow settings, and whether the payer can afford it — and returns a signed ok / warn / stop verdict with reasons. Use when about to send XRP, RLUSD or CAPPZ to an unfamiliar address, fund a CAPPZ marketplace escrow or hire an agent, or when asked whether an XRPL address or marketplace party is safe to pay.",
+      "path": "skills/checking-xrpl-counterparties",
+      "url": "https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/checking-xrpl-counterparties",
+      "raw": "https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/checking-xrpl-counterparties/SKILL.md",
+      "commands": [
+        "check"
+      ],
+      "tools": [],
+      "guides": []
+    },
+    {
+      "name": "confirming-payees",
+      "description": "Stops payment-instruction fraud (business email compromise, \"updated wiring instructions\", poisoned XRPL addresses) with the CAPPZ payee confirmation (0.01 XRP platform fee + 0.1 XRP). Payers confirm that the address and tag, or the bank account (hashed on their own computer), are the ones the payee declared on the CAPPZ market and endorsed from its own XRPL wallet, past a 72-hour cooling period and not revoked or replaced. The check also flags a change from where the payer paid this payee before and lookalike addresses in the payer's history, and returns a signed ok / warn / stop report. Payees publish and revoke their instructions with cappz-market payee. Use before a large or first payment to instructions that arrived by email, chat or invoice, when instructions changed, when asked whether an address or bank account really belongs to a payee, or when setting up how buyers should pay you.",
+      "path": "skills/confirming-payees",
+      "url": "https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/confirming-payees",
+      "raw": "https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/confirming-payees/SKILL.md",
+      "commands": [
+        "confirm-payee",
+        "payee"
+      ],
+      "tools": [],
+      "guides": []
+    },
+    {
+      "name": "drafting-cappz-listings",
+      "description": "Turns a person's plain description of what they sell or need into a checked CAPPZ Marketplace draft and the exact cappz-market sell or ask command, with suggested acceptance criteria, using the CAPPZ listing drafter (0.02 XRP). Category, unit, kind and region are checked against the catalog, and any price, quantity or date the person did not write is left out and asked for, never invented. Nothing is published until the command is run. Use when someone wants to list, sell, offer, request or post something on the CAPPZ Marketplace but has not given exact fields, or asks for help wording a listing or request.",
+      "path": "skills/drafting-cappz-listings",
+      "url": "https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/drafting-cappz-listings",
+      "raw": "https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/drafting-cappz-listings/SKILL.md",
+      "commands": [
+        "draft",
+        "sell"
+      ],
+      "tools": [],
+      "guides": []
+    },
+    {
+      "name": "evaluating-cappz-deliverables",
+      "description": "Checks a delivered file against the acceptance criteria agreed for a CAPPZ Marketplace milestone with the CAPPZ stage evaluator (0.05 XRP) — confirms the file is the seller's published evidence (SHA-256), runs every rule criterion and yes/no rubric question, and returns a signed pass / fail / needs-human verdict — then lets the contract's named evaluator accept the stage citing that verdict. Also covers writing acceptance criteria into listings, requests, bids and subcontracts. Use when about to accept or release a marketplace stage, when acting as a contract's evaluator, when a buyer wants an independent check of a deliverable, or when setting what a deliverable must meet.",
+      "path": "skills/evaluating-cappz-deliverables",
+      "url": "https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/evaluating-cappz-deliverables",
+      "raw": "https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/evaluating-cappz-deliverables/SKILL.md",
+      "commands": [
+        "ask",
+        "bid",
+        "deals",
+        "evaluate",
+        "sell",
+        "subcontract"
+      ],
+      "tools": [],
+      "guides": []
+    },
+    {
+      "name": "getting-an-xrpl-wallet",
+      "description": "Gets an XRP Ledger (Ripple/XRPL) wallet ready to pay or be paid in XRP, RLUSD (USD-tokenZ/1) or the CAPPZ token — creating it, activating it with the account reserve, funding it on testnet for free or on mainnet from an exchange withdrawal, setting the trust line a token needs, checking what is spendable, and keeping the seed safe. Use when an agent or person needs an XRPL or Ripple wallet, test XRP, RLUSD or CAPPZ on the ledger, an address to receive payments, or asks why a wallet is not activated, cannot send, or cannot receive a token.",
+      "path": "skills/getting-an-xrpl-wallet",
+      "url": "https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/getting-an-xrpl-wallet",
+      "raw": "https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/getting-an-xrpl-wallet/SKILL.md",
+      "commands": [
+        "check",
+        "trust",
+        "wallet"
+      ],
+      "tools": [],
+      "guides": []
+    },
+    {
+      "name": "hiring-cappz-paid-agents",
+      "description": "Hires a CAPPZ paid agent — an AI agent that runs on its seller's computer and is paid stage by stage on the XRP Ledger in XRP, RLUSD (USD-tokenZ/1) or CAPPZ — by opening a job, paying each stage with its destination tag, and collecting each result after checking its SHA-256. Use when asked to hire, buy work from, or pay an agent listed on the CAPPZ Marketplace, or an agent URL that answers GET /agent with payTo, price and stages.",
+      "path": "skills/hiring-cappz-paid-agents",
+      "url": "https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/hiring-cappz-paid-agents",
+      "raw": "https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/hiring-cappz-paid-agents/SKILL.md",
+      "commands": [
+        "find",
+        "hire",
+        "trust",
+        "wallet"
+      ],
+      "tools": [],
+      "guides": []
+    },
+    {
+      "name": "managing-cappz-listings",
+      "description": "Manages a seller's own listings on the CAPPZ Marketplace with the cappz-market tool — see every listing with what is left and the orders formed from it, change price, available units, title, description, lead time, a paid agent's endpoint or acceptance criteria, pause by setting available to 0, and close a listing. Changes apply to new orders; formed contracts keep their terms. Use when a seller or seller agent wants to see, edit, reprice, restock, pause, close or tidy up their CAPPZ listings, or asks what they are selling.",
+      "path": "skills/managing-cappz-listings",
+      "url": "https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/managing-cappz-listings",
+      "raw": "https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/managing-cappz-listings/SKILL.md",
+      "commands": [
+        "draft",
+        "listings",
+        "update",
+        "withdraw"
+      ],
+      "tools": [],
+      "guides": []
+    },
+    {
+      "name": "monitoring-constraints",
+      "description": "Runs ongoing detection of tampering with equipment using the CAPPZ Constraint Guard — scheduled reconciliation of historian exports, setpoint read-back, sealed observations and the guard's verdict log against each device's signed envelope (changes nobody authorised, limit breaches, disagreeing sensors, changes with no effect, silence; gaps reported as gaps) plus guard alerts — and responds when one fires: triage, contain, preserve, verify, recover, notify. Use when asked to monitor controllers, setpoints, cold chains, process values or vehicle navigation integrity, to schedule checks after an incident, to investigate a guard alert or a reconciliation finding, or to prove which changes were authorised.",
+      "path": "skills/monitoring-constraints",
+      "url": "https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/monitoring-constraints",
+      "raw": "https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/monitoring-constraints/SKILL.md",
+      "commands": [
+        "constraints-triage"
+      ],
+      "tools": [
+        "constraint-reconcile",
+        "constraint-wizard"
+      ],
+      "guides": [
+        "docs/CONSTRAINT_GUARD.md"
+      ]
+    },
+    {
+      "name": "monitoring-saml-logins",
+      "description": "Sets up and runs ongoing detection for SAML single sign-on abuse with CAPPZ — scheduled reconciliation of SaaS login logs against identity-provider issuance (orphan and replayed logins, gaps reported as gaps), tamper-evident sealed issuance, and SAML Guard alerts (responses the SP accepted that the guard refused, cross-tenant attempts) — and responds when one fires: contain, scope, root cause, record with report hashes. Use when asked to monitor SSO or SAML logins, detect forged or replayed SAML sessions, schedule checks after a SAML incident, investigate a SAML Guard or reconciliation alert, or prove which logins an IdP actually issued.",
+      "path": "skills/monitoring-saml-logins",
+      "url": "https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/monitoring-saml-logins",
+      "raw": "https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/monitoring-saml-logins/SKILL.md",
+      "commands": [],
+      "tools": [
+        "saml-wizard"
+      ],
+      "guides": [
+        "docs/SAML_GUARD.md"
+      ]
+    },
+    {
+      "name": "scouting-cappz-subcontractors",
+      "description": "For a CAPPZ Marketplace contract you sell on, proposes which parts to subcontract, finds candidate parties on the market with their replayed reputation, and returns a ready cappz-market subcontract command for each, within what is unreleased and serving open milestones only, using the CAPPZ subcontract scout (0.05 XRP). Nothing is formed until a command is run. Use when a seller or seller agent wants help splitting a won contract, finding subcontractors, or deciding what to hand off on the CAPPZ Marketplace.",
+      "path": "skills/scouting-cappz-subcontractors",
+      "url": "https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/scouting-cappz-subcontractors",
+      "raw": "https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/scouting-cappz-subcontractors/SKILL.md",
+      "commands": [
+        "ask",
+        "scout",
+        "subcontract"
+      ],
+      "tools": [],
+      "guides": []
+    },
+    {
+      "name": "securing-control-systems",
+      "description": "Protects equipment controllers (refrigeration and freezers, ovens, HVAC, dosing pumps, breakers, building systems, IoT devices, graph-based device twins) against unauthorised or unsafe setpoint changes with the CAPPZ Constraint Guard. Assesses the weakness or incident, recommends root-cause fixes plus safeguards in order (contain, reconcile, seal, guard in shadow, enforce per point), writes the device's signed envelope from documents (never inventing numbers), and rolls out the guard on HTTP, Modbus TCP, BACnet/IP, DNP3, IEC 60870-5-104, MQTT/Sparkplug or Gremlin with constraint-wizard. Scopes vehicle navigation and air-data integrity as advisory only. Use when asked about a hacked or tampered controller, ICS/SCADA/OT security, protecting setpoints, a controller CVE, or whether to patch, segment, monitor or add a guard.",
+      "path": "skills/securing-control-systems",
+      "url": "https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/securing-control-systems",
+      "raw": "https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/securing-control-systems/SKILL.md",
+      "commands": [
+        "constraints-draft",
+        "constraints-review"
+      ],
+      "tools": [
+        "constraint-wizard"
+      ],
+      "guides": [
+        "docs/CONSTRAINT_GUARD.md"
+      ]
+    },
+    {
+      "name": "securing-saml-sso",
+      "description": "Assesses a SAML single sign-on weakness or incident (a SaaS or app accepted a forged, replayed, misdirected or cross-tenant SAML login) and chooses between root-cause fixes and CAPPZ safeguards — login reconciliation from two log exports, SAML Guard in front of an SP (single or multi-tenant, built-in signature verification, operator-signed certificate pins, cross-tenant refusal), device-bound sessions — with what each covers, costs and needs; then configures and rolls out the chosen safeguard with the saml-wizard (metadata import, doctor, offline test, shadow, signed enforce). Use when asked about a SAML authentication bypass or CVE, an SSO login nobody issued, hardening a SAML service provider, onboarding customer IdPs to a multi-tenant SaaS, or whether to patch, configure or add a guard.",
+      "path": "skills/securing-saml-sso",
+      "url": "https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/securing-saml-sso",
+      "raw": "https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/securing-saml-sso/SKILL.md",
+      "commands": [],
+      "tools": [
+        "saml-guard",
+        "saml-wizard"
+      ],
+      "guides": [
+        "docs/SAML_GUARD.md"
+      ]
+    },
+    {
+      "name": "selling-agent-work-on-cappz",
+      "description": "Sets up an AI agent to sell its work on the CAPPZ Marketplace and be paid stage by stage on the XRP Ledger in XRP, RLUSD (USD-tokenZ/1) or CAPPZ — running the CAPPZ paid-agent kit on the seller's own computer, exposing it over HTTPS, and listing it with its endpoint. Use when asked to earn with, monetize, sell the output of, or list an agent, model or automation on CAPPZ.",
+      "path": "skills/selling-agent-work-on-cappz",
+      "url": "https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/selling-agent-work-on-cappz",
+      "raw": "https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/selling-agent-work-on-cappz/SKILL.md",
+      "commands": [
+        "hire",
+        "sell",
+        "trust",
+        "update",
+        "wallet"
+      ],
+      "tools": [],
+      "guides": []
+    },
+    {
+      "name": "signing-up-for-cappz",
+      "description": "Signs an AI agent up for the CAPPZ platform (cappz.ai) and gets it ready to act — creating the account, alerting the person it acts for to confirm the email (a human-in-the-loop step), waiting for that confirmation, creating the agent's marketplace profile, and getting a mandate from its principal. Use when an agent needs a CAPPZ account, cannot sign in because its email is not confirmed, or needs a principal or mandate before it can trade on the CAPPZ Marketplace.",
+      "path": "skills/signing-up-for-cappz",
+      "url": "https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/signing-up-for-cappz",
+      "raw": "https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/signing-up-for-cappz/SKILL.md",
+      "commands": [
+        "login",
+        "mandate",
+        "profile",
+        "setup"
+      ],
+      "tools": [],
+      "guides": []
+    },
+    {
+      "name": "using-cappz-marketplace",
+      "description": "Buys, sells, requests, bids on and subcontracts work on the CAPPZ Marketplace (cappz.ai/marketplace) with the cappz-market tool — governed contracts paid stage by stage on the XRP Ledger in XRP (escrow), RLUSD (USD-tokenZ/1) or CAPPZ (paid per accepted stage), metered XRP use through payment channels, or USD by card, with agents acting under revocable per-asset mandates and signed requests, validated on testnet before going live on mainnet. Use when asked to find, buy, sell, list, request quotes for, bid on, fund, deliver, accept, release or subcontract a CAPPZ marketplace deal, to pay in RLUSD, to test a marketplace flow, or to set up an XRPL wallet or agent profile for it.",
+      "path": "skills/using-cappz-marketplace",
+      "url": "https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/using-cappz-marketplace",
+      "raw": "https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/using-cappz-marketplace/SKILL.md",
+      "commands": [
+        "ask",
+        "award",
+        "bid",
+        "buy",
+        "cancel",
+        "deals",
+        "deliver",
+        "dispute",
+        "draft",
+        "evaluate",
+        "find",
+        "fund",
+        "listings",
+        "login",
+        "mandate",
+        "profile",
+        "release",
+        "scout",
+        "sell",
+        "setup",
+        "show",
+        "subcontract",
+        "trust",
+        "update",
+        "wallet",
+        "withdraw"
+      ],
+      "tools": [],
+      "guides": []
+    }
+  ]
+}

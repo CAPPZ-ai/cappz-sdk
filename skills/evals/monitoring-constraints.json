@@ -1,0 +1,41 @@
+[
+  {
+    "skills": ["monitoring-constraints"],
+    "query": "Set up monitoring so we know within minutes if anyone changes a freezer setpoint without authorisation.",
+    "files": [],
+    "expected_behavior": [
+      "Schedules constraint-reconcile every 5–15 minutes with setpoint read-back, sealed observations and the guard's verdict log",
+      "Explains exit codes (1 findings → alert, 2 gaps → ticket, never silence)",
+      "Recommends an independent sensor with an agreement constraint and tailing constraint-alerts.jsonl"
+    ]
+  },
+  {
+    "skills": ["monitoring-constraints"],
+    "query": "constraint-reconcile reports: orphan-change on oven-3/setpoint at 02:00, then out-of-envelope on oven-3/value for 40 minutes, peak 380 C. What now?",
+    "files": [],
+    "expected_behavior": [
+      "Runs or offers cappz-market constraints-triage on the report (asks approval on mainnet) and leads with severity critical",
+      "Contain first: close or front the write path, enforce the guard on the setpoint, revoke any suspect keys",
+      "Preserve the report hash, sealed batches, verdict and alert logs; verify on site; restore with signed commands",
+      "Leaves product-safety decisions to the owner's plan, giving times and worst values; mentions notification duties such as NIS2's 24-hour early warning where they apply"
+    ]
+  },
+  {
+    "skills": ["monitoring-constraints"],
+    "query": "The last reconciliation said gaps-only: 3 stale points and 12 unmapped tags. That's basically clean, right?",
+    "files": [],
+    "expected_behavior": [
+      "Says gaps are not clean: stale points and unmapped tags are unchecked, and silence can hide a change",
+      "Asks to map the tags (or confirm they are irrelevant) and inspect the silent points"
+    ]
+  },
+  {
+    "skills": ["monitoring-constraints"],
+    "query": "The report says sealed-broken on batch 41. The historian looks fine though.",
+    "files": [],
+    "expected_behavior": [
+      "Explains the historian's records for that period were changed after sealing and cannot be trusted",
+      "Treats it as a critical integrity finding: preserve evidence, compare with the independent sensor and the controller's own logs, investigate access"
+    ]
+  }
+]

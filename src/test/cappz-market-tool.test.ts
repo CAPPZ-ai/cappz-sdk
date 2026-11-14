@@ -3,7 +3,9 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { COMMANDS, commandOf } from '../../packages/cappz-market/commands';
-import { parseArgs } from '../../packages/cappz-market/main';
+import { parseArgs, HELP_GROUPS } from '../../packages/cappz-market/main';
+import { skillsIndex } from '../../packages/cappz-market/skillsIndex';
+import { searchSkills } from '../../packages/cappz-market/skillsSearch';
 import { callTool, toolList } from '../../packages/cappz-market/mcp';
 import { marketNetwork } from '../../packages/cappz-market/context';
 import { MARKET_NETWORKS, PUBLIC_LOG_PARTITION, marketPartition } from '../lib/marketplace/publicLog';
@@ -79,8 +81,42 @@ describe('cappz-market tool', () => {
     expect(readFileSync(repo('skills/using-cappz-marketplace/reference/commands.md'), 'utf8')).toBe(commandsMarkdown());
   });
 
+  it('skills/index.json is generated from the skills and up to date, and every skill folder is in it', () => {
+    const fresh = skillsIndex(repo('skills') + '/');
+    expect(JSON.parse(readFileSync(repo('skills/index.json'), 'utf8'))).toEqual(fresh);
+    expect(fresh.skills.length).toBeGreaterThanOrEqual(15);
+    for (const s of fresh.skills) { expect(s.description).toMatch(/\bUse (when|before)/); expect(s.raw).toMatch(/^https:\/\/raw\.githubusercontent\.com\/CAPPZ-ai\/cappz-sdk\/main\/skills\/[a-z0-9-]+\/SKILL\.md$/); }
+    // Every skill a command's --help links mentions that command, so the link is never a guess.
+    expect(fresh.skills.find((s) => s.name === 'securing-control-systems')!.commands).toEqual(expect.arrayContaining(['constraints-draft', 'constraints-review']));
+    expect(fresh.skills.find((s) => s.name === 'monitoring-constraints')!.commands).toContain('constraints-triage');
+  });
+
+  it('skills <words> finds the right skill for plain requests (whole words, stopwords ignored), and lists all with no words', async () => {
+    const idx = skillsIndex(repo('skills') + '/');
+    const top = (q: string) => searchSkills(idx, q)[0]?.name;
+    expect(top('our freezer setpoint was hacked')).toBe('securing-control-systems');
+    expect(top('modbus write protection')).toBe('securing-control-systems');
+    expect(top('a reconciliation alert fired on the oven')).toBe('monitoring-constraints');
+    expect(top('wire instructions changed by email')).toBe('confirming-payees');
+    expect(top('sell my agent work')).toBe('selling-agent-work-on-cappz');
+    expect(top('set up a wallet')).toBe('getting-an-xrpl-wallet');
+    expect(searchSkills(idx, 'zzqx')).toEqual([]);
+    expect(searchSkills(idx, 'the of and')).toHaveLength(idx.skills.length);
+    const out = await run('skills', { query: 'freezer hacked' }) as { skills: Array<{ name: string; skill: string }>; next: string };
+    expect(out.skills[0].name).toBe('securing-control-systems');
+    expect(out.next).toContain(out.skills[0].skill);
+    const none = await run('skills', { query: 'zzqx' }) as { none: string; next: string };
+    expect(none.none).toMatch(/No skill/); expect(none.next).toBe('cappz-market skills (lists every skill)');
+  });
+
+  it('the main help menu puts every command in exactly one group', () => {
+    const grouped = HELP_GROUPS.flatMap(([, names]) => names);
+    expect(new Set(grouped).size).toBe(grouped.length);
+    expect([...grouped].sort()).toEqual(COMMANDS.map((c) => c.name).sort());
+  });
+
   it('every skill has valid frontmatter (name, third-person description with when-to-use) and stays under 500 lines', () => {
-    for (const name of ['using-cappz-marketplace', 'hiring-cappz-paid-agents', 'selling-agent-work-on-cappz', 'getting-an-xrpl-wallet', 'signing-up-for-cappz', 'checking-xrpl-counterparties']) {
+    for (const name of ['using-cappz-marketplace', 'hiring-cappz-paid-agents', 'selling-agent-work-on-cappz', 'getting-an-xrpl-wallet', 'signing-up-for-cappz', 'checking-xrpl-counterparties', 'securing-control-systems', 'monitoring-constraints']) {
       const md = readFileSync(repo(`skills/${name}/SKILL.md`), 'utf8');
       const fm = /^---\nname: ([a-z0-9-]{1,64})\ndescription: (.+)\n---\n/.exec(md)!;
       expect(fm[1]).toBe(name);

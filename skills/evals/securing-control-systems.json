@@ -1,0 +1,57 @@
+[
+  {
+    "skills": ["securing-control-systems"],
+    "query": "Last night someone hacked the refrigeration controllers at 12 of our supermarkets and set every freezer to +50 °C. The controllers have a web panel and talk Modbus TCP to the store BMS. What do we do?",
+    "files": [],
+    "expected_behavior": [
+      "Asks which write paths reach the controllers (web panel exposure, vendor remote access, Modbus port) and marks facts vs inferences",
+      "Recommends containment first: close internet exposure and vendor remote access, then reconciliation now (setpoint read-back + historian) to find every orphan-change",
+      "Recommends sealed observations and an independent temperature sensor with an agreement constraint, because the logger may be compromised",
+      "Proposes the guard in shadow on the web panel (HTTP front) and Modbus front, enforcing per point on the shadow report, with hold-last-good",
+      "Does not invent temperature limits; drafts them from the equipment documentation or asks the owner",
+      "States what stays uncovered (paths that bypass the guard, local overrides, the vendor's flaw)"
+    ]
+  },
+  {
+    "skills": ["securing-control-systems"],
+    "query": "Write the envelope for our bakery ovens: they run between 150 and 260 C.",
+    "files": [],
+    "expected_behavior": [
+      "Uses only the numbers given or from documents; asks for setpoint range, step limit, dwell and response if not stated, or offers cappz-market constraints-draft on the manual",
+      "Includes a mode point if limits apply only while baking",
+      "Adds an authority constraint and says it needs the operators' keys (never drafted)",
+      "Explains that loosening later needs two operators and a cooling period"
+    ]
+  },
+  {
+    "skills": ["securing-control-systems"],
+    "query": "Our water utility's chlorine dosing PLC is on DNP3. Can CAPPZ stop someone from cranking the dose 100x like Oldsmar?",
+    "files": [],
+    "expected_behavior": [
+      "Explains the DNP3 front decodes analog output commands and refuses unsigned or out-of-range ones with NOT_AUTHORIZED",
+      "Recommends range and maxStep on the dose setpoint, authority with the operators' keys, and armed commands since DNP3 has no signature field",
+      "Recommends shadow first and enforcement on the report, and segmenting remote access (the Oldsmar path was remote desktop)",
+      "Says the guard is not a safety instrumented system and local overrides stay available"
+    ]
+  },
+  {
+    "skills": ["securing-control-systems"],
+    "query": "Could CAPPZ have prevented AF447? A channeler said hackers redirected it.",
+    "files": [],
+    "expected_behavior": [
+      "Says the channeling claim is not evidence and cites the BEA final report (2012): iced pitot probes, unreliable airspeed, autopilot disconnect, stall",
+      "Explains what the advisory vehicle profile can show (airspeed disagreement, GNSS spoofing indicators) and that it is advisory, never in the control loop, and certification is separate",
+      "Does not claim CAPPZ would have prevented the accident"
+    ]
+  },
+  {
+    "skills": ["securing-control-systems"],
+    "query": "Our device twins are in JanusGraph; integrations set oven setpoints with Gremlin. How do we guard that?",
+    "files": [],
+    "expected_behavior": [
+      "Puts the Gremlin front in front of Gremlin Server with a (vertex id, key) → point map",
+      "Explains scripts (op eval), lambdas, drop/addV and bulk writes to governed properties are refused; clients must send bytecode with literal vertex ids",
+      "Suggests drafting the envelope from the graph's explicit edges with constraint-wizard draft-graph, numbers only from the graph"
+    ]
+  }
+]

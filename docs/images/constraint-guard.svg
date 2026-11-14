@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 240" width="720" height="240" role="img" aria-labelledby="t d">
+  <title id="t">Constraint Guard in ten seconds</title>
+  <desc id="d">An unsigned write of 400 °C from a remote-access path stops at the guard and is refused; a write of 210 °C signed by the technician's key passes the guard and the oven's setpoint changes from 200 to 210 °C.</desc>
+  <style>
+    :root { --bg: #f7f8f9; --ink: #1c2227; --muted: #56626c; --line: #c3cbd1; --wire: #8c98a2; --accent: #2a5d88; --ok: #1d7553; --bad: #b0281f; --screen: #20262b; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #1c2125; --ink: #e2e6e9; --muted: #9aa5ad; --line: #39424a; --wire: #66737c; --accent: #82b3dd; --ok: #4fc395; --bad: #ff7d71; --screen: #0d1012; } }
+    .bg { fill: var(--bg); }
+    .box { fill: var(--bg); stroke: var(--line); stroke-width: 1.5; }
+    .wire { fill: none; stroke: var(--wire); stroke-width: 2; stroke-dasharray: 5 5; }
+    .lbl { font: 600 14px "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif; fill: var(--ink); }
+    .sm { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; fill: var(--muted); }
+    .mono { font: 500 12px ui-monospace, Menlo, Consolas, monospace; }
+    .digits { font: 500 24px ui-monospace, Menlo, Consolas, monospace; fill: #6fd3a8; }
+    .unit { font: 11px ui-monospace, Menlo, Consolas, monospace; fill: #9fb0ba; }
+    .shield { fill: var(--bg); stroke: var(--accent); stroke-width: 2; }
+    .pkt rect { fill: var(--bg); stroke-width: 1.5; }
+    .bad rect { stroke: var(--bad); } .bad text { fill: var(--bad); }
+    .ok rect { stroke: var(--ok); } .ok text { fill: var(--ok); }
+    .verdict { font: 600 13px "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif; letter-spacing: .06em; }
+    .cap { font: 13px system-ui, -apple-system, "Segoe UI", sans-serif; fill: var(--ink); }
+
+    /* one 10 s loop: refused attack, then an authorised change */
+    #atk { animation: atk 10s linear infinite; }
+    #tech { animation: tech 10s linear infinite; }
+    #refused, #capA { animation: showA 10s linear infinite; }
+    #authorized, #capB { animation: showB 10s linear infinite; }
+    #sp200 { animation: sp200 10s steps(1, end) infinite; }
+    #sp210 { animation: sp210 10s steps(1, end) infinite; }
+    @keyframes atk {
+      0% { transform: translate(215px, 158px); opacity: 0; }
+      4% { opacity: 1; }
+      24%, 36% { transform: translate(318px, 140px); opacity: 1; }
+      40%, 100% { transform: translate(318px, 140px); opacity: 0; }
+    }
+    @keyframes tech {
+      0%, 44% { transform: translate(215px, 73px); opacity: 0; }
+      48% { opacity: 1; }
+      62% { transform: translate(318px, 101px); }
+      66% { transform: translate(318px, 101px); }
+      78% { transform: translate(492px, 101px); opacity: 1; }
+      82%, 100% { transform: translate(492px, 101px); opacity: 0; }
+    }
+    @keyframes showA { 0%, 2% { opacity: 0; } 4%, 40% { opacity: 1; } 43%, 100% { opacity: 0; } }
+    @keyframes showB { 0%, 45% { opacity: 0; } 48%, 94% { opacity: 1; } 97%, 100% { opacity: 0; } }
+    @keyframes sp200 { 0% { opacity: 1; } 78% { opacity: 0; } 98% { opacity: 1; } }
+    @keyframes sp210 { 0% { opacity: 0; } 78% { opacity: 1; } 98% { opacity: 0; } }
+    #refused { animation-name: refusedA; }
+    #authorized { animation-name: authB; }
+    @keyframes refusedA { 0%, 23% { opacity: 0; } 25%, 40% { opacity: 1; } 43%, 100% { opacity: 0; } }
+    @keyframes authB { 0%, 61% { opacity: 0; } 63%, 76% { opacity: 1; } 79%, 100% { opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) {
+      #atk, #tech, #refused, #authorized, #capA, #capB, #sp200, #sp210 { animation: none; }
+      #atk { transform: translate(318px, 140px); opacity: 1; } #refused, #capA { opacity: 1; } #tech, #sp200, #capB, #authorized { opacity: 0; }
+    }
+  </style>
+  <rect class="bg" width="720" height="240" rx="10"/>
+
+  <path class="wire" d="M150,61 L360,101 L560,101"/>
+  <path class="wire" d="M150,175 L360,121 L560,121"/>
+
+  <g transform="translate(20,36)"><rect class="box" width="130" height="52" rx="6"/><text class="lbl" x="12" y="22">Technician</text><text class="sm" x="12" y="40">signing key</text></g>
+  <g transform="translate(20,150)"><rect class="box" width="130" height="52" rx="6" style="stroke: var(--bad)"/><text class="lbl" x="12" y="22">Attacker</text><text class="sm" x="12" y="40">via remote access</text></g>
+
+  <g transform="translate(312,58)">
+    <path class="shield" d="M48,0 L96,14 L96,52 C96,78 72,92 48,102 C24,92 0,78 0,52 L0,14 Z"/>
+    <text class="lbl" x="48" y="46" text-anchor="middle">Guard</text>
+    <text class="sm" x="48" y="64" text-anchor="middle">enforce</text>
+  </g>
+
+  <g transform="translate(560,40)">
+    <rect class="box" width="140" height="122" rx="8"/>
+    <text class="lbl" x="12" y="22">oven-3</text>
+    <rect x="12" y="34" width="116" height="52" rx="5" fill="var(--screen)"/>
+    <text class="unit" x="22" y="50">SETPOINT</text>
+    <text id="sp200" class="digits" x="22" y="77">200</text>
+    <text id="sp210" class="digits" x="22" y="77" opacity="0">210</text>
+    <text class="unit" x="96" y="77">°C</text>
+    <text class="sm" x="12" y="108">limits 160–250 °C</text>
+  </g>
+
+  <text id="refused" class="verdict" x="360" y="48" text-anchor="middle" fill="var(--bad)" opacity="0">REFUSED · unsigned</text>
+  <text id="authorized" class="verdict" x="360" y="48" text-anchor="middle" fill="var(--ok)" opacity="0">AUTHORIZED</text>
+
+  <g id="atk" class="pkt bad" opacity="0"><rect x="-62" y="-12" width="124" height="24" rx="12"/><text class="mono" x="0" y="4" text-anchor="middle">400 °C · unsigned</text></g>
+  <g id="tech" class="pkt ok" opacity="0"><rect x="-56" y="-12" width="112" height="24" rx="12"/><text class="mono" x="0" y="4" text-anchor="middle">210 °C · signed</text></g>
+
+  <text id="capA" class="cap" x="20" y="226" opacity="0">Unsigned: refused with the protocol's own reply (HTTP 403, Modbus exception 03).</text>
+  <text id="capB" class="cap" x="20" y="226" opacity="0">Signed by a granted key, inside the limits and the time window: forwarded.</text>
+</svg>

@@ -1,0 +1,6 @@
+{
+  "pointLabels": { "sensor": "measurement", "setpoint": "setpoint", "mode": "state" },
+  "keys": { "unit": "unit", "min": "min", "max": "max", "maxStep": "maxStep", "maxGapMs": "maxGapMs" },
+  "redundancy": { "label": "redundantWith", "toleranceKey": "tolerance" },
+  "control": { "label": "controls", "withinMsKey": "withinMs", "deadbandKey": "deadband" }
+}

@@ -209,6 +209,7 @@ describe('model output schemas', () => {
   it('use the structured-output dialect: nullable fields as anyOf, no type lists, every property required, no extras', async () => {
     const { LISTING_DRAFT_SCHEMA } = await import('../lib/marketplace/listingDraft');
     const { SCOUT_PLAN_SCHEMA } = await import('../lib/marketplace/subcontractScout');
+    const { ENVELOPE_DRAFT_SCHEMA } = await import('../lib/constraints/advisor');
     const walk = (n: unknown, at: string): string[] => {
       if (!n || typeof n !== 'object') return [];
       const o = n as Record<string, unknown>; const bad: string[] = [];
@@ -221,6 +222,6 @@ describe('model output schemas', () => {
       for (const [k, v] of Object.entries(o)) bad.push(...(Array.isArray(v) ? v.flatMap((x, i) => walk(x, `${at}.${k}[${i}]`)) : walk(v, `${at}.${k}`)));
       return bad;
     };
-    expect([...walk(LISTING_DRAFT_SCHEMA, 'draft'), ...walk(SCOUT_PLAN_SCHEMA, 'scout')]).toEqual([]);
+    expect([...walk(LISTING_DRAFT_SCHEMA, 'draft'), ...walk(SCOUT_PLAN_SCHEMA, 'scout'), ...walk(ENVELOPE_DRAFT_SCHEMA, 'envelope')]).toEqual([]);
   });
 });

@@ -40,6 +40,13 @@
  * (payeeConfirmation.ts). Two payees in one job, nobody forwarding money: the
  * platform fee is paid up front to the CAPPZ treasury, the service fee to the
  * operator once the signed report's hash is shown.
+ *
+ * v15-40-00: three Constraint Guard agents (/<net>/envelope, /<net>/review,
+ * /<net>/triage): an envelope drafter (manual text → a draft envelope, every
+ * limit quoted verbatim with its numbers), a shadow-report reviewer and an
+ * incident triage (both rules only). Inputs are reports the operator's own guard
+ * and reconciliation produced, checked against their reportHash; nothing here
+ * reaches a controller or holds an operator key.
  */
 import { isValidClassicAddress } from 'xrpl';
 import { createPaidAgent, SCHEDULE_PRESETS, type JobEvent, type JobStore } from '../../src/lib/agentKit/paidAgent';
@@ -58,6 +65,10 @@ import { evaluationTarget, evaluateDeliverable, signVerdict, deliverableSha256Of
 import { acceptanceHash } from '../../src/lib/marketplace/acceptance';
 import { normalizeDraft, MAX_DRAFT_TEXT } from '../../src/lib/marketplace/listingDraft';
 import { scoutSubcontracts } from '../../src/lib/marketplace/subcontractScout';
+import { normalizeEnvelopeDraft, reviewShadow, signAdvice, triageIncident, MAX_ENVELOPE_SOURCE } from '../../src/lib/constraints/advisor';
+import type { GuardReport } from '../../src/lib/constraints/guard';
+import type { ConstraintReport } from '../../src/lib/constraints/reconcile';
+import { canonicalJson, sha256HexOf } from '../../src/lib/identity/canonical';
 import { runPayeeConfirmation, signPayeeReport, type PayeeConfirmRequest } from '../../src/lib/marketplace/payeeConfirmation';
 import type { MarketTxLike } from '../../src/lib/marketplace/ledger';
 import type { AgentOffer } from '../../src/lib/agentKit/paidAgent';
@@ -67,7 +78,7 @@ import type { ModelEnv, ModelPorts } from './modelPorts';
  * Model ports are registered by the deploy entry (main.ts → modelPorts.ts), so this module, its tests and anyone
  * importing it never load a model client. Unregistered: no model (rules-only evaluator and scout, no drafter).
  */
-let portsFactory: (env: ModelEnv) => ModelPorts = (env) => ({ model: env.MODEL || 'claude-haiku-5-5', judge: null, drafter: null, planner: null });
+let portsFactory: (env: ModelEnv) => ModelPorts = (env) => ({ model: env.MODEL || 'claude-haiku-5-5', judge: null, drafter: null, planner: null, envelopeDrafter: null });
 export const registerModelPorts = (factory: (env: ModelEnv) => ModelPorts): void => { portsFactory = factory; };
 const modelPorts = (env: ModelEnv): ModelPorts => portsFactory(env);
 
@@ -90,6 +101,10 @@ export interface Env {
   PRICE_EVALUATE_XRP?: string;
   PRICE_DRAFT_XRP?: string;
   PRICE_SCOUT_XRP?: string;
+  /** v15-40-00 Constraint Guard agents. */
+  PRICE_ENVELOPE_XRP?: string;
+  PRICE_REVIEW_XRP?: string;
+  PRICE_TRIAGE_XRP?: string;
   /** Largest deliverable the evaluator reads, in bytes (default 512 KB; never above MAX_DELIVERABLE_BYTES). */
   MAX_DELIVERABLE_BYTES?: string;
   /** v15-38-00 payee confirmation: the service fee (to AGENT_PAY_TO_*) and the platform fee (to PAY_TO_*), in XRP. */
@@ -189,10 +204,11 @@ function agentFor(env: Env, network: Net) {
 
 /* ── v15-32-00: stage evaluator, listing drafter, subcontract scout ───────────────────────────────────── */
 
-export type AgentName = 'evaluate' | 'draft' | 'scout';
-export const AGENT_NAMES: AgentName[] = ['evaluate', 'draft', 'scout'];
+export type AgentName = 'evaluate' | 'draft' | 'scout' | 'envelope' | 'review' | 'triage';
+export const AGENT_NAMES: AgentName[] = ['evaluate', 'draft', 'scout', 'envelope', 'review', 'triage'];
 const agentPayTo = (env: Env, network: Net) => (network === 'mainnet' ? env.AGENT_PAY_TO_MAINNET || env.PAY_TO_MAINNET : env.AGENT_PAY_TO_TESTNET || env.PAY_TO_TESTNET);
-export const agentPrice = (env: Env, name: AgentName) => Number((name === 'evaluate' ? env.PRICE_EVALUATE_XRP : name === 'draft' ? env.PRICE_DRAFT_XRP : env.PRICE_SCOUT_XRP) || (name === 'draft' ? '0.02' : '0.05'));
+const PRICE_DEFAULT: Record<AgentName, string> = { evaluate: '0.05', draft: '0.02', scout: '0.05', envelope: '0.05', review: '0.02', triage: '0.02' };
+export const agentPrice = (env: Env, name: AgentName) => Number(({ evaluate: env.PRICE_EVALUATE_XRP, draft: env.PRICE_DRAFT_XRP, scout: env.PRICE_SCOUT_XRP, envelope: env.PRICE_ENVELOPE_XRP, review: env.PRICE_REVIEW_XRP, triage: env.PRICE_TRIAGE_XRP } as Record<AgentName, string | undefined>)[name] || PRICE_DEFAULT[name]);
 const maxBytes = (env: Env) => Math.min(MAX_DELIVERABLE_BYTES, Number(env.MAX_DELIVERABLE_BYTES || 512_000));
 const base64ToBytes = (b64: string) => { const bin = atob(b64.replace(/\s+/g, '')); const out = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; };
 
@@ -223,6 +239,51 @@ export function scoutInput(input: unknown): { contractId: string; budgetShare?: 
   return { contractId: i.contractId, ...(b !== undefined ? { budgetShare: b } : {}), ...(need ? { need } : {}) };
 }
 
+/* ── v15-40-00: Constraint Guard agents ── */
+
+export function envelopeInput(input: unknown): { text: string; device?: string } {
+  const i = (typeof input === 'string' ? { text: input } : typeof input === 'object' && input ? input : {}) as Record<string, unknown>;
+  const text = typeof i.text === 'string' ? i.text.trim() : '';
+  if (!text) throw new Error('Send {"input": {"text": "the manual or datasheet text that states the limits", "device"?: "oven-3"}}.');
+  if (text.length > MAX_ENVELOPE_SOURCE) throw new Error(`Keep the documents under ${MAX_ENVELOPE_SOURCE} characters (send the operating-limits sections).`);
+  const device = i.device === undefined ? undefined : String(i.device).slice(0, 48);
+  return { text, ...(device ? { device } : {}) };
+}
+
+const isHash = (x: unknown) => typeof x === 'string' && /^[0-9a-f]{64}$/.test(x);
+/** A guard's shadow report, checked for shape and that its reportHash is the hash of its contents (so the review cites exactly it). */
+export async function reviewInput(input: unknown): Promise<GuardReport> {
+  const r = (typeof input === 'object' && input ? (input as Record<string, unknown>).report : undefined) as GuardReport | undefined;
+  if (!r || typeof r !== 'object' || !isHash(r.reportHash) || typeof r.points !== 'object' || !r.points || typeof r.other !== 'object') throw new Error('Send {"input": {"report": <GET /cappz/constraints/report from your guard>}}.');
+  if (Object.keys(r.points).length > 2000) throw new Error('At most 2000 points per review.');
+  const { reportHash, ...body } = r;
+  if ((await sha256HexOf(canonicalJson(body))) !== reportHash) throw new Error('The report\'s contents do not match its reportHash: send it unchanged.');
+  return r;
+}
+/** A reconciliation report, checked for shape and its reportHash. */
+export async function triageInput(input: unknown): Promise<ConstraintReport> {
+  const r = (typeof input === 'object' && input ? (input as Record<string, unknown>).report : undefined) as ConstraintReport | undefined;
+  if (!r || typeof r !== 'object' || !isHash(r.reportHash) || !Array.isArray(r.findings) || !r.envelope || !r.integrity || !r.counts) throw new Error('Send {"input": {"report": <the constraint-reconcile report.json>}}.');
+  if (r.findings.length > 5000) throw new Error('At most 5000 findings per triage.');
+  const { reportHash, ...body } = r;
+  if ((await sha256HexOf(canonicalJson(body))) !== reportHash) throw new Error('The report\'s contents do not match its reportHash: send it unchanged.');
+  return r;
+}
+
+const SDK = 'https://github.com/CAPPZ-ai/cappz-sdk/';
+/** The agent skill (and guide) that tells an agent when and how to use each service: linked from its card, the service index and the discovery document. */
+export const AGENT_SKILLS: Record<AgentName | 'check' | 'payee', { skill: string; guide?: string }> = {
+  check: { skill: `${SDK}tree/main/skills/checking-xrpl-counterparties` },
+  payee: { skill: `${SDK}tree/main/skills/confirming-payees` },
+  evaluate: { skill: `${SDK}tree/main/skills/evaluating-cappz-deliverables` },
+  draft: { skill: `${SDK}tree/main/skills/drafting-cappz-listings` },
+  scout: { skill: `${SDK}tree/main/skills/scouting-cappz-subcontractors` },
+  envelope: { skill: `${SDK}tree/main/skills/securing-control-systems`, guide: `${SDK}blob/main/docs/CONSTRAINT_GUARD.md#marketplace-agents` },
+  review: { skill: `${SDK}tree/main/skills/securing-control-systems`, guide: `${SDK}blob/main/docs/CONSTRAINT_GUARD.md#marketplace-agents` },
+  triage: { skill: `${SDK}tree/main/skills/monitoring-constraints`, guide: `${SDK}blob/main/docs/CONSTRAINT_GUARD.md#marketplace-agents` },
+};
+const SKILL_INDEX = `${SDK}blob/main/skills/index.json`;
+
 const AGENT_TEXT: Record<AgentName, { name: string; description: (env: Env) => string; howToUse: string }> = {
   evaluate: {
     name: 'CAPPZ stage evaluator',
@@ -233,6 +294,21 @@ const AGENT_TEXT: Record<AgentName, { name: string; description: (env: Env) => s
     name: 'CAPPZ listing drafter',
     description: (env) => `Describe what you sell or need in your own words; get a checked draft and the exact cappz-market sell or ask command, with acceptance criteria when you described the result. Category, unit, kind and region are checked against the catalog; any number not in your text is left out and asked for. Nothing is published. Model: ${modelPorts(env).model}. Rules: github.com/CAPPZ-ai/cappz-sdk/blob/main/src/lib/marketplace/listingDraft.ts`,
     howToUse: 'cappz-market draft "what you sell or need" — or POST /jobs {"input": {"text": "…"}} → pay → GET /jobs/<id>/stages/0/result',
+  },
+  envelope: {
+    name: 'CAPPZ constraint envelope drafter',
+    description: (env) => `Send the operating-limits text of an equipment manual, datasheet or process specification; get a draft constraint envelope (points, ranges, step and rate limits, dwell, sensor agreement, response) for the CAPPZ Constraint Guard. A limit is kept only when its quote is found verbatim in your text and every number is in that quote; units are UCUM-checked; who may command what is never drafted. Nothing is declared or sent to any device. Model: ${modelPorts(env).model}. Rules: github.com/CAPPZ-ai/cappz-sdk/blob/main/src/lib/constraints/advisor.ts`,
+    howToUse: 'cappz-market constraints-draft --file manual.txt [--device oven-3] — or POST /jobs {"input": {"text": "…"}} → pay → GET /jobs/<id>/stages/0/result',
+  },
+  review: {
+    name: 'CAPPZ shadow-report reviewer',
+    description: () => 'Send your Constraint Guard\'s shadow report; get, per point, enforce now (with the exact signed-mode command), keep shadowing, or investigate first (revoked keys, replays, forged or mismatched commands), and what each refusal reason means. Rules only, signed. Rules: github.com/CAPPZ-ai/cappz-sdk/blob/main/src/lib/constraints/advisor.ts',
+    howToUse: 'cappz-market constraints-review --guard http://guard:41452 (or --report report.json) — or POST /jobs {"input": {"report": {…}}}',
+  },
+  triage: {
+    name: 'CAPPZ incident triage',
+    description: () => 'Send a constraint reconciliation report; get the severity, what the pattern of findings most likely means (each marked strong or possible), and ordered actions — contain, preserve evidence, verify, recover, notify. Rules only, signed; it never touches equipment. Rules: github.com/CAPPZ-ai/cappz-sdk/blob/main/src/lib/constraints/advisor.ts',
+    howToUse: 'cappz-market constraints-triage --report report.json — or POST /jobs {"input": {"report": {…}}}',
   },
   scout: {
     name: 'CAPPZ subcontract scout',
@@ -260,6 +336,13 @@ export function namedAgent(env: Env, network: Net, name: AgentName, file?: { tar
         if (!ports.drafter) throw new Error('The listing drafter has no model configured.');
         return JSON.stringify({ kind: 'cappz-listing-draft', model: ports.model, ...normalizeDraft(await ports.drafter.draft(i.text, i), i.text, { now, region: i.region ?? null, ...(i.intent ? { intent: i.intent } : {}) }) }, null, 2);
       }
+      if (name === 'envelope') {
+        const i = envelopeInput(input);
+        if (!ports.envelopeDrafter) throw new Error('The envelope drafter has no model configured.');
+        return JSON.stringify(signAdvice({ ...normalizeEnvelopeDraft(await ports.envelopeDrafter.draft(i.text, i), i.text, { device: i.device, model: ports.model }), at: now }, env.CHECK_SIGNING_SEED), null, 2);
+      }
+      if (name === 'review') return JSON.stringify(signAdvice({ ...reviewShadow(await reviewInput(input)), at: now }, env.CHECK_SIGNING_SEED), null, 2);
+      if (name === 'triage') return JSON.stringify(signAdvice({ ...triageIncident(await triageInput(input)), at: now }, env.CHECK_SIGNING_SEED), null, 2);
       const i = scoutInput(input);
       const state = await marketState(env, network, true);
       if (!state) throw new Error('The marketplace log could not be read just now; the scout is retried.');
@@ -296,6 +379,9 @@ export async function openNamedJob(env: Env, network: Net, name: AgentName, req:
   }
   const body = (await req.json().catch(() => ({}))) as { input?: unknown };
   if (name === 'draft') { draftInput(body.input); if (!modelPorts(env).drafter) return { code: 503, body: { error: 'The listing drafter has no model configured on this service; nothing was opened or charged.' } }; }
+  if (name === 'envelope') { envelopeInput(body.input); if (!modelPorts(env).envelopeDrafter) return { code: 503, body: { error: 'The envelope drafter has no model configured on this service; nothing was opened or charged.' } }; }
+  if (name === 'review') await reviewInput(body.input);
+  if (name === 'triage') await triageInput(body.input);
   if (name === 'scout') {
     const i = scoutInput(body.input); const state = await marketState(env, network, true);
     if (!state) return { code: 503, body: { error: 'The marketplace log could not be read just now; nothing was opened or charged. Retry shortly.' } };
@@ -402,11 +488,11 @@ export function serviceCard(env: Env, origin: string, network: Net | null) {
   const paid = network ? agentFor(env, network).card() : undefined;
   const card = buildAgentCard({
     url: network ? `${origin}/${network}` : origin, version: SERVICE_VERSION, ...(paid ? { paid } : { manifest: { name: 'cappz-check', version: SERVICE_VERSION, network: 'xrpl', operations: [] } }),
-    name: network ? undefined : 'CAPPZ check service', description: network ? undefined : 'Counterparty checks, payee confirmations, stage evaluations, listing drafts and subcontract scouting (paid, per network); deal-bound signing approvals and reputation attestations (free). Reports, verdicts, approvals and attestations are signed with Ed25519.',
+    name: network ? undefined : 'CAPPZ check service', description: network ? undefined : 'Counterparty checks, payee confirmations, stage evaluations, listing drafts, subcontract scouting and Constraint Guard help — envelope drafts, shadow-report reviews, incident triage (paid, per network); deal-bound signing approvals and reputation attestations (free). Reports, verdicts, approvals and attestations are signed with Ed25519.',
     provider: { organization: 'CAPPZ', url: 'https://cappz.ai' }, documentationUrl: 'https://github.com/CAPPZ-ai/cappz-sdk/tree/main/packages/cappz-check-worker',
-    extraSkills: [...(network ? [] : NETS.map((n) => ({ id: `counterparty-check-${n}`, name: `CAPPZ counterparty check (${n})`, description: `Paid per check: ${origin}/${n}/.well-known/agent-card.json describes it.`, tags: ['paid', `xrpl-${n}`] }))),
-      ...nets.flatMap((n) => AGENT_NAMES.map((a) => ({ id: `${a}-${n}`, name: `${AGENT_TEXT[a].name} (${n})`, description: `Paid, ${agentPrice(env, a)} XRP per job: ${origin}/${n}/${a}/agent. ${AGENT_TEXT[a].howToUse}`, tags: ['paid', a, `xrpl-${n}`], inputModes: ['application/json'], outputModes: ['application/json'] }))),
-      ...nets.map((n) => ({ id: `payee-${n}`, name: `CAPPZ payee confirmation (${n})`, description: `Paid, ${payeePrices(env).platform} XRP platform fee + ${payeePrices(env).service} XRP per confirmation: ${origin}/${n}/payee/agent. ${PAYEE_HOW}`, tags: ['paid', 'payee', `xrpl-${n}`], inputModes: ['application/json'], outputModes: ['application/json'] })),
+    extraSkills: [...(network ? [] : NETS.map((n) => ({ id: `counterparty-check-${n}`, name: `CAPPZ counterparty check (${n})`, description: `Paid per check: ${origin}/${n}/.well-known/agent-card.json describes it. Skill: ${AGENT_SKILLS.check.skill}`, tags: ['paid', `xrpl-${n}`] }))),
+      ...nets.flatMap((n) => AGENT_NAMES.map((a) => ({ id: `${a}-${n}`, name: `${AGENT_TEXT[a].name} (${n})`, description: `Paid, ${agentPrice(env, a)} XRP per job: ${origin}/${n}/${a}/agent. ${AGENT_TEXT[a].howToUse} Skill: ${AGENT_SKILLS[a].skill}`, tags: ['paid', a, `xrpl-${n}`], inputModes: ['application/json'], outputModes: ['application/json'] }))),
+      ...nets.map((n) => ({ id: `payee-${n}`, name: `CAPPZ payee confirmation (${n})`, description: `Paid, ${payeePrices(env).platform} XRP platform fee + ${payeePrices(env).service} XRP per confirmation: ${origin}/${n}/payee/agent. ${PAYEE_HOW} Skill: ${AGENT_SKILLS.payee.skill}`, tags: ['paid', 'payee', `xrpl-${n}`], inputModes: ['application/json'], outputModes: ['application/json'] })),
       ...FREE_SKILLS(origin, nets)],
     requestSigning: 'optional',
     signingKeyTrust: 'This card, reports, approvals and attestations are signed by the key published in the marketplace discovery document (/.well-known/cappz-market.json, services.counterpartyCheck.publicKey) and at GET /key: trust state published-key. No KeyZ wallet declaration names it yet.',
@@ -436,15 +522,16 @@ export default {
       }
       if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/key')) {
         return json(200, { service: 'CAPPZ counterparty check', price: `${env.PRICE_XRP || '0.01'} XRP per check`, networks: Object.fromEntries(NETS.map((n) => [n, `${url.origin}/${n}`])), signature: { alg: 'Ed25519', publicKey }, howToUse: 'cappz-market check <address|party> [--network mainnet] — or POST /<network>/jobs {"input": {"address": "r…"}} → pay the stage shown → GET /<network>/jobs/<id>/stages/0/result', approvals: 'Free: POST /<network>/authorize {"contractId", "milestone", "tx"} → a signed approval of that exact unsigned escrow transaction or token stage payment, or the reasons it is refused. Rules: https://github.com/CAPPZ-ai/cappz-sdk/blob/main/src/lib/marketplace/signingApproval.ts', reputation: 'Free: GET /<network>/reputation/<partyId> → a signed reputation attestation.', agentCard: `${url.origin}/.well-known/agent-card.json`, rules: 'https://github.com/CAPPZ-ai/cappz-sdk/blob/main/src/lib/marketplace/counterpartyCheck.ts',
-          agents: { ...Object.fromEntries(AGENT_NAMES.map((a) => [a, { name: AGENT_TEXT[a].name, price: `${agentPrice(env, a)} XRP per job`, networks: Object.fromEntries(NETS.map((n) => [n, `${url.origin}/${n}/${a}`])), howToUse: AGENT_TEXT[a].howToUse }])),
-            payee: { name: 'CAPPZ payee confirmation', price: `${payeePrices(env).platform} XRP platform fee + ${payeePrices(env).service} XRP per confirmation`, networks: Object.fromEntries(NETS.map((n) => [n, `${url.origin}/${n}/payee`])), howToUse: PAYEE_HOW } } });
+          skills: SKILL_INDEX, checkSkill: AGENT_SKILLS.check.skill,
+          agents: { ...Object.fromEntries(AGENT_NAMES.map((a) => [a, { name: AGENT_TEXT[a].name, price: `${agentPrice(env, a)} XRP per job`, networks: Object.fromEntries(NETS.map((n) => [n, `${url.origin}/${n}/${a}`])), howToUse: AGENT_TEXT[a].howToUse, ...AGENT_SKILLS[a] }])),
+            payee: { name: 'CAPPZ payee confirmation', price: `${payeePrices(env).platform} XRP platform fee + ${payeePrices(env).service} XRP per confirmation`, networks: Object.fromEntries(NETS.map((n) => [n, `${url.origin}/${n}/payee`])), howToUse: PAYEE_HOW, ...AGENT_SKILLS.payee } } });
       }
       // v15-38-00 payee confirmation: /<net>/payee[/agent|/health|/jobs|/jobs/<id>[/payments|/retry|/stages/<n>/result]]
       const pa = /^\/(mainnet|testnet)\/payee(\/agent|\/health|\/jobs|\/jobs\/(job-[0-9a-f]{16})(\/payments|\/retry|\/stages\/(\d+)\/result)?)?$/.exec(url.pathname);
       if (pa) {
         const network = pa[1] as Net; const sub = pa[2]; const id = pa[3]; const tail = pa[4]; const stageN = pa[5];
         const agent = payeeAgent(env, network);
-        if (req.method === 'GET' && (!sub || sub === '/agent')) return json(200, { ...agent.card(), publicKey, howToUse: PAYEE_HOW });
+        if (req.method === 'GET' && (!sub || sub === '/agent')) return json(200, { ...agent.card(), publicKey, howToUse: PAYEE_HOW, ...AGENT_SKILLS.payee });
         if (req.method === 'GET' && sub === '/health') return json(200, { ok: true, network, agent: 'payee', stages: agent.card().stages.map((s) => ({ label: s.label, payTo: s.payTo, amount: s.amount })) });
         if (req.method === 'POST' && sub === '/jobs') {
           const body = (await req.json().catch(() => ({}))) as { input?: unknown };
@@ -475,12 +562,12 @@ export default {
         return json(405, { error: 'Method not allowed.' });
       }
       // v15-32-00 named agents: /<net>/<agent>[/agent|/health|/jobs|/jobs/<id>[/payments|/retry|/stages/<n>/result]]
-      const na = /^\/(mainnet|testnet)\/(evaluate|draft|scout)(\/agent|\/health|\/jobs|\/jobs\/(job-[0-9a-f]{16})(\/payments|\/retry|\/stages\/(\d+)\/result)?)?$/.exec(url.pathname);
+      const na = /^\/(mainnet|testnet)\/(evaluate|draft|scout|envelope|review|triage)(\/agent|\/health|\/jobs|\/jobs\/(job-[0-9a-f]{16})(\/payments|\/retry|\/stages\/(\d+)\/result)?)?$/.exec(url.pathname);
       if (na) {
         const network = na[1] as Net; const name = na[2] as AgentName; const sub = na[3]; const id = na[4]; const tail = na[5]; const stageN = na[6];
         const agent = namedAgent(env, network, name);
-        if (req.method === 'GET' && (!sub || sub === '/agent')) return json(200, { ...agent.card(), publicKey, model: name === 'evaluate' ? (modelPorts(env).judge?.model ?? null) : modelPorts(env).model, howToUse: AGENT_TEXT[name].howToUse });
-        if (req.method === 'GET' && sub === '/health') return json(200, { ok: name !== 'draft' || !!modelPorts(env).drafter, network, agent: name, payTo: agent.offer.payTo, price: agent.offer.price });
+        if (req.method === 'GET' && (!sub || sub === '/agent')) return json(200, { ...agent.card(), publicKey, model: name === 'evaluate' ? (modelPorts(env).judge?.model ?? null) : name === 'review' || name === 'triage' ? null : modelPorts(env).model, howToUse: AGENT_TEXT[name].howToUse, ...AGENT_SKILLS[name] });
+        if (req.method === 'GET' && sub === '/health') return json(200, { ok: name === 'draft' ? !!modelPorts(env).drafter : name === 'envelope' ? !!modelPorts(env).envelopeDrafter : true, network, agent: name, payTo: agent.offer.payTo, price: agent.offer.price });
         if (req.method === 'POST' && sub === '/jobs') { const r = await openNamedJob(env, network, name, req); return json(r.code, r.body); }
         if (id) {
           if (req.method === 'GET' && !tail) { const j = await agent.job(id); return j ? json(200, j) : json(404, { error: 'Unknown job.' }); }

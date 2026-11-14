@@ -1,0 +1,6 @@
+{
+  "format": "wide",
+  "at": "time",
+  "columns": { "Oven 3 setpoint": "oven-3/setpoint" },
+  "units": { "Oven 3 setpoint": "Cel" }
+}

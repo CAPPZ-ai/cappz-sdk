@@ -21,6 +21,9 @@ Three more paid agents on the same worker, each with its own card, price and pay
 |---|---|---|---|
 | `/<net>/evaluate` | A signed pass / fail / needs-human verdict on a delivered file against the milestone's agreed acceptance criteria. Body `{"input": {"contractId", "milestone"?, "acceptance"?}, "file": "<base64>"}`; the file is hashed, checked and not stored. Refusals (not the evidence, nothing to evaluate) cost nothing. | 0.05 XRP | [skills/evaluating-cappz-deliverables](../../skills/evaluating-cappz-deliverables/SKILL.md) |
 | `/<net>/draft` | Plain words → a checked `cappz-market sell` / `ask` command. Input `{"text", "intent"?, "region"?}`. | 0.02 XRP | [skills/drafting-cappz-listings](../../skills/drafting-cappz-listings/SKILL.md) |
+| `/<net>/envelope` | Manual or datasheet text → a draft Constraint Guard envelope; every limit quoted verbatim with its numbers, authority never drafted. Input `{"text", "device"?}`. | 0.05 XRP | [skills/securing-control-systems](../../skills/securing-control-systems/SKILL.md) |
+| `/<net>/review` | A guard's shadow report → enforce now / keep shadow / investigate per point, with the exact command. Rules only. Input `{"report"}`. | 0.02 XRP | [skills/securing-control-systems](../../skills/securing-control-systems/SKILL.md) |
+| `/<net>/triage` | A reconciliation report → severity, likely meaning, ordered actions. Rules only. Input `{"report"}`. | 0.02 XRP | [skills/monitoring-constraints](../../skills/monitoring-constraints/SKILL.md) |
 | `/<net>/scout` | Work packages, candidates and `subcontract` commands for a contract. Input `{"contractId", "budgetShare"?, "need"?}`. | 0.05 XRP | [skills/scouting-cappz-subcontractors](../../skills/scouting-cappz-subcontractors/SKILL.md) |
 
 Each answers `/agent`, `/health`, `POST /jobs`, `/jobs/<id>`, `/jobs/<id>/payments`, `/jobs/<id>/stages/0/result`, like the check. Jobs are partitioned per agent in D1 (`<network>:<agent>`).

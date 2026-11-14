@@ -1,0 +1,30 @@
+# CAPPZ SDK
+
+> The public part of CAPPZ (Apache-2.0): local-first storage, KeyZ identity, signed transports, the edge node, the CAPPZ Marketplace engine and its `cappz-market` agent tool (CLI + MCP), the Constraint Guard for equipment, the SAML Guard, and agent skills.
+
+Agents: before acting, load the skill for the task. Find it with `cappz-market skills "what you need"` or search skills/index.json; each entry links its SKILL.md.
+
+## Find a skill
+
+- [skills/index.json](https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/index.json): every skill's when-to-use text, commands, tools, guide and raw SKILL.md link
+- [skills/README.md](https://github.com/CAPPZ-ai/cappz-sdk/blob/main/skills/README.md): the same list for people, and how to install a skill
+
+## Marketplace
+
+- [using-cappz-marketplace](https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/using-cappz-marketplace/SKILL.md): buy, sell, fund, release, subcontract with `cappz-market`
+- [Discovery document](https://cappz.ai/.well-known/cappz-market.json): networks, the tool, and every paid service with its price and skill link
+- [Check service agent card](https://check.cappz.ai/.well-known/agent-card.json): counterparty checks, payee confirmation, stage evaluation, listing drafts, subcontract scouting, Constraint Guard help
+- [cappz-market tool](https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/packages/cappz-market/dist/cappz-market.mjs): one file, Node 20+; `cappz-market help`
+
+## Equipment safety (Constraint Guard)
+
+- [securing-control-systems](https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/securing-control-systems/SKILL.md): a tampered or exposed controller; envelopes; rolling out the guard
+- [monitoring-constraints](https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/monitoring-constraints/SKILL.md): scheduled reconciliation, alerts, incident response
+- [Guide](https://github.com/CAPPZ-ai/cappz-sdk/blob/main/docs/CONSTRAINT_GUARD.md): quick start, configuration, refusal reasons, troubleshooting
+- [Worked example files](https://github.com/CAPPZ-ai/cappz-sdk/tree/main/packages/cappz-sdk/examples/constraints): a bakery oven
+
+## Other guides
+
+- [SAML Guard](https://github.com/CAPPZ-ai/cappz-sdk/blob/main/docs/SAML_GUARD.md)
+- [Move off PHP](https://github.com/CAPPZ-ai/cappz-sdk/blob/main/docs/MOVE_OFF_PHP.md)
+- [Identity, trust and transports](https://github.com/CAPPZ-ai/cappz-sdk/blob/main/docs/IDENTITY_TRUST_TRANSPORTS.md)

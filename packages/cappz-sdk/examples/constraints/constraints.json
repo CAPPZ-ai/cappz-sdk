@@ -1,0 +1,32 @@
+{
+  "envelopeId": "site-17/oven-3",
+  "trustedOperators": ["REPLACE-with-operator-A-public-key-hex", "REPLACE-with-operator-B-public-key-hex"],
+  "minRelaxSigners": 2,
+  "host": "127.0.0.1",
+  "http": {
+    "port": 41452,
+    "upstream": "http://10.0.0.5",
+    "routes": [{ "method": "PUT", "path": "/api/v1/points/{id}/setpoint", "point": { "param": "id", "map": { "oven-3": "oven-3/setpoint" } }, "value": "/value" }]
+  },
+  "modbus": {
+    "port": 41502,
+    "upstream": "10.0.0.5:502",
+    "map": [
+      { "unitId": 1, "table": "holding", "address": 100, "point": "oven-3/setpoint", "type": "int16", "scale": 0.1 },
+      { "unitId": 1, "table": "input", "address": 0, "point": "oven-3/value", "type": "int16", "scale": 0.1 },
+      { "unitId": 1, "table": "input", "address": 1, "point": "oven-3/probe", "type": "int16", "scale": 0.1 },
+      { "unitId": 1, "table": "holding", "address": 110, "point": "oven-3/mode", "type": "uint16" }
+    ]
+  },
+  "mqtt": {
+    "port": 41883,
+    "upstream": "10.0.0.8:1883",
+    "topics": {
+      "site/17/oven-3/setpoint/set": { "point": "oven-3/setpoint", "valuePath": "value", "command": true },
+      "site/17/oven-3/temperature": { "point": "oven-3/value", "valuePath": "value", "timePath": "ts" }
+    }
+  },
+  "allowPrivileged": [],
+  "allowUnmapped": false,
+  "gate": { "minWrites": 20, "minDays": 7, "minCleanWrites": 10 }
+}

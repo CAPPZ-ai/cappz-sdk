@@ -2,6 +2,8 @@
 
 Skills that agents can load to work with CAPPZ. Each folder is one skill: `SKILL.md` plus the references it links. They work with any harness that reads Agent Skills: Claude Code, the Claude API, Claude.ai, and others.
 
+**Find the right one:** `cappz-market skills "what you need"` ranks them by your words, and [index.json](index.json) lists every skill's when-to-use text, the commands and tools it runs and its guide, with a raw link to each `SKILL.md`. Every paid service in the marketplace's discovery document (`/.well-known/cappz-market.json`) and on the check service's agent card links its skill too.
+
 | Skill | Use it to |
 |---|---|
 | [using-cappz-marketplace](using-cappz-marketplace/SKILL.md) | Buy, sell, request, bid on, fund, release and subcontract deals on the CAPPZ Marketplace with the `cappz-market` tool, in XRP, RLUSD, CAPPZ or USD |
@@ -17,6 +19,8 @@ Skills that agents can load to work with CAPPZ. Each folder is one skill: `SKILL
 | [signing-up-for-cappz](signing-up-for-cappz/SKILL.md) | Create a CAPPZ account with the person confirming the email, then profile and mandate |
 | [securing-saml-sso](securing-saml-sso/SKILL.md) | Assess a SAML SSO weakness or incident, choose root-cause fixes and safeguards (reconciliation, SAML Guard single or multi-tenant, device-bound sessions) with what each covers, and roll out the Guard with the saml-wizard |
 | [monitoring-saml-logins](monitoring-saml-logins/SKILL.md) | Scheduled reconciliation of SaaS logins against IdP issuance, sealed issuance, SAML Guard alerts, and the response when one fires |
+| [securing-control-systems](securing-control-systems/SKILL.md) | Assess a tampered or exposed controller (setpoints, outputs) and choose safeguards — signed constraint envelopes, reconciliation, the Constraint Guard on HTTP, Modbus, BACnet, DNP3, IEC 104, MQTT/Sparkplug or Gremlin — then draft the envelope and roll out the guard; vehicle navigation integrity as advisory |
+| [monitoring-constraints](monitoring-constraints/SKILL.md) | Scheduled constraint reconciliation (orphan changes, breaches, disagreeing sensors, silence), sealed observations and guard alerts, and the response when one fires (constraints-triage) |
 
 The tool: [packages/cappz-market](../packages/cappz-market/README.md) — one file (`dist/cappz-market.mjs`, Node 20+), as a CLI or as MCP tools.
 
@@ -32,4 +36,4 @@ The tool: [packages/cappz-market](../packages/cappz-market/README.md) — one fi
 
 ## Keeping skills true
 
-`using-cappz-marketplace/reference/commands.md` is generated from the tool's command table (`npx vite-node packages/cappz-market/write-docs.ts`); a test fails when it is stale.
+`using-cappz-marketplace/reference/commands.md` and `index.json` are generated from the tool's command table and the skills themselves (`npx vite-node packages/cappz-market/write-docs.ts`); a test fails when either is stale, so run it after changing a skill.

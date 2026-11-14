@@ -1,0 +1,22 @@
+{
+  "asset": "m/44'/144'/25'/sites/17/oven-3",
+  "modePoint": "oven-3/mode",
+  "points": [
+    { "id": "oven-3/value", "kind": "measurement", "unit": "Cel", "label": "Chamber temperature (control probe)", "maxGapMs": 600000 },
+    { "id": "oven-3/probe", "kind": "measurement", "unit": "Cel", "label": "Chamber temperature (independent probe)" },
+    { "id": "oven-3/setpoint", "kind": "setpoint", "unit": "Cel", "label": "Temperature setpoint", "failMode": "hold-last-good" },
+    { "id": "oven-3/mode", "kind": "state", "unit": "{state}", "label": "Operating mode: baking, cleaning, off" }
+  ],
+  "constraints": [
+    { "id": "value-range", "kind": "range", "points": ["oven-3/value"], "unit": "Cel", "min": 150, "max": 260, "modes": ["baking"], "note": "Manual §4.2: 150 °C to 260 °C during baking" },
+    { "id": "setpoint-range", "kind": "range", "points": ["oven-3/setpoint"], "unit": "Cel", "min": 160, "max": 250 },
+    { "id": "setpoint-step", "kind": "rate", "points": ["oven-3/setpoint"], "unit": "Cel", "maxStep": 20 },
+    { "id": "value-dwell", "kind": "dwell", "points": ["oven-3/value"], "unit": "Cel", "max": 250, "maxMs": 600000 },
+    { "id": "probes-agree", "kind": "agreement", "points": ["oven-3/value", "oven-3/probe"], "unit": "Cel", "tolerance": 6, "maxSkewMs": 120000 },
+    { "id": "setpoint-follows", "kind": "response", "points": ["oven-3/setpoint", "oven-3/value"], "unit": "Cel", "withinMs": 900000, "deadband": 2, "minChange": 5 },
+    { "id": "who", "kind": "authority", "points": ["oven-3/setpoint"], "grants": [
+      { "publicKey": "REPLACE-with-the-technician-public-key-hex", "label": "bakery technician", "points": ["oven-3/setpoint"],
+        "windows": [{ "days": [1, 2, 3, 4, 5, 6], "from": "04:00", "to": "20:00", "utcOffsetMin": 60 }] }
+    ] }
+  ]
+}

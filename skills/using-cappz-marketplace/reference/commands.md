@@ -39,7 +39,11 @@ Generated from the tool's command table (packages/cappz-market/commands.ts). Eve
 - [evaluate](#evaluate)
 - [draft](#draft)
 - [scout](#scout)
+- [constraints-draft](#constraints-draft)
+- [constraints-review](#constraints-review)
+- [constraints-triage](#constraints-triage)
 - [hire](#hire)
+- [skills](#skills)
 - [ops](#ops)
 - [call](#call)
 - [demo](#demo)
@@ -537,6 +541,44 @@ For a contract you sell on: which parts to subcontract, who on the market could 
 
 MCP tool: `market_scout`.
 
+## constraints-draft
+
+`cappz-market constraints-draft` — **moves money** (mainnet needs `--yes`)
+
+Turn the operating-limits text of an equipment manual or datasheet into a draft Constraint Guard envelope; every limit is quoted verbatim with its numbers, nothing is invented, nothing is declared. Costs 0.05 XRP from your wallet.
+
+| Option | Type | Required | What it is |
+|---|---|---|---|
+| `--file` | string | yes | A text file with the manual/datasheet sections that state the limits. |
+| `--device` | string |  | The device id to prefix points with (oven-3, freezer-1, pump-4). |
+
+MCP tool: `market_constraints-draft`.
+
+## constraints-review
+
+`cappz-market constraints-review` — **moves money** (mainnet needs `--yes`)
+
+Review your Constraint Guard's shadow report: per point enforce now (with the exact command), keep shadowing, or investigate first, and what each refusal means. Rules only, signed. Costs 0.02 XRP from your wallet.
+
+| Option | Type | Required | What it is |
+|---|---|---|---|
+| `--guard` | string |  | Your guard's HTTP front (reads GET /cappz/constraints/report from it). |
+| `--report` | string |  | Or: a saved shadow report JSON file. |
+
+MCP tool: `market_constraints-review`.
+
+## constraints-triage
+
+`cappz-market constraints-triage` — **moves money** (mainnet needs `--yes`)
+
+Triage a constraint reconciliation report: severity, what the pattern most likely means, and ordered actions (contain, preserve, verify, recover, notify). Rules only, signed, never touches equipment. Costs 0.02 XRP from your wallet.
+
+| Option | Type | Required | What it is |
+|---|---|---|---|
+| `--report` | string | yes | The report.json written by constraint-reconcile --out. |
+
+MCP tool: `market_constraints-triage`.
+
 ## hire
 
 `cappz-market hire <url>` — **moves money** (mainnet needs `--yes`)
@@ -552,6 +594,14 @@ Hire a CAPPZ paid agent at its URL: open a job, pay each stage from your wallet,
 | `--timeout` | number |  | Minutes to wait for the whole job (default 15). |
 
 MCP tool: `market_hire`.
+
+## skills
+
+`cappz-market skills [query]`
+
+Find the agent skill for a task: ranks the CAPPZ skills by your words (or lists them all) with what each is for, its commands and a link to its SKILL.md. Load the skill before you act.
+
+MCP tool: `market_skills`.
 
 ## ops
 

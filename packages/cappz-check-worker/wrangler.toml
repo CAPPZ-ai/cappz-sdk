@@ -26,6 +26,10 @@ AGENT_PAY_TO_TESTNET = "rnQ3gydd9kTdx6gHKzhNHSKHSq6whzdiMe"
 PRICE_EVALUATE_XRP = "0.05"
 PRICE_DRAFT_XRP = "0.02"
 PRICE_SCOUT_XRP = "0.05"
+# v15-40-00 Constraint Guard agents (envelope drafter uses the model; review and triage are rules only).
+PRICE_ENVELOPE_XRP = "0.05"
+PRICE_REVIEW_XRP = "0.02"
+PRICE_TRIAGE_XRP = "0.02"
 # v15-38-00 payee confirmation: two stages, two payees — the platform fee up front to the CAPPZ treasury (PAY_TO_*),
 # then the service fee to the operator (AGENT_PAY_TO_*) for the signed report.
 PRICE_PAYEE_PLATFORM_XRP = "0.01"

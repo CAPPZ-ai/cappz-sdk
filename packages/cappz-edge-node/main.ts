@@ -36,6 +36,9 @@
  * host that moves a PHP app off php-fpm one route at a time (routes.ts).
  * --saml 41451 (with CAPPZ_SAML_CONFIG / CAPPZ_SAML_UPSTREAM) serves SAML Guard
  * in front of a SAML service provider, shadow first (samlGuard.ts).
+ * v15-40-00: CAPPZ_CONSTRAINTS_CONFIG starts the Constraint Guard (constraintGuard.ts):
+ * HTTP, Modbus, DNP3, IEC 104, MQTT/Sparkplug, BACnet (UDP, --unstable-net) and
+ * Gremlin fronts in front of controllers, shadow first, enforce per point.
  * --legacy 41447 serves the DMZ quarantine and legacy front end, and pulls
  * partner FTPS/SFTP directories (legacy.ts). CAPPZ_SERVE_WALLETS lists the
  * wallets whose multicast groups the node answers (UDP 41448): a signed
@@ -52,6 +55,7 @@ import { resolveTls, rotateTls } from './tlsIdentity.ts';
 import { serveVerifyGateway, verifyGatewayFor } from './verifyGateway.ts';
 import { serveRoutes } from './routes.ts';
 import { serveSamlGuard } from './samlGuard.ts';
+import { serveConstraintGuard } from './constraintGuard.ts';
 import { serveLegacy } from './legacy.ts';
 import { serveLdap } from './ldap.ts';
 import { memberTableFromStore } from './directory.ts';
@@ -187,6 +191,8 @@ await Promise.all([
   Deno.env.get('CAPPZ_ROUTES_MODULE') || Deno.env.get('CAPPZ_ROUTES_UPSTREAM') ? serveRoutes({ port: routesPort, dataDir, nodeAddress: powAddress }) : Promise.resolve(),
   // v15-36-00: SAML Guard in front of a SAML service provider you host (samlGuard.ts), when configured.
   Deno.env.get('CAPPZ_SAML_CONFIG') ? serveSamlGuard(samlPort, dataDir) : Promise.resolve(),
+  // v15-40-00: Constraint Guard in front of controllers' write paths (constraintGuard.ts), when configured.
+  Deno.env.get('CAPPZ_CONSTRAINTS_CONFIG') ? serveConstraintGuard(dataDir, key) : Promise.resolve(),
   key && serveWallets.length
     ? listenWalletGroups({
         wallets: serveWallets, key, endpoints: groupEndpoints, declaredKeys: sessionOpts.declaredKeysFor,

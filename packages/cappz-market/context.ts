@@ -53,7 +53,10 @@ export interface Discovery {
   publicLog: { partition: string; partitions?: Partial<Record<MarketNetwork, string>> };
   agentsPage: string;
   skills: string;
+  /** v15-40-00: skills/index.json — every skill's when-to-use and SKILL.md link, for searching. */
+  skillIndex?: string;
   /** Paid services the marketplace operates (paid-agent protocol), by name. */
+  /** Every service may also carry `skill` (the skill that says when and how to use it) and `guide` (v15-40-00). */
   services?: {
     counterpartyCheck?: { url: string; publicKey: string; priceXrp: number; networks: string[] };
     /** v15-32-00 paid agents on the check service: `<url>/<network>/<path>`. */
@@ -62,6 +65,10 @@ export interface Discovery {
     subcontractScout?: { url: string; path: string; priceXrp: number; networks: string[] };
     /** v15-38-00: priceXrp is the whole job (platform fee + service fee), paid in two stages to two addresses. */
     payeeConfirmation?: { url: string; path: string; publicKey: string; priceXrp: number; networks: string[] };
+    /** v15-40-00 Constraint Guard agents: `<url>/<network>/<path>`. */
+    envelopeDrafter?: { url: string; path: string; priceXrp: number; networks: string[] };
+    shadowReviewer?: { url: string; path: string; priceXrp: number; networks: string[] };
+    incidentTriage?: { url: string; path: string; priceXrp: number; networks: string[] };
   };
 }
 

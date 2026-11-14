@@ -10,6 +10,8 @@
  * on mainnet a command that moves money also needs `yes`.
  */
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import SKILLS_INDEX from '../../skills/index.json';
+import { searchSkills, type SkillIndex } from './skillsSearch';
 import { join, resolve } from 'node:path';
 import type { XrplNetwork } from '../../src/lib/xrpl/ledgerCheck';
 import { isValidClassicAddress } from 'xrpl';
@@ -1195,6 +1197,69 @@ export const COMMANDS: Command[] = [
     },
   },
   {
+    name: 'constraints-draft',
+    summary: 'Turn the operating-limits text of an equipment manual or datasheet into a draft Constraint Guard envelope; every limit is quoted verbatim with its numbers, nothing is invented, nothing is declared. Costs 0.05 XRP from your wallet.',
+    money: true,
+    params: [
+      { name: 'file', type: 'string', description: 'A text file with the manual/datasheet sections that state the limits.', required: true },
+      { name: 'device', type: 'string', description: 'The device id to prefix points with (oven-3, freezer-1, pump-4).' },
+    ],
+    async run(a, o) {
+      const svc = (await getDiscovery()).services?.envelopeDrafter;
+      if (!svc) throw new ToolError(`${marketUrl()} does not offer an envelope drafter.`);
+      const net = marketNetwork(o);
+      if (!svc.networks.includes(net)) throw new ToolError(`The envelope drafter runs on ${svc.networks.join(' and ')}, not ${net}.`);
+      const text = await readFile(str(a, 'file'), 'utf8');
+      if (text.length > 60_000) throw new ToolError('Send at most 60 000 characters: just the sections that state operating limits.');
+      const input = { text, ...(a.device ? { device: str(a, 'device') } : {}) };
+      const r = await commandOf('hire')!.run({ url: `${svc.url}/${net}/${svc.path}`, input: JSON.stringify(input), max: svc.priceXrp, out: join(homeDir(), 'envelopes'), timeout: 3 }, o) as { results?: Array<{ file: string; verified: boolean }>; paid?: string };
+      const file = r.results?.[0]?.file;
+      if (!file) return { drafted: false, ...r };
+      const d = (JSON.parse(await readFile(file, 'utf8')) as { advice: { draft: unknown; dropped: unknown[]; needs: string[]; questions: string[]; lint: string[]; ready: boolean } }).advice;
+      return { draft: d.draft, dropped: d.dropped, needs: d.needs, questions: d.questions, lint: d.lint, ready: d.ready, paid: r.paid, hashMatched: r.results?.[0]?.verified ?? false, report: file, next: 'Review every limit against the manual, add an authority constraint (who may command which setpoints), save it as envelope-draft.json and run: constraint-wizard declare' };
+    },
+  },
+  {
+    name: 'constraints-review',
+    summary: 'Review your Constraint Guard\'s shadow report: per point enforce now (with the exact command), keep shadowing, or investigate first, and what each refusal means. Rules only, signed. Costs 0.02 XRP from your wallet.',
+    money: true,
+    params: [
+      { name: 'guard', type: 'string', description: 'Your guard\'s HTTP front (reads GET /cappz/constraints/report from it).' },
+      { name: 'report', type: 'string', description: 'Or: a saved shadow report JSON file.' },
+    ],
+    async run(a, o) {
+      const svc = (await getDiscovery()).services?.shadowReviewer;
+      if (!svc) throw new ToolError(`${marketUrl()} does not offer a shadow-report reviewer.`);
+      const net = marketNetwork(o);
+      let report: unknown;
+      if (a.report) report = JSON.parse(await readFile(str(a, 'report'), 'utf8'));
+      else if (a.guard) { const res = await fetch(new URL('/cappz/constraints/report', str(a, 'guard'))); if (!res.ok) throw new ToolError(`The guard answered ${res.status}.`); report = await res.json(); }
+      else throw new ToolError('Give --guard <url> or --report <file>.');
+      const r = await commandOf('hire')!.run({ url: `${svc.url}/${net}/${svc.path}`, input: JSON.stringify({ report }), max: svc.priceXrp, out: join(homeDir(), 'reviews'), timeout: 3 }, o) as { results?: Array<{ file: string; verified: boolean }>; paid?: string };
+      const file = r.results?.[0]?.file;
+      if (!file) return { reviewed: false, ...r };
+      const v = (JSON.parse(await readFile(file, 'utf8')) as { advice: { points: Array<{ point: string; advice: string; command?: string }>; summary: string; other: string[] } }).advice;
+      return { summary: v.summary, points: v.points, other: v.other, paid: r.paid, hashMatched: r.results?.[0]?.verified ?? false, report: file, next: v.points.some((p) => p.command) ? `Run on an operator's computer: ${v.points.filter((p) => p.command).map((p) => p.command).join(' && ')}` : 'Keep shadowing; fix what the actions say, then review again.' };
+    },
+  },
+  {
+    name: 'constraints-triage',
+    summary: 'Triage a constraint reconciliation report: severity, what the pattern most likely means, and ordered actions (contain, preserve, verify, recover, notify). Rules only, signed, never touches equipment. Costs 0.02 XRP from your wallet.',
+    money: true,
+    params: [{ name: 'report', type: 'string', description: 'The report.json written by constraint-reconcile --out.', required: true }],
+    async run(a, o) {
+      const svc = (await getDiscovery()).services?.incidentTriage;
+      if (!svc) throw new ToolError(`${marketUrl()} does not offer incident triage.`);
+      const net = marketNetwork(o);
+      const report = JSON.parse(await readFile(str(a, 'report'), 'utf8'));
+      const r = await commandOf('hire')!.run({ url: `${svc.url}/${net}/${svc.path}`, input: JSON.stringify({ report }), max: svc.priceXrp, out: join(homeDir(), 'triage'), timeout: 3 }, o) as { results?: Array<{ file: string; verified: boolean }>; paid?: string };
+      const file = r.results?.[0]?.file;
+      if (!file) return { triaged: false, ...r };
+      const t = (JSON.parse(await readFile(file, 'utf8')) as { advice: { severity: string; summary: string; hypotheses: unknown[]; actions: Array<{ phase: string; action: string }>; note: string } }).advice;
+      return { severity: t.severity, summary: t.summary, hypotheses: t.hypotheses, actions: t.actions, note: t.note, paid: r.paid, hashMatched: r.results?.[0]?.verified ?? false, report: file, next: t.actions[0] ? `${t.actions[0].phase}: ${t.actions[0].action}` : 'Nothing to act on.' };
+    },
+  },
+  {
     name: 'hire',
     summary: 'Hire a CAPPZ paid agent at its URL: open a job, pay each stage from your wallet, collect each result and check its SHA-256.',
     money: true,
@@ -1263,6 +1328,23 @@ export const COMMANDS: Command[] = [
         if (Date.now() > deadline) return { job: jobId, agent: card.name, paid: `${spent} ${card.currency}`, payments: paid, results, state: v.job.state, next: `Still working. Resume later: cappz-market hire ${base} --job ${jobId} --max ${max - spent}` };
         await new Promise((r) => setTimeout(r, 3_000));
       }
+    },
+  },
+  {
+    name: 'skills',
+    summary: 'Find the agent skill for a task: ranks the CAPPZ skills by your words (or lists them all) with what each is for, its commands and a link to its SKILL.md. Load the skill before you act.',
+    params: [{ name: 'query', type: 'string', description: 'What you need, in a few words, e.g. "freezer setpoint hacked" or "pay a stranger safely".', positional: true }],
+    async run(a) {
+      const index = SKILLS_INDEX as SkillIndex;
+      const q = a.query === undefined ? '' : String(a.query);
+      const found = searchSkills(index, q);
+      return {
+        ...(q ? { query: q } : {}),
+        skills: found.map((s) => ({ name: s.name, useWhen: s.description, commands: s.commands, tools: s.tools, guides: s.guides.map((g) => `${index.repo}/blob/main/${g}`), skill: s.raw, browse: s.url })),
+        ...(found.length ? {} : { none: `No skill matches "${q}".` }),
+        install: index.install,
+        next: found.length ? `Read ${found[0].raw} and follow it.` : 'cappz-market skills (lists every skill)',
+      };
     },
   },
   {
