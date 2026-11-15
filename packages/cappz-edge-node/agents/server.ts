@@ -38,6 +38,13 @@
  *   - GET /agents/key-declarations.json serves the current evidence.
  * The file (and key-revocations.json beside it) is re-read every minute. Set, but with no
  * valid unrevoked declaration of this key: the agents refuse to start or to sign.
+ *
+ * 15.45.0 — or the payout account declares the key ON THE LEDGER, signed in its own wallet
+ * (Xaman or any other; no seed on this machine): the same file then holds an anchor
+ * {"v":"xrpl","network","txHash"} that tools/declare-node-key.ts --ledger writes. The
+ * agents read the declaration and the account's later revocations from the XRP Ledger
+ * (ledgerKeyz.ts; checked every 5 minutes, revocations included) and sign in
+ * payload.signerDeclaration = "xrpl:<network>:<hash>", which verify.mjs looks up itself.
  */
 import {
   createPaidAgent, defineAgentOffer, SCHEDULE_PRESETS, xrplLedgerReader,
@@ -47,6 +54,7 @@ import { signEdgeTx, sha256HexOf } from '../../../src/lib/functions/edgeJobs.ts'
 import { loadNodeKey } from '../signingKey.ts';
 import { declarationHash, evaluateKey, type KeyDeclaration, type KeyRevocation } from '../../../src/lib/identity/keyDeclaration.ts';
 import { deriveAddress } from 'xrpl';
+import { anchorRef, checkAnchor, isLedgerAnchor, type LedgerAnchor } from './ledgerKeyz.ts';
 import { DOC_FILES, docVars, renderDoc, WEBHOOK_DEPOSIT_SHARE } from './docs.ts';
 
 const env = (k: string, d?: string) => Deno.env.get(k)?.trim() || d;
@@ -73,7 +81,11 @@ if (!key) { console.error('[agents] needs CAPPZ_NODE_KEY / CAPPZ_NODE_PUB (node.
 
 const DECL_PATH = env('CAPPZ_NODE_KEY_DECLARATIONS');
 const REVOKE_PATH = DECL_PATH ? DECL_PATH.replace(/[^\\/]*$/, 'key-revocations.json') : undefined;
-interface Vouch { declaration: KeyDeclaration; hash: string; wallet: string; address: string; expiresAt: string }
+/** A wallet-signed declaration (declaration set) or an on-ledger one (anchor set); hash is what records sign in. */
+interface Vouch { declaration?: KeyDeclaration; anchor?: LedgerAnchor; hash: string; wallet: string | null; address: string; expiresAt: string }
+const LEDGER_RECHECK_MS = 5 * 60_000;
+/** Last ledger answer per anchor, so the minute-by-minute reload asks the ledger at most every 5 minutes. */
+const ledgerChecks = new Map<string, { at: number; result: Awaited<ReturnType<typeof checkAnchor>> }>();
 let vouch: Vouch | null = null;
 let revocations: KeyRevocation[] = [];
 /** Declarations a result may reference (by hash), kept so a 30-day bundle can carry every one its records name. */
@@ -88,10 +100,25 @@ async function readEvidence(path: string | undefined, required: boolean): Promis
 }
 /** The longest-lived valid, unrevoked declaration of this node key for `signing`; null (with the reason) when there is none. */
 async function loadVouch(): Promise<{ vouch: Vouch | null; why: string }> {
-  const decls = (await readEvidence(DECL_PATH, true)).filter((d): d is KeyDeclaration => (d as KeyDeclaration)?.v === 2);
+  const all = await readEvidence(DECL_PATH, true);
+  const decls = all.filter((d): d is KeyDeclaration => (d as KeyDeclaration)?.v === 2);
+  const anchors = all.filter(isLedgerAnchor);
   const revs = (await readEvidence(REVOKE_PATH, false)) as KeyRevocation[];
   let best: Vouch | null = null;
   let why = `no declaration in ${DECL_PATH} names node key ${key!.publicKeyHex.slice(0, 16)}… for signing`;
+  for (const a of anchors) {
+    const ref = anchorRef(a.network, a.txHash);
+    let c = ledgerChecks.get(ref);
+    if (!c || Date.now() - c.at > LEDGER_RECHECK_MS) {
+      // A ledger that cannot be reached keeps the last answer (if any); with none, the error stops the start.
+      try { c = { at: Date.now(), result: await checkAnchor(a, key!.publicKeyHex, 'signing') }; ledgerChecks.set(ref, c); }
+      catch (e) { if (!c) throw new Error(`the XRP Ledger (${a.network}) could not be read: ${(e as Error).message}`); console.warn(`[agents] ledger check of ${ref.slice(0, 30)}… failed (${(e as Error).message}); keeping the last answer`); }
+    }
+    const t = c.result;
+    if (t.state !== 'declared') { why = `on-ledger declaration ${a.txHash.slice(0, 16)}… (${a.network}): ${t.because}`; continue; }
+    if (best && Date.parse(best.expiresAt) >= Date.parse(t.until)) continue;
+    best = { anchor: a, hash: ref, wallet: null, address: t.account, expiresAt: t.until };
+  }
   for (const d of decls) {
     if (d.publicKey?.toLowerCase() !== key!.publicKeyHex || d.purpose !== 'signing' || d.algorithm !== 'ed25519') continue;
     const t = await evaluateKey(d.walletAddress, key!.publicKeyHex, 'signing', { declarations: [d], revocations: revs });
@@ -100,27 +127,30 @@ async function loadVouch(): Promise<{ vouch: Vouch | null; why: string }> {
     best = { declaration: d, hash: await declarationHash(d), wallet: d.walletAddress.toLowerCase(), address: deriveAddress(d.walletAddress.toUpperCase()), expiresAt: d.expiresAt };
   }
   revocations = revs;
-  if (best) seenDeclarations.set(best.hash, best.declaration);
+  if (best?.declaration) seenDeclarations.set(best.hash, best.declaration);
   return { vouch: best, why };
 }
 if (DECL_PATH) {
   const first = await loadVouch();
   if (!first.vouch) { console.error(`[agents] CAPPZ_NODE_KEY_DECLARATIONS is set but ${first.why}; not starting (unset it to run without a wallet declaration)`); Deno.exit(1); }
   vouch = first.vouch;
-  console.log(`[agents] node key declared by wallet ${vouch.address} until ${vouch.expiresAt}${vouch.address === PAY_TO ? ' (the payout account)' : ` (not the payout account ${PAY_TO})`}`);
+  console.log(`[agents] node key declared ${vouch.anchor ? `on the XRP Ledger (${vouch.anchor.network}, tx ${vouch.anchor.txHash.slice(0, 16)}…) ` : ''}by wallet ${vouch.address} until ${vouch.expiresAt}${vouch.address === PAY_TO ? ' (the payout account)' : ` (not the payout account ${PAY_TO})`}`);
   setInterval(async () => {
     try {
       const next = await loadVouch();
       if (next.vouch?.hash !== vouch?.hash) console.log(next.vouch ? `[agents] signing declaration now ${next.vouch.hash.slice(0, 16)}… until ${next.vouch.expiresAt}` : `[agents] ${next.why}: signing paused until a valid declaration is in place`);
       vouch = next.vouch;
-      if (vouch && Date.parse(vouch.expiresAt) - Date.now() < 14 * DAY) console.warn(`[agents] the node key's declaration expires ${vouch.expiresAt}: run tools/declare-node-key.ts again`);
+      if (vouch && Date.parse(vouch.expiresAt) - Date.now() < 14 * DAY) console.warn(`[agents] the node key's declaration expires ${vouch.expiresAt}: renew it (declare-node-key.ps1, or tools/declare-node-key.ts --ledger)`);
     } catch (e) { console.warn(`[agents] ${DECL_PATH} unreadable (${(e as Error).message}); keeping the last good declaration`); }
   }, 60_000);
 }
 /** What a result needs to prove who signed it: the declarations its records name, and the revocations known now. */
 const evidenceFor = (hashes: Iterable<unknown>) => {
-  const declarations = [...new Set(hashes)].map((h) => seenDeclarations.get(String(h))).filter(Boolean);
-  return declarations.length ? { declarations, revocations } : {};
+  const named = [...new Set(hashes)].map(String);
+  const declarations = named.map((h) => seenDeclarations.get(h)).filter(Boolean);
+  // On-ledger declarations need no copy: verify.mjs reads them (and any revocation) from the ledger by their reference.
+  const onLedger = named.filter((h) => h.startsWith('xrpl:'));
+  return { ...(declarations.length ? { declarations, revocations } : {}), ...(onLedger.length ? { ledgerDeclarations: onLedger } : {}) };
 };
 
 // ─── Durable job store: one append-only log per agent, results as files ──────
@@ -146,11 +176,12 @@ async function fileJobStore(dir: string): Promise<JobStore> {
 const signed = (eventType: string, targetAddress: string, payload: Record<string, unknown>) => {
   // Fail closed: with declarations configured, never sign a record no wallet vouches for right now.
   if (DECL_PATH && !vouch) throw new Error('The node key has no valid wallet declaration right now; signing is paused.');
+  if (vouch && Date.now() >= Date.parse(vouch.expiresAt)) throw new Error(`The node key's declaration expired ${vouch.expiresAt}; signing is paused until it is renewed.`);
   // `network` is signed in: both instances share the node key, so a free testnet record must never pass for a paid mainnet one.
   return signEdgeTx({ txId: `${eventType}-${crypto.randomUUID()}`, timestamp: new Date().toISOString(), eventType, sourceAddress: POW, targetAddress, payload: { ...payload, network: NETWORK, governingPrinciple: PRINCIPLE, ...(vouch ? { signerDeclaration: vouch.hash } : {}) } }, key);
 };
 
-const VERIFY_HOW = `node verify.mjs <this file> <payTo r-address> (${PUBLIC_BASE}/verify.mjs), or verifyEdgeTx(receipt) from @cappz/sdk (src/lib/functions/edgeJobs.ts): recomputes txHash over the canonical TX and checks the Ed25519 signature against signerPublicKey. payload.signerDeclaration is the hash of the wallet-signed KeyDeclaration (in declarations) that vouches for that key.`;
+const VERIFY_HOW = `node verify.mjs <this file> <payTo r-address> (${PUBLIC_BASE}/verify.mjs), or verifyEdgeTx(receipt) from @cappz/sdk (src/lib/functions/edgeJobs.ts): recomputes txHash over the canonical TX and checks the Ed25519 signature against signerPublicKey. payload.signerDeclaration names who vouches for that key: the hash of a wallet-signed KeyDeclaration (in declarations), or xrpl:<network>:<tx hash> for a declaration on the XRP Ledger (verify.mjs reads it and any revocation from the ledger).`;
 
 // ─── Agent 1: signed timestamp (pay on completion) ───────────────────────────
 
@@ -289,7 +320,7 @@ const docsFor = (name?: string) => ({
   ...(name ? { skill: `${PUBLIC_BASE}/${name}/SKILL.md` } : { skills: Object.keys(AGENTS).map((n) => `${PUBLIC_BASE}/${n}/SKILL.md`) }),
   verifier: `${PUBLIC_BASE}/verify.mjs`,
 });
-const signerInfo = () => ({ declaredBy: vouch ? { xrplAddress: vouch.address, walletPublicKey: vouch.wallet, declarationHash: vouch.hash, expiresAt: vouch.expiresAt, isPayTo: vouch.address === PAY_TO } : null });
+const signerInfo = () => ({ declaredBy: vouch ? { xrplAddress: vouch.address, walletPublicKey: vouch.wallet, declarationHash: vouch.hash, ...(vouch.anchor ? { onLedger: { network: vouch.anchor.network, txHash: vouch.anchor.txHash.toUpperCase() } } : {}), expiresAt: vouch.expiresAt, isPayTo: vouch.address === PAY_TO } : null });
 const wantsHtml = (req: Request) => (req.headers.get('accept') ?? '').includes('text/html');
 
 function openapi(): unknown {
@@ -331,7 +362,7 @@ async function handle(req: Request): Promise<Response> {
   const docPath = url.pathname.startsWith('/agents/') ? url.pathname.slice('/agents'.length) : '';
   if (req.method === 'GET' && DOC_FILES[docPath]) return doc(docPath);
   if (req.method === 'GET' && url.pathname === '/agents/openapi.json') return json(200, openapi());
-  if (req.method === 'GET' && url.pathname === '/agents/key-declarations.json') return json(200, { signerPublicKey: key!.publicKeyHex, ...signerInfo(), declarations: vouch ? [vouch.declaration] : [], revocations });
+  if (req.method === 'GET' && url.pathname === '/agents/key-declarations.json') return json(200, { signerPublicKey: key!.publicKeyHex, ...signerInfo(), declarations: vouch?.declaration ? [vouch.declaration] : [], ledgerDeclarations: vouch?.anchor ? [vouch.hash] : [], revocations });
   const m = ROUTE.exec(url.pathname);
   if (!m) return json(404, { error: 'Not found.', docs: docsFor() });
   const [, name, sub, id, tail, stageN, hookId] = m;

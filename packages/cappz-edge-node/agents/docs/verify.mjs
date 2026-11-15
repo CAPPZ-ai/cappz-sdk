@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Verifies CAPPZ signed records offline. No dependencies; Node 20+ or Deno.
-//   node verify.mjs <file.json> [expected signer] [--evidence key-declarations.json]
-//   deno run --allow-read {{BASE}}/verify.mjs <file.json> [expected signer] [--evidence key-declarations.json]
+//   node verify.mjs <file.json> [expected signer] [--evidence key-declarations.json] [--offline]
+//   deno run --allow-read --allow-net --allow-env {{BASE}}/verify.mjs <file.json> [expected signer] [--evidence key-declarations.json]
 // Accepts a signed record, a timestamp result {receipt, declarations?}, or a webhook bundle {bundle, records, declarations?}.
 // expected signer: the node key (64 hex), the declaring wallet's public key (66 hex), or its XRPL address (r…).
 // How a record is signed: txHash = sha256(canonical JSON of the record without
@@ -10,6 +10,10 @@
 // names a KeyDeclaration in which a wallet (secp256k1) declares the node key for purpose "signing". This file
 // checks that wallet signature itself and prints the wallet's XRPL address, so the anchor is the account you
 // paid, not the HTTPS certificate (or DNS name) the result was downloaded through.
+// 15.45.0 — or the wallet declared the node key ON THE XRP LEDGER: signerDeclaration is then "xrpl:<network>:<tx hash>",
+// an AccountSet by that account with a cappz/keyz memo. This file reads that transaction and the account's later
+// transactions (a revocation is another such memo) from public XRPL servers; --offline skips it (the signer stays unproven).
+// Override a server with CAPPZ_XRPL_RPC_MAINNET / _TESTNET.
 const args = typeof Deno !== 'undefined' ? Deno.args : process.argv.slice(2);
 const readText = typeof Deno !== 'undefined' ? (p) => Deno.readTextFile(p) : async (p) => (await import('node:fs/promises')).readFile(p, 'utf8');
 const exit = (c) => (typeof Deno !== 'undefined' ? Deno.exit(c) : process.exit(c));
@@ -108,11 +112,93 @@ async function xrplAddress(pubHex) {
   return s;
 }
 
+// ─── On-ledger declarations (keep in step with agents/ledgerKeyz.ts) ──────────
+const RPC = { mainnet: ['https://xrplcluster.com/', 'https://s1.ripple.com:51234/'], testnet: ['https://s.altnet.rippletest.net:51234/'], devnet: ['https://s.devnet.rippletest.net:51234/'] };
+const envGet = (k) => { try { return typeof Deno !== 'undefined' ? Deno.env.get(k) : process.env[k]; } catch { return undefined; } };
+async function rpc(network, method, params) {
+  const own = envGet(`CAPPZ_XRPL_RPC_${network.toUpperCase()}`);
+  let last;
+  for (const url of own ? [own] : RPC[network]) {
+    try {
+      const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ method, params: [params] }), signal: AbortSignal.timeout(20_000) });
+      const r = (await res.json()).result;
+      if (r?.status === 'error') { if (r.error === 'txnNotFound') return null; throw Object.assign(new Error(r.error_message ?? r.error), { code: r.error }); }
+      return r;
+    } catch (e) { last = e; if (e.code) throw e; }
+  }
+  throw last ?? new Error('XRPL unreachable');
+}
+const utf8 = (h) => { try { return new TextDecoder('utf-8', { fatal: true }).decode(hex(h)); } catch { return ''; } };
+function ledgerEntry(e) {
+  const t = e.tx_json ?? e.tx ?? e; const meta = e.meta ?? e.metaData ?? {};
+  const date = t.date ?? e.date;
+  return {
+    hash: String(e.hash ?? t.hash ?? '').toUpperCase(), validated: e.validated === true, result: meta.TransactionResult ?? '', ledgerIndex: e.ledger_index ?? t.ledger_index ?? null,
+    type: t.TransactionType, account: t.Account, closeTime: e.close_time_iso ?? (typeof date === 'number' ? new Date((date + 946684800) * 1000).toISOString() : null),
+    memos: (t.Memos ?? []).map((m) => ({ type: utf8(m.Memo?.MemoType ?? ''), data: utf8(m.Memo?.MemoData ?? '') })),
+  };
+}
+function keyzMemo(t) {
+  for (const m of t.memos) {
+    if (m.type !== 'cappz/keyz') continue;
+    try {
+      const v = JSON.parse(m.data);
+      if (v?.v === 1 && v.op === 'declare' && /^[0-9a-f]{64}$/.test(v.key) && v.alg === 'ed25519' && Array.isArray(v.purposes) && typeof v.until === 'string') return v;
+      if (v?.v === 1 && v.op === 'revoke' && (/^[0-9a-f]{64}$/i.test(v.tx ?? '') || /^[0-9a-f]{64}$/.test(v.key ?? ''))) return v;
+    } catch { /* not ours */ }
+  }
+  return null;
+}
+const ledgerCache = new Map();
+/** The declaration transaction and the account's validated transactions after it (oldest first), read once per reference. */
+function ledgerFacts(network, txHash) {
+  if (!ledgerCache.has(txHash)) ledgerCache.set(txHash, (async () => {
+    const r = await rpc(network, 'tx', { transaction: txHash });
+    if (!r) return { decl: null, later: [] };
+    const decl = ledgerEntry(r);
+    const later = []; let marker;
+    if (decl.validated && decl.ledgerIndex !== null) do {
+      const page = await rpc(network, 'account_tx', { account: decl.account, ledger_index_min: decl.ledgerIndex, ledger_index_max: -1, forward: true, limit: 200, ...(marker ? { marker } : {}) });
+      for (const e of page?.transactions ?? []) if (e.validated !== false) later.push(ledgerEntry({ ...e, validated: true }));
+      marker = page?.marker;
+    } while (marker && later.length < 2000);
+    return { decl, later };
+  })());
+  return ledgerCache.get(txHash);
+}
+const offline = args.includes('--offline'); if (offline) args.splice(args.indexOf('--offline'), 1);
+async function ledgerDeclaredBy(tx, ref) {
+  const m = /^xrpl:(mainnet|testnet|devnet):([0-9A-F]{64})$/i.exec(ref);
+  if (!m) return { ok: false, why: `unreadable on-ledger reference ${ref}` };
+  const [network, txHash] = [m[1].toLowerCase(), m[2].toUpperCase()];
+  if (offline) return { ok: false, why: `declared on the XRP Ledger (${network} ${txHash.slice(0, 16)}…), not checked (--offline)` };
+  let facts;
+  try { facts = await ledgerFacts(network, txHash); } catch (e) { return { ok: false, why: `the XRP Ledger (${network}) could not be read: ${e.message}` }; }
+  const { decl, later } = facts;
+  if (!decl) return { ok: false, why: `declaration ${txHash.slice(0, 16)}… is not on ${network}` };
+  if (!decl.validated || decl.result !== 'tesSUCCESS' || decl.type !== 'AccountSet') return { ok: false, why: `declaration ${txHash.slice(0, 16)}… is not a validated, successful AccountSet` };
+  const d = keyzMemo(decl);
+  if (!d || d.op !== 'declare') return { ok: false, why: 'the transaction carries no cappz/keyz declaration' };
+  if (d.key !== String(tx.signerPublicKey).toLowerCase()) return { ok: false, why: 'the declaration names another key' };
+  if (!d.purposes.includes('signing')) return { ok: false, why: 'the declaration is not for signing' };
+  const from = Date.parse(decl.closeTime); const until = Date.parse(d.until);
+  if (!(until - from <= 91 * 86_400_000)) return { ok: false, why: 'the declaration claims more than 90 days' };
+  for (const t of later) {
+    if (t.result !== 'tesSUCCESS' || t.account !== decl.account || t.hash === decl.hash) continue;
+    const r = keyzMemo(t);
+    if (r?.op === 'revoke' && (String(r.tx ?? '').toUpperCase() === decl.hash || r.key === d.key)) return { ok: false, revoked: true, why: `the account REVOKED this declaration in ${t.hash.slice(0, 16)}… (${t.closeTime})` };
+  }
+  const at = Date.parse(tx.timestamp);
+  if (!(at >= from - 5 * 60_000 && at < until)) return { ok: false, why: `signed at ${tx.timestamp}, outside the declaration (${decl.closeTime} → ${d.until})` };
+  return { ok: true, wallet: null, address: decl.account, expiresAt: d.until, hash: ref, onLedger: { network, txHash, ledgerIndex: decl.ledgerIndex, closeTime: decl.closeTime } };
+}
+
 const declHash = async (d) => { const { signature, ...rest } = d; return sha256(`${canonical({ ...rest, publicKey: String(rest.publicKey).toLowerCase() })}|${signature}`); };
 /** The wallet behind a record's signer: checks the declaration its payload names. */
 async function declaredBy(tx, declarations) {
   const want = tx.payload?.signerDeclaration;
   if (!want) return { ok: false, why: 'the record names no declaration (signer key undeclared)' };
+  if (String(want).startsWith('xrpl:')) return ledgerDeclaredBy(tx, String(want));
   let d = null;
   for (const x of declarations) if (x && (await declHash(x)) === want) d = x;
   if (!d) return { ok: false, why: `declaration ${String(want).slice(0, 16)}… is not in this file` };
@@ -131,7 +217,7 @@ async function declaredBy(tx, declarations) {
   return { ok: true, wallet: String(d.walletAddress).toLowerCase(), address: await xrplAddress(d.walletAddress), expiresAt: d.expiresAt, hash: want };
 }
 
-if (!args[0]) { console.log('usage: node verify.mjs <file.json> [expected signer: node key hex | wallet public key hex | XRPL address r…]'); exit(2); }
+if (!args[0]) { console.log('usage: node verify.mjs <file.json> [expected signer: node key hex | wallet public key hex | XRPL address r…] [--evidence key-declarations.json] [--offline]'); exit(2); }
 const doc = JSON.parse(await readText(args[0]));
 const records = Array.isArray(doc.records) ? doc.records : [];
 // Declarations and revocations ride in the result; `--evidence <key-declarations.json>` adds a fresher copy (e.g. the node's).
@@ -146,12 +232,13 @@ const check = (label, ok) => { checks.push(ok); console.log(`${ok ? 'OK  ' : 'FA
 
 check(`${main.eventType} signature (txHash ${String(main.txHash).slice(0, 16)}…)`, await verify(main));
 const who = await declaredBy(main, declarations);
-if (who.ok) console.log(`     signer ${main.signerPublicKey}\n     declared by wallet ${who.address} (${who.wallet.slice(0, 16)}…) until ${who.expiresAt}`);
+if (who.ok && who.onLedger) console.log(`     signer ${main.signerPublicKey}\n     declared ON THE XRP LEDGER (${who.onLedger.network}) by wallet ${who.address} until ${who.expiresAt}\n     declaration tx ${who.onLedger.txHash} (ledger ${who.onLedger.ledgerIndex}, ${who.onLedger.closeTime}); revocations checked on the ledger just now`);
+else if (who.ok) console.log(`     signer ${main.signerPublicKey}\n     declared by wallet ${who.address} (${who.wallet.slice(0, 16)}…) until ${who.expiresAt}`);
 else if (who.revoked) check(`signer ${main.signerPublicKey.slice(0, 16)}…: ${who.why}`, false);
 else console.log(`     signer ${main.signerPublicKey}  (${who.why})`);
 if (expected) {
   if (/^r[1-9A-HJ-NP-Za-km-z]{24,34}$/.test(expected)) check(`declared by expected wallet ${expected}`, who.ok && who.address === expected);
-  else if (/^0[23][0-9a-f]{64}$/i.test(expected)) check(`declared by expected wallet key ${expected.slice(0, 16)}…`, who.ok && who.wallet === expected.toLowerCase());
+  else if (/^0[23][0-9a-f]{64}$/i.test(expected)) check(`declared by expected wallet key ${expected.slice(0, 16)}…`, who.ok && who.wallet === expected.toLowerCase()); // on-ledger declarations name an address: pass the r-address
   else check(`signed by expected key ${expected.slice(0, 16)}…`, main.signerPublicKey?.toLowerCase() === expected.toLowerCase());
 } else console.log('     pass the XRPL address you paid (r…) as the 2nd argument to require it');
 if (main.payload?.network) console.log(`     network ${main.payload.network}${main.payload.network === 'mainnet' ? '' : '  (TEST record: no value as proof)'}`);
@@ -162,12 +249,12 @@ if (doc.bundle) {
   let bad = 0; let undeclared = 0;
   for (const r of records) {
     if (!(await verify(r)) || r.signerPublicKey !== main.signerPublicKey) { bad++; continue; }
-    if (who.ok) { const w = await declaredBy(r, declarations); if (!w.ok || w.wallet !== who.wallet) undeclared++; }
+    if (who.ok) { const w = await declaredBy(r, declarations); if (!w.ok || w.address !== who.address) undeclared++; }
   }
   check(`every record signed by the same key (${records.length - bad}/${records.length})`, bad === 0);
   if (who.ok) check(`every record's key declared by the same wallet (${records.length - undeclared}/${records.length})`, undeclared === 0);
   console.log(`     period ${main.payload.periodStart} → ${main.payload.periodEnd}`);
 }
-if (who.ok) console.log(`     revocations checked: ${revocations.length} in this file${evidenceAt > 0 ? ' and --evidence' : ''} (fetch the node's key-declarations.json and pass --evidence for the latest)`);
+if (who.ok && !who.onLedger) console.log(`     revocations checked: ${revocations.length} in this file${evidenceAt > 0 ? ' and --evidence' : ''} (fetch the node's key-declarations.json and pass --evidence for the latest)`);
 console.log(checks.every(Boolean) ? 'VALID' : 'INVALID');
 exit(checks.every(Boolean) ? 0 : 1);

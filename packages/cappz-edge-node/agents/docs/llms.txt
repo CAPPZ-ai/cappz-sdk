@@ -18,7 +18,7 @@ The same agents run on {{PEER_NETWORK}}: {{PEER_BASE}}/llms.txt. Validate a flow
   2. Sign and submit `pay.preparedTx`, adding your `Account` and keeping `DestinationTag`.
   3. `POST …/jobs/<id>/payments {"txHash"}`. Optional: payments are also matched automatically within about 15 s.
   4. `GET …/jobs/<id>/stages/<n>/result`. It returns 402 with `pay` and `resultSha256` until the stage is paid, then 200 with the bytes.
-- Check a receipt: `node verify.mjs receipt.json` (download from {{BASE}}/verify.mjs), or paste it into the guide page. When the agent card shows `declaredBy`, run `node verify.mjs receipt.json {{PAYTO}}`. That proves the wallet you paid declared the signing key (KeyZ), independent of this site's certificate. Current declarations and revocations: {{BASE}}/key-declarations.json.
+- Check a receipt: `node verify.mjs receipt.json` (download from {{BASE}}/verify.mjs), or paste it into the guide page. When the agent card shows `declaredBy`, run `node verify.mjs receipt.json {{PAYTO}}`. That proves the wallet you paid declared the signing key (KeyZ), independent of this site's certificate. With `declaredBy.onLedger` the declaration is an XRP Ledger transaction by that account, and verify.mjs reads it and any revocation from the ledger (it needs network access). Current declarations and revocations: {{BASE}}/key-declarations.json.
 
 ## Reference
 

@@ -15,7 +15,7 @@ import { decodeSeed, deriveAddress, Wallet } from 'xrpl';
 const dir = resolve(__dirname, '../../packages/cappz-edge-node/agents');
 const template = (f: string) => readFileSync(join(dir, 'docs', f), 'utf8');
 /** Hosts a shipped file names, other than public CAPPZ/XRPL/GitHub ones: a node's own name belongs in its settings, never in the code. */
-const ALLOWED_HOSTS = new Set(['cappz.ai', 'github.com', 'raw.githubusercontent.com', 'xrpl.org', '127.0.0.1']);
+const ALLOWED_HOSTS = new Set(['cappz.ai', 'github.com', 'raw.githubusercontent.com', 'xrpl.org', '127.0.0.1', /* public XRPL servers verify.mjs reads (15.45.0) */ 'xrplcluster.com', 's1.ripple.com', 's.altnet.rippletest.net', 's.devnet.rippletest.net', /* Xaman */ 'xumm.app', 'apps.xumm.dev', 'xaman.app']);
 const hostsIn = (text: string) => [...new Set([...text.matchAll(/https?:\/\/([a-z0-9.-]+)/gi)].map((m) => m[1].toLowerCase()))].filter((h) => !ALLOWED_HOSTS.has(h));
 const settings = (network: 'mainnet' | 'testnet') => ({
   publicBase: network === 'mainnet' ? 'https://node.example.com/agents' : 'https://node.example.com/testnet/agents',
@@ -76,7 +76,7 @@ describe('edge node paid agents: verify.mjs', () => {
     const raw = new Uint8Array(await crypto.subtle.exportKey('raw', k.publicKey));
     return { privateKey: k.privateKey, publicKeyHex: Array.from(raw, (b) => b.toString(16).padStart(2, '0')).join('') };
   };
-  const tx = (eventType: string, payload: Record<string, unknown>) => ({ txId: `${eventType}-1`, timestamp: '2026-11-14T00:00:00.000Z', eventType, sourceAddress: 'rNode', targetAddress: 'rNode/x', payload });
+  const tx = (eventType: string, payload: Record<string, unknown>) => ({ txId: `${eventType}-1`, timestamp: '2026-11-14T00:00:00.000Z', eventType, sourceAddress: 'rNode', targetAddress: 'rNode/x', payload: { governingPrinciple: 'test', ...payload } });
   const tmp = mkdtempSync(join(tmpdir(), 'cappz-verify-'));
   const verify = (doc: unknown, ...args: string[]) => {
     const file = join(tmp, `${Math.random().toString(36).slice(2)}.json`);

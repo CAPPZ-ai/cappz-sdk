@@ -20,6 +20,15 @@ The public part of [CAPPZ](https://cappz.ai), version 15.44.1. Apache-2.0.
 
 Tutorials: [Move off PHP](https://cappz.ai/tutorials/move-off-php) · [Identity and trust](https://cappz.ai/tutorials/identity-and-trust) · [Replicate through firewalls](https://cappz.ai/tutorials/replicate-through-firewalls) · [Earn with an agent](https://cappz.ai/tutorials/earn-with-your-agent)
 
+## What's new in 15.45.0
+
+- **The payout account can vouch for the paid agents' signer on the XRP Ledger, signed in Xaman, with no seed anywhere.**
+  - **Before:** a KeyZ declaration needed the account's family seed, typed into `declare-node-key.ts` on some machine.
+  - **Now, for people:** run `packages/cappz-edge-node/agents/declare-node-key.ps1`. A QR code opens; scan it in Xaman and approve. That signs one `AccountSet` from the payout account which changes nothing on the account (fee about 0.00001 XRP) and whose `cappz/keyz` memo names the node key and how long it lasts (at most 90 days). The script waits for the ledger, then writes an anchor into `key-declarations.json`. `-Revoke` withdraws it the same way; `-Check`, `-Network testnet`, `-Hash` and `-Json` are there too. One-time setup: an app key from apps.xumm.dev in `xaman.env`, since Xaman shows sign requests only from a registered app. Without one, the transaction JSON is printed for any wallet.
+  - **For agents:** `skills/running-edge-node-paid-agents` covers it step by step, with the JSON result and exit codes (0 done, 3 declined or expired in Xaman, 4 not seen in time, 1 error).
+  - **Checking it:** records sign in `payload.signerDeclaration = "xrpl:<network>:<tx hash>"`. The agents (every 5 minutes) and `verify.mjs <file> <r-address>` read the declaration and the account's later revocations from public XRPL servers (`agents/ledgerKeyz.ts`; `verify.mjs` stays dependency-free). The ledger has already checked that the account authorized the transaction, so Ed25519 accounts, regular keys and multisign accounts work too. The agents stop signing once the declaration expires or is revoked.
+  - Tested end to end on the XRPL testnet: declare, serve, verify by r-address, revoke, refuse. The Xaman path was tested against a stand-in for its API. `src/test/edge-node-ledger-keyz.test.ts` covers the rules, and `verify.mjs` against a stand-in ledger.
+
 ## What's new in 15.44.1
 
 - `src/test/edge-node-agents.test.ts` runs in the node environment (`// @vitest-environment node`, like the other SDK tests). cappz runs the SDK's tests under jsdom, where `xrpl`'s `Wallet.fromSeed` rejected Node buffers from another realm ("Uint8Array expected"). No code change.

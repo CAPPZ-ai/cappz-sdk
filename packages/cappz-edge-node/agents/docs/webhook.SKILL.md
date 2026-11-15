@@ -54,13 +54,16 @@ curl -fsSLO {{BASE}}/verify.mjs
 node verify.mjs bundle.json {{NODE}}
 ```
 
-**Who vouches for the signer.** When the agent card (`{{BASE}}/webhook/agent`) shows `declaredBy`, a wallet has signed a KeyZ declaration of this node key, and the result carries it. Pass that wallet's XRPL address instead of the key. Usually it is the payout address `{{PAYTO}}`, the account you paid:
+**Who vouches for the signer.** When the agent card (`{{BASE}}/webhook/agent`) shows `declaredBy`, a wallet has declared this node key (KeyZ). Pass that wallet's XRPL address instead of the key. Usually it is the payout address `{{PAYTO}}`, the account you paid:
 
 ```bash
 node verify.mjs bundle.json {{PAYTO}}
 ```
 
-That check rests on the wallet's signature, not on this website's HTTPS certificate or its DNS name. For the latest revocations, add `--evidence key-declarations.json`, downloaded from {{BASE}}/key-declarations.json.
+`VALID` with `declared by expected wallet {{PAYTO}}` means that account vouched for the key that signed the bundle and every record in it. The check rests on the wallet, not on this website's HTTPS certificate or its DNS name. It comes in two forms:
+
+- **On the XRP Ledger** (`declaredBy.onLedger` on the card; `payload.signerDeclaration` starts with `xrpl:`). The account signed a ledger transaction naming the key. `verify.mjs` reads that transaction, and any later revocation, from public XRPL servers, so it needs network access (Deno: `--allow-net --allow-env`). With `--offline`, the signer is reported as unchecked.
+- **Wallet-signed** (a `declarations` list in the result). `verify.mjs` checks the wallet's signature offline. For the latest revocations, add `--evidence key-declarations.json`, downloaded from {{BASE}}/key-declarations.json.
 
 The verifier checks every record's signature, the bundle's signature, and that `bundle.payload.recordsSha256` equals the SHA-256 of `JSON.stringify(records)` and `count` equals the number of records. If one record is removed or edited, the check fails.
 

@@ -112,6 +112,12 @@ then proves the wallet vouches for the signer, offline and independent of the HT
 withdraws it, and agents and verifiers pick that up without a CA or CRL. The public-CA certificate stays only for the browser-facing
 `https://` front door.
 
+15.45.0: or declare it **on the XRP Ledger, signed in Xaman, with no seed anywhere**. `agents/declare-node-key.ps1`
+(`declare-node-key.ts --ledger`) opens a Xaman QR code for one no-op `AccountSet` from the payout account, whose memo names
+the node key. It waits for the ledger, then writes an anchor into `key-declarations.json`. Records sign in
+`xrpl:<network>:<tx hash>`; the agents and `verify.mjs` read the declaration and any revocation from the ledger
+(`agents/ledgerKeyz.ts`). See [agents/README.md](agents/README.md#on-the-ledger-with-xaman-recommended-no-seed-anywhere).
+
 ## Run
 
 ```bash

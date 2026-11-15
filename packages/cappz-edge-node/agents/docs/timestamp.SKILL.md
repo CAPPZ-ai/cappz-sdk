@@ -54,15 +54,18 @@ curl -fsSLO {{BASE}}/verify.mjs
 node verify.mjs receipt.json {{NODE}}
 ```
 
-**Who vouches for the signer.** When the agent card (`{{BASE}}/timestamp/agent`) shows `declaredBy`, a wallet has signed a KeyZ declaration of this node key, and the result carries it. Pass that wallet's XRPL address instead of the key. Usually it is the payout address `{{PAYTO}}`, the account you paid:
+**Who vouches for the signer.** When the agent card (`{{BASE}}/timestamp/agent`) shows `declaredBy`, a wallet has declared this node key (KeyZ). Pass that wallet's XRPL address instead of the key. Usually it is the payout address `{{PAYTO}}`, the account you paid:
 
 ```bash
 node verify.mjs receipt.json {{PAYTO}}
 ```
 
-That check rests on the wallet's signature, not on this website's HTTPS certificate or its DNS name. For the latest revocations, add `--evidence key-declarations.json`, downloaded from {{BASE}}/key-declarations.json.
+`VALID` with `declared by expected wallet {{PAYTO}}` means that account vouched for the key that signed this receipt. The check rests on the wallet, not on this website's HTTPS certificate or its DNS name. It comes in two forms:
 
-Or paste it into the verifier on {{BASE}}/. Verification needs no network access and nothing from this node. The node hashes the canonical JSON of the record without `txHash`, `signature` and `signerPublicKey`, with keys sorted, and signs that hex string with Ed25519. Any field changed breaks the check.
+- **On the XRP Ledger** (`declaredBy.onLedger` on the card; `payload.signerDeclaration` starts with `xrpl:`). The account signed a ledger transaction naming the key. `verify.mjs` reads that transaction, and any later revocation, from public XRPL servers, so it needs network access (Deno: `--allow-net --allow-env`). With `--offline`, the signer is reported as unchecked.
+- **Wallet-signed** (a `declarations` list in the result). `verify.mjs` checks the wallet's signature offline. For the latest revocations, add `--evidence key-declarations.json`, downloaded from {{BASE}}/key-declarations.json.
+
+Or paste it into the verifier on {{BASE}}/. The signature check needs no network access and nothing from this node; only the on-ledger "who vouches" check reads the XRP Ledger. The node hashes the canonical JSON of the record without `txHash`, `signature` and `signerPublicKey`, with keys sorted, and signs that hex string with Ed25519. Any field changed breaks the check.
 
 ## Errors
 

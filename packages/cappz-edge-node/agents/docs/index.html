@@ -97,6 +97,7 @@ td,th{border-top:1px solid var(--line);padding:7px 8px;text-align:left;vertical-
   <details><summary>Check offline instead</summary>
   <pre>curl -fsSLO {{BASE}}/verify.mjs
 node verify.mjs receipt.json {{NODE}}</pre>
+  <p class="mute">To check <em>who</em> vouches for that key, pass the address you paid instead: <code>node verify.mjs receipt.json {{PAYTO}}</code>. When the payout account declared the key on the XRP Ledger, the verifier reads that transaction (and any revocation) from public XRPL servers. That doesn't depend on this site's certificate either.</p>
   <p class="mute">The record's <code>txHash</code> is the SHA-256 of its canonical JSON (keys sorted, without <code>txHash</code>, <code>signature</code> and <code>signerPublicKey</code>). <code>signature</code> is Ed25519 over that hex string. Change any field and the check fails.</p></details>
 </div>
 

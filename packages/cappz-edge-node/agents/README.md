@@ -25,13 +25,64 @@ A browser opening an agent's URL, for example from its marketplace card, is redi
 
 The HTTPS certificate in front of the agents (Caddy with Let's Encrypt) is still needed. Browsers, XRPL wallets and `cappz-market hire` only accept a public-CA certificate for `https://`. But that certificate proves who controls the DNS name, not who signs the receipts. Without a declaration, a buyer learns the signing key from that page, so whoever takes over the name (a hijacked dynamic-DNS account, for example) could serve another key.
 
-With a KeyZ declaration, the payout wallet itself vouches for the node key:
+With a KeyZ declaration, the payout wallet itself vouches for the node key. There are two ways to sign it.
+
+### On the ledger with Xaman (recommended, no seed anywhere)
+
+The payout account signs one XRPL transaction in Xaman. The transaction is an `AccountSet` that changes nothing on the account; its memo names the node key. Fee: about 0.00001 XRP.
+
+**One-time setup (about 3 minutes).** Xaman shows a sign request only when a registered app creates it:
+
+1. Go to [apps.xumm.dev](https://apps.xumm.dev), sign in with Xaman, and create an app (any name, for example "my CAPPZ node").
+2. Copy its API key and API secret into `<node folder>\agents\xaman.env`:
+   ```
+   CAPPZ_XAMAN_API_KEY=…
+   CAPPZ_XAMAN_API_SECRET=…
+   ```
+   These can only *ask* you to sign. They cannot sign or move funds.
+3. Copy `declare-node-key.ps1` into `<node folder>\agents\`, next to `run-agents.ps1`.
+
+**Declare (now, and again before 90 days run out).** Right-click `declare-node-key.ps1` > Run with PowerShell, or:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "<node folder>\agents\declare-node-key.ps1"
+```
+
+1. A QR code opens in the browser.
+2. In Xaman, tap **Scan**, check the account is your payout address, and slide to accept.
+3. The script waits for the ledger to validate the transaction (a few seconds), then writes `<node folder>\data\key-declarations.json`.
+4. Restart the launchers (or reboot) the first time. After that, renewals are picked up within a minute.
+
+| Option | Use |
+|---|---|
+| `-Check` | Show the state (no wallet needed) |
+| `-Revoke` | Withdraw it with another Xaman approval. The agents stop signing within 5 minutes; verifiers see it at once |
+| `-Network testnet` | Try it with test XRP first (in Xaman: Settings > Advanced > Developer mode) |
+| `-Hash <tx>` | Register a declaration you signed and submitted another way |
+| `-Json` | One JSON result line, for agents and scripts |
+
+No Xaman app key? The script prints the transaction JSON for any wallet that can sign one, then waits for it on the ledger the same way.
+
+The rules (`ledgerKeyz.ts`, repeated without dependencies in `docs/verify.mjs`):
+
+- Records sign in `payload.signerDeclaration = "xrpl:<network>:<tx hash>"`.
+- A declaration counts while it is validated with `tesSUCCESS`, its memo names the key and `signing`, the record falls inside its window (at most 90 days), and no later revocation memo from the same account exists.
+- The ledger has already checked the account authorized it, so Ed25519 accounts, regular keys and multisign accounts all work.
+- `verify.mjs` reads the transaction and the account's later history from public XRPL servers. With `--offline`, the signer stays unproven.
+
+### Off the ledger with the seed
 
 ```powershell
 # Once, and again before it expires (at most 90 days). The seed is typed at a hidden prompt, used in memory, never stored.
+powershell -ExecutionPolicy Bypass -File "<node folder>\agents\declare-node-key.ps1" -Seed
+# or directly:
 deno run --config <sdk>\deno.json --allow-read --allow-write --allow-env <sdk>\packages\cappz-edge-node\tools\declare-node-key.ts `
   --env <node folder>\node.env --out <node folder>\data\key-declarations.json --purposes signing,hello --expect <payout r-address>
 ```
+
+Use this when verification must work fully offline, or the node also needs a `hello` declaration (mesh peers and KeyZ Gate read only wallet-signed declarations). Running it on another machine and copying `key-declarations.json` over (it holds only public data) keeps the seed off the node.
+
+### Either way
 
 - `run-agents.ps1` picks up `<node folder>\data\key-declarations.json` (`CAPPZ_NODE_KEY_DECLARATIONS`).
 - From then on every record signs in `payload.signerDeclaration`. Results carry the declaration, and `verify.mjs <file> <r-address>` checks the wallet's secp256k1 signature offline.
@@ -39,7 +90,7 @@ deno run --config <sdk>\deno.json --allow-read --allow-write --allow-env <sdk>\p
 - The same file is the node's own evidence for KeyZ Gate.
 - `--check` prints the state.
 - `--revoke` signs a revocation into `key-revocations.json`. Within a minute the agents stop signing, and receipts under that declaration then fail `verify.mjs --evidence`.
-- The declaring account must be secp256k1 (most family seeds). Ed25519 XRPL accounts are refused.
+- Seed method only: the declaring account must be secp256k1 (most family seeds). Ed25519 XRPL accounts are refused. On the ledger, any account works.
 - If the file is set but holds no valid declaration of this key, the agents refuse to start or to sign.
 
 
@@ -61,6 +112,8 @@ Lay out the files in the node folder that already holds `run.ps1`, `node.env` an
 
 ```
 <node folder>\agents\run-agents.ps1        copy of run-agents.ps1, $sdkCommit = the node's pin
+<node folder>\agents\declare-node-key.ps1  copy of declare-node-key.ps1 (reads the pin from run-agents.ps1)
+<node folder>\agents\xaman.env             optional: CAPPZ_XAMAN_API_KEY / CAPPZ_XAMAN_API_SECRET for Xaman sign requests
 <node folder>\agents\agents.env            from agents.env.example (mainnet)
 <node folder>\agents\agents-testnet.env    from agents-testnet.env.example
 <node folder>\agents\data\                 jobs, results, logs (created on start)
