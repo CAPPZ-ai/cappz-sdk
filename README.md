@@ -1,6 +1,6 @@
 # CAPPZ SDK
 
-The public part of [CAPPZ](https://cappz.ai), version 15.43.1. Apache-2.0.
+The public part of [CAPPZ](https://cappz.ai), version 15.44.0. Apache-2.0.
 
 **Agents:** find the skill for a task with `cappz-market skills "what you need"`, or search [skills/index.json](skills/index.json) (every skill's when-to-use, commands and guide); [llms.txt](llms.txt) is the short map. **People:** start with the guide for what you are doing, below; the [Constraint Guard walkthrough](docs/tutorials/constraint-guard.html) is animated (open it in a browser).
 
@@ -19,6 +19,19 @@ The public part of [CAPPZ](https://cappz.ai), version 15.43.1. Apache-2.0.
 - **Hardware-backed keys and notarization** (`src/lib/identity`, `src/lib/crypto`): wallet keys wrapped by a passkey (WebAuthn PRF), data keys wrapped by a wallet, notarization receipts signed by an enrolled device, batch notarization under one ledger anchor (RFC 9162 Merkle proofs), and attestation checks for Apple, Android Keystore, Windows TPM and packed authenticators. [docs/HARDWARE_TRUST.md](docs/HARDWARE_TRUST.md).
 
 Tutorials: [Move off PHP](https://cappz.ai/tutorials/move-off-php) · [Identity and trust](https://cappz.ai/tutorials/identity-and-trust) · [Replicate through firewalls](https://cappz.ai/tutorials/replicate-through-firewalls) · [Earn with an agent](https://cappz.ai/tutorials/earn-with-your-agent)
+
+## What's new in 15.44.0
+
+- **A wallet, not the website's certificate, vouches for the paid agents' signer** (KeyZ).
+  - **The problem:** buyers learned the signing key from the HTTPS page. That page's public-CA certificate proves who controls a DNS name, so whoever took over the name (for example a hijacked dynamic-DNS account) could serve another key.
+  - **New tool:** `packages/cappz-edge-node/tools/declare-node-key.ts` has a wallet sign a KeyZ declaration of the node key into the node's `key-declarations.json`. The wallet is ideally the payout account; its seed is typed at a hidden prompt and never stored. `--expect <r-address>` guards against the wrong seed, `--check` prints the state, and `--revoke` signs revocations.
+  - **Agents:** with the declarations file set (`CAPPZ_NODE_KEY_DECLARATIONS`, picked up by `run-agents.ps1`), every record signs in `payload.signerDeclaration`, and every result carries the declarations and revocations it needs. Agent cards show `declaredBy`. `GET /agents/key-declarations.json` serves the current evidence.
+  - **Fail closed:** with the file set but no valid, unrevoked declaration of this key, the agents refuse to start or to sign. A revocation stops signing within a minute.
+- **`verify.mjs` checks who vouches, offline and still with no dependencies.**
+  - It verifies the declaration's secp256k1 wallet signature (BigInt ECDSA, low-S, as `@noble/secp256k1`) and prints the wallet's XRPL address (RIPEMD-160 + base58check, as `xrpl`'s `deriveAddress`).
+  - `node verify.mjs <file> <r-address>` requires that wallet. A signed revocation in the file or in `--evidence key-declarations.json` fails the record.
+- The public-CA certificate (Caddy/Let's Encrypt) stays, only for the browser-facing `https://` front door.
+- Found while building: xrpl 4.x's `Wallet.fromSeed` defaults to Ed25519 even for a secp256k1 seed, which derives a different account. The tool reads the algorithm from the seed (`decodeSeed`).
 
 ## What's new in 15.43.1
 

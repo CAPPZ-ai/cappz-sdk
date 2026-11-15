@@ -24,14 +24,18 @@ $log = "$data\agents$suffix.log"
 if (-not (Test-Path $server)) { Add-Content $log "[run-agents$suffix] $(Get-Date -Format s) $server not found; not starting"; exit 1 }
 # CAPPZ_AGENT_DATA from the env file must sit inside $data (the only folder the agents may write).
 if (-not $env:CAPPZ_AGENT_DATA) { $env:CAPPZ_AGENT_DATA = if ($Name) { "$data\$Name" } else { $data } }
+# 15.44.0: a wallet vouches for the node key. tools/declare-node-key.ts writes <node folder>\data\key-declarations.json
+# (the node's own evidence file); when it exists the agents sign its hash into every record and refuse to sign without it.
+$decl = "$node\data\key-declarations.json"; $revs = "$node\data\key-revocations.json"
+if (-not $env:CAPPZ_NODE_KEY_DECLARATIONS -and (Test-Path $decl)) { $env:CAPPZ_NODE_KEY_DECLARATIONS = $decl }
 $env:DENO_DIR = "$node\deno-cache"
 $env:NO_COLOR = '1'
 $mutex = New-Object System.Threading.Mutex($false, "Local\cappz-agents$suffix")
 if (-not $mutex.WaitOne(0)) { exit 0 }
 $deno = "$env:USERPROFILE\.deno\bin\deno.exe"
 # --cached-only: no code downloads at run time (deno cache the server once after setup).
-# Network: XRPL (payments) and the 127.0.0.1 listener. Reads the SDK and $data (its jobs and results); writes only $data.
-$denoArgs = "run --cached-only --config `"$sdk\deno.json`" --allow-net --allow-read=`"$sdk`",`"$data`" --allow-write=`"$data`" --allow-env `"$server`""
+# Network: XRPL (payments) and the 127.0.0.1 listener. Reads the SDK, $data (its jobs and results) and the key declarations; writes only $data.
+$denoArgs = "run --cached-only --config `"$sdk\deno.json`" --allow-net --allow-read=`"$sdk`",`"$data`",`"$decl`",`"$revs`" --allow-write=`"$data`" --allow-env `"$server`""
 while ($true) {
   cmd /c "`"$deno`" $denoArgs >> `"$log`" 2>&1"
   Add-Content $log "[run-agents$suffix] $(Get-Date -Format s) agents exited ($LASTEXITCODE); restarting in 10 s"

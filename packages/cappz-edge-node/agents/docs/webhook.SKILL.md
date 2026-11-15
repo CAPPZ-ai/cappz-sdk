@@ -54,6 +54,14 @@ curl -fsSLO {{BASE}}/verify.mjs
 node verify.mjs bundle.json {{NODE}}
 ```
 
+**Who vouches for the signer.** When the agent card (`{{BASE}}/webhook/agent`) shows `declaredBy`, a wallet has signed a KeyZ declaration of this node key, and the result carries it. Pass that wallet's XRPL address instead of the key. Usually it is the payout address `{{PAYTO}}`, the account you paid:
+
+```bash
+node verify.mjs bundle.json {{PAYTO}}
+```
+
+That check rests on the wallet's signature, not on this website's HTTPS certificate or its DNS name. For the latest revocations, add `--evidence key-declarations.json`, downloaded from {{BASE}}/key-declarations.json.
+
 The verifier checks every record's signature, the bundle's signature, and that `bundle.payload.recordsSha256` equals the SHA-256 of `JSON.stringify(records)` and `count` equals the number of records. If one record is removed or edited, the check fails.
 
 ## Errors

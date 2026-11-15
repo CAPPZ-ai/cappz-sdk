@@ -7,6 +7,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DOC_FILES, docVars, renderDoc, unfilled } from '../../packages/cappz-edge-node/agents/docs';
 import { signEdgeTx } from '../lib/functions/edgeJobs';
+import { declareKey, declarationHash, revokeKeyDeclaration } from '../lib/identity/keyDeclaration';
+import * as secp from '@noble/secp256k1';
+import { decodeSeed, deriveAddress, Wallet } from 'xrpl';
 
 const dir = resolve(__dirname, '../../packages/cappz-edge-node/agents');
 const template = (f: string) => readFileSync(join(dir, 'docs', f), 'utf8');
@@ -58,7 +61,8 @@ describe('edge node paid agents: durable jobs', () => {
   it('the launcher lets the agents read back what they write, and the server never takes a read error for "no jobs"', () => {
     // 15.43.1: 15.43.0's launcher granted --allow-read on the SDK only, so a paid result came back empty and a restart forgot every job.
     const launcher = readFileSync(join(dir, 'run-agents.ps1'), 'utf8');
-    expect(launcher).toMatch(/--allow-read=`"\$sdk`",`"\$data`" --allow-write=`"\$data`"/);
+    // 15.44.0: plus the node's key declarations and revocations (read only).
+    expect(launcher).toMatch(/--allow-read=`"\$sdk`",`"\$data`",`"\$decl`",`"\$revs`" --allow-write=`"\$data`"/);
     const server = readFileSync(join(dir, 'server.ts'), 'utf8');
     expect(server.split('\n').filter((l) => /Deno\.read/.test(l) && /catch\s*\{/.test(l))).toEqual([]);
     expect(server.match(/catch \(e\) \{ onlyMissing\(e\);/g)).toHaveLength(3);
@@ -99,5 +103,68 @@ describe('edge node paid agents: verify.mjs', () => {
     const bundle = await signEdgeTx(tx('WebhookPeriodClosed', { count: 3, recordsSha256: await sha(JSON.stringify(records)), periodStart: 's', periodEnd: 'e', network: 'mainnet' }), key);
     expect(verify({ bundle, records }).code).toBe(0);
     expect(verify({ bundle, records: records.slice(0, 2) }).code).toBe(1);
+  });
+
+  // 15.44.0: a wallet, not the website's certificate, vouches for the signer.
+  describe('wallet declarations (KeyZ)', () => {
+    const toHex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+    const wallet = () => { const priv = secp.utils.randomSecretKey(); const pub = toHex(secp.getPublicKey(priv, true)); return { priv, pub, address: deriveAddress(pub.toUpperCase()) }; };
+    const now = Date.parse('2026-11-14T00:00:00.000Z') - 3600_000;
+    const declared = async (w: ReturnType<typeof wallet>, nodePub: string) => {
+      const declaration = await declareKey(w.priv, w.pub, { publicKey: nodePub, algorithm: 'ed25519', purpose: 'signing' }, undefined, now);
+      return { declaration, hash: await declarationHash(declaration) };
+    };
+
+    it('shows the declaring wallet’s XRPL address (as xrpl derives it) and can require it', async () => {
+      const key = await keyPair(); const w = wallet();
+      const { declaration, hash } = await declared(w, key.publicKeyHex);
+      const receipt = await signEdgeTx(tx('HashTimestamped', { sha256: 'c'.repeat(64), network: 'mainnet', signerDeclaration: hash }), key);
+      const ok = verify({ receipt, declarations: [declaration], revocations: [] }, w.address);
+      expect(ok.out).toContain(`declared by wallet ${w.address}`);
+      expect(ok.code).toBe(0);
+      expect(verify({ receipt, declarations: [declaration] }, w.pub).code).toBe(0);
+      expect(verify({ receipt, declarations: [declaration] }, wallet().address).code).toBe(1);
+      expect(verify({ receipt }, w.address).code).toBe(1); // no declaration: the address cannot be shown
+    });
+
+    it('an XRPL family-seed account declares as itself (the payout account can be the anchor)', async () => {
+      const seed = Wallet.generate('ecdsa-secp256k1' as never).seed!; const xw = Wallet.fromSeed(seed, { algorithm: (decodeSeed(seed).type === 'ed25519' ? 'ed25519' : 'ecdsa-secp256k1') as never }); // as tools/declare-node-key.ts reads it
+      const key = await keyPair();
+      const declaration = await declareKey(Uint8Array.from(Buffer.from(xw.privateKey.replace(/^00/, ''), 'hex')), xw.publicKey.toLowerCase(), { publicKey: key.publicKeyHex, algorithm: 'ed25519', purpose: 'signing' }, undefined, now);
+      const receipt = await signEdgeTx(tx('HashTimestamped', { sha256: 'd'.repeat(64), network: 'mainnet', signerDeclaration: await declarationHash(declaration) }), key);
+      expect(verify({ receipt, declarations: [declaration] }, xw.classicAddress).code).toBe(0);
+    });
+
+    it('refuses a forged wallet signature, a declaration of another key, and a revoked declaration', async () => {
+      const key = await keyPair(); const w = wallet();
+      const { declaration, hash } = await declared(w, key.publicKeyHex);
+      const receipt = await signEdgeTx(tx('HashTimestamped', { sha256: 'e'.repeat(64), network: 'mainnet', signerDeclaration: hash }), key);
+      const forged = { ...declaration, signature: declaration.signature.slice(0, -2) + (declaration.signature.endsWith('00') ? '01' : '00') };
+      expect(verify({ receipt, declarations: [forged] }, w.address).code).toBe(1);
+      const other = await declared(w, (await keyPair()).publicKeyHex);
+      const r2 = await signEdgeTx(tx('HashTimestamped', { sha256: 'e'.repeat(64), network: 'mainnet', signerDeclaration: other.hash }), key);
+      expect(verify({ receipt: r2, declarations: [other.declaration] }, w.address).code).toBe(1);
+      const revocation = await revokeKeyDeclaration(w.priv, declaration, 'key leaked', now + 1000);
+      const revoked = verify({ receipt, declarations: [declaration], revocations: [revocation] });
+      expect(revoked.code).toBe(1);
+      expect(revoked.out).toMatch(/REVOKED/);
+      // a revocation published later, passed as fresher evidence, also refuses
+      const evidence = join(tmp, 'evidence.json'); writeFileSync(evidence, JSON.stringify({ declarations: [declaration], revocations: [revocation] }));
+      expect(verify({ receipt, declarations: [declaration] }, w.address, '--evidence', evidence).code).toBe(1);
+      // a revocation the wallet did not sign changes nothing
+      expect(verify({ receipt, declarations: [declaration], revocations: [{ ...revocation, signature: forged.signature }] }, w.address).code).toBe(0);
+    });
+
+    it('a bundle needs every record declared by the same wallet', async () => {
+      const key = await keyPair(); const w = wallet();
+      const { declaration, hash } = await declared(w, key.publicKeyHex);
+      const records = await Promise.all([1, 2].map((n) => signEdgeTx(tx('WebhookReceived', { n, network: 'mainnet', signerDeclaration: hash }), key)));
+      const sha = async (s: string) => toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))));
+      const bundle = await signEdgeTx(tx('WebhookPeriodClosed', { count: 2, recordsSha256: await sha(JSON.stringify(records)), periodStart: 's', periodEnd: 'e', network: 'mainnet', signerDeclaration: hash }), key);
+      expect(verify({ bundle, records, declarations: [declaration] }, w.address).code).toBe(0);
+      const loose = [records[0], await signEdgeTx(tx('WebhookReceived', { n: 3, network: 'mainnet' }), key)];
+      const b2 = await signEdgeTx(tx('WebhookPeriodClosed', { count: 2, recordsSha256: await sha(JSON.stringify(loose)), periodStart: 's', periodEnd: 'e', network: 'mainnet', signerDeclaration: hash }), key);
+      expect(verify({ bundle: b2, records: loose, declarations: [declaration] }, w.address).code).toBe(1);
+    });
   });
 });

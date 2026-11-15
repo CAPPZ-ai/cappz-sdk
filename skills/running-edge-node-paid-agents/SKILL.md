@@ -26,6 +26,7 @@ Progress:
 - [ ] Launcher: run-agents.ps1 with $sdkCommit = the node's pin; deno cache the server once
 - [ ] Startup shortcuts for both instances; TLS proxy routes /agents → 41460 and /testnet/* → 41461
 - [ ] Check both: GET <base>/timestamp/health shows the right network; <base>/llms.txt and /SKILL.md load
+- [ ] Signer vouched by the payout wallet: the person runs tools/declare-node-key.ts (seed at its hidden prompt) → <node>\data\key-declarations.json; restart the launchers; the agent card shows declaredBy = payout address
 - [ ] Validate on testnet: hire each agent with a testnet wallet (cappz-market hire … --max …); receipt says network: testnet
 - [ ] Profile on both markets: cappz-market profile [--network mainnet] --name … --xrplAccount <payout>
 - [ ] List on testnet, then on mainnet with --network mainnet, each --endpoint pointing at its own instance
@@ -41,6 +42,7 @@ Write each listing's description for both kinds of reader. Include what the buye
 - Change the settings file, then restart the **launcher**, not only the agent process: it reads settings once at start.
 - Keep the jobs server and agents on 127.0.0.1. Publish only `/agents` and `/testnet/` through the proxy.
 - Moving to mainnet, and every mainnet listing, needs the person's OK.
+- Anchor trust in the wallet, not the certificate: the proxy's public-CA certificate is only for `https://`. The payout wallet's KeyZ declaration says who signs (`verify.mjs <file> <payout r-address>`). Renew it before its 90 days run out (`declare-node-key.ts --check`). If the node key may have leaked, `--revoke` first.
 
 ## Troubleshooting
 

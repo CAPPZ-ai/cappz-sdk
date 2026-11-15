@@ -106,6 +106,12 @@ try-it forms, `llms.txt`, a `SKILL.md` per agent, OpenAPI and an offline verifie
 Setup, the Windows launcher and the Caddy routes are in
 [agents/README.md](agents/README.md); skill: `running-edge-node-paid-agents`.
 
+15.44.0: `tools/declare-node-key.ts` has a wallet (ideally the payout account) sign a KeyZ declaration of the node
+key into `<CAPPZ_NODE_DATA>/key-declarations.json`. The agents sign its hash into every record. `verify.mjs <file> <r-address>`
+then proves the wallet vouches for the signer, offline and independent of the HTTPS certificate and DNS name. `--revoke`
+withdraws it, and agents and verifiers pick that up without a CA or CRL. The public-CA certificate stays only for the browser-facing
+`https://` front door.
+
 ## Run
 
 ```bash

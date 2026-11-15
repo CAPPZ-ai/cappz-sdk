@@ -26,6 +26,18 @@
  * a free testnet record must never pass for a paid mainnet one.
  * Listens on 127.0.0.1 only. Holds only the public payout address; the node key
  * (CAPPZ_NODE_KEY / CAPPZ_NODE_PUB, as for main.ts) signs receipts and records.
+ *
+ * 15.44.0 — the signer is vouched for by a wallet, not by the website's certificate.
+ * Before, a buyer learned the signing key from the HTTPS page (a public-CA certificate
+ * for a DNS name), so whoever controlled that name could serve another key. With
+ * CAPPZ_NODE_KEY_DECLARATIONS (a key-declarations.json; tools/declare-node-key.ts makes
+ * it) a wallet's secp256k1 KeyDeclaration names the node key for purpose `signing`:
+ *   - every record signs in payload.signerDeclaration (the declaration's hash);
+ *   - each result carries the declarations and revocations it needs; verify.mjs checks
+ *     the wallet signature offline and prints the wallet's XRPL address;
+ *   - GET /agents/key-declarations.json serves the current evidence.
+ * The file (and key-revocations.json beside it) is re-read every minute. Set, but with no
+ * valid unrevoked declaration of this key: the agents refuse to start or to sign.
  */
 import {
   createPaidAgent, defineAgentOffer, SCHEDULE_PRESETS, xrplLedgerReader,
@@ -33,6 +45,8 @@ import {
 } from '../../../src/lib/agentKit/paidAgent.ts';
 import { signEdgeTx, sha256HexOf } from '../../../src/lib/functions/edgeJobs.ts';
 import { loadNodeKey } from '../signingKey.ts';
+import { declarationHash, evaluateKey, type KeyDeclaration, type KeyRevocation } from '../../../src/lib/identity/keyDeclaration.ts';
+import { deriveAddress } from 'xrpl';
 import { DOC_FILES, docVars, renderDoc, WEBHOOK_DEPOSIT_SHARE } from './docs.ts';
 
 const env = (k: string, d?: string) => Deno.env.get(k)?.trim() || d;
@@ -55,6 +69,60 @@ if (!DATA) { console.error('[agents] CAPPZ_AGENT_DATA is not set (a writable fol
 const key = await loadNodeKey();
 if (!key) { console.error('[agents] needs CAPPZ_NODE_KEY / CAPPZ_NODE_PUB (node.env): receipts are signed with the node key'); Deno.exit(1); }
 
+// ─── Who vouches for the node key: wallet-signed KeyZ declarations (15.44.0) ──
+
+const DECL_PATH = env('CAPPZ_NODE_KEY_DECLARATIONS');
+const REVOKE_PATH = DECL_PATH ? DECL_PATH.replace(/[^\\/]*$/, 'key-revocations.json') : undefined;
+interface Vouch { declaration: KeyDeclaration; hash: string; wallet: string; address: string; expiresAt: string }
+let vouch: Vouch | null = null;
+let revocations: KeyRevocation[] = [];
+/** Declarations a result may reference (by hash), kept so a 30-day bundle can carry every one its records name. */
+const seenDeclarations = new Map<string, KeyDeclaration>();
+
+async function readEvidence(path: string | undefined, required: boolean): Promise<unknown[]> {
+  if (!path) return [];
+  try {
+    const v = JSON.parse(await Deno.readTextFile(path));
+    return Array.isArray(v) ? v : Array.isArray(v?.declarations) ? v.declarations : [v];
+  } catch (e) { if (!required && e instanceof Deno.errors.NotFound) return []; throw e; }
+}
+/** The longest-lived valid, unrevoked declaration of this node key for `signing`; null (with the reason) when there is none. */
+async function loadVouch(): Promise<{ vouch: Vouch | null; why: string }> {
+  const decls = (await readEvidence(DECL_PATH, true)).filter((d): d is KeyDeclaration => (d as KeyDeclaration)?.v === 2);
+  const revs = (await readEvidence(REVOKE_PATH, false)) as KeyRevocation[];
+  let best: Vouch | null = null;
+  let why = `no declaration in ${DECL_PATH} names node key ${key!.publicKeyHex.slice(0, 16)}… for signing`;
+  for (const d of decls) {
+    if (d.publicKey?.toLowerCase() !== key!.publicKeyHex || d.purpose !== 'signing' || d.algorithm !== 'ed25519') continue;
+    const t = await evaluateKey(d.walletAddress, key!.publicKeyHex, 'signing', { declarations: [d], revocations: revs });
+    if (t.state !== 'declared') { why = `declaration by ${d.walletAddress.slice(0, 16)}…: ${t.because}`; continue; }
+    if (best && Date.parse(best.expiresAt) >= Date.parse(d.expiresAt)) continue;
+    best = { declaration: d, hash: await declarationHash(d), wallet: d.walletAddress.toLowerCase(), address: deriveAddress(d.walletAddress.toUpperCase()), expiresAt: d.expiresAt };
+  }
+  revocations = revs;
+  if (best) seenDeclarations.set(best.hash, best.declaration);
+  return { vouch: best, why };
+}
+if (DECL_PATH) {
+  const first = await loadVouch();
+  if (!first.vouch) { console.error(`[agents] CAPPZ_NODE_KEY_DECLARATIONS is set but ${first.why}; not starting (unset it to run without a wallet declaration)`); Deno.exit(1); }
+  vouch = first.vouch;
+  console.log(`[agents] node key declared by wallet ${vouch.address} until ${vouch.expiresAt}${vouch.address === PAY_TO ? ' (the payout account)' : ` (not the payout account ${PAY_TO})`}`);
+  setInterval(async () => {
+    try {
+      const next = await loadVouch();
+      if (next.vouch?.hash !== vouch?.hash) console.log(next.vouch ? `[agents] signing declaration now ${next.vouch.hash.slice(0, 16)}… until ${next.vouch.expiresAt}` : `[agents] ${next.why}: signing paused until a valid declaration is in place`);
+      vouch = next.vouch;
+      if (vouch && Date.parse(vouch.expiresAt) - Date.now() < 14 * DAY) console.warn(`[agents] the node key's declaration expires ${vouch.expiresAt}: run tools/declare-node-key.ts again`);
+    } catch (e) { console.warn(`[agents] ${DECL_PATH} unreadable (${(e as Error).message}); keeping the last good declaration`); }
+  }, 60_000);
+}
+/** What a result needs to prove who signed it: the declarations its records name, and the revocations known now. */
+const evidenceFor = (hashes: Iterable<unknown>) => {
+  const declarations = [...new Set(hashes)].map((h) => seenDeclarations.get(String(h))).filter(Boolean);
+  return declarations.length ? { declarations, revocations } : {};
+};
+
 // ─── Durable job store: one append-only log per agent, results as files ──────
 
 /** A missing file is a fresh start; any other read error (a denied --allow-read, a broken disk) must stop the agent, never pass for "no jobs". */
@@ -75,11 +143,14 @@ async function fileJobStore(dir: string): Promise<JobStore> {
   };
 }
 
-const signed = (eventType: string, targetAddress: string, payload: Record<string, unknown>) =>
+const signed = (eventType: string, targetAddress: string, payload: Record<string, unknown>) => {
+  // Fail closed: with declarations configured, never sign a record no wallet vouches for right now.
+  if (DECL_PATH && !vouch) throw new Error('The node key has no valid wallet declaration right now; signing is paused.');
   // `network` is signed in: both instances share the node key, so a free testnet record must never pass for a paid mainnet one.
-  signEdgeTx({ txId: `${eventType}-${crypto.randomUUID()}`, timestamp: new Date().toISOString(), eventType, sourceAddress: POW, targetAddress, payload: { ...payload, network: NETWORK, governingPrinciple: PRINCIPLE } }, key);
+  return signEdgeTx({ txId: `${eventType}-${crypto.randomUUID()}`, timestamp: new Date().toISOString(), eventType, sourceAddress: POW, targetAddress, payload: { ...payload, network: NETWORK, governingPrinciple: PRINCIPLE, ...(vouch ? { signerDeclaration: vouch.hash } : {}) } }, key);
+};
 
-const VERIFY_HOW = 'verifyEdgeTx(receipt) from @cappz/sdk (src/lib/functions/edgeJobs.ts): recomputes txHash over the canonical TX and checks the Ed25519 signature against signerPublicKey.';
+const VERIFY_HOW = `node verify.mjs <this file> <payTo r-address> (${PUBLIC_BASE}/verify.mjs), or verifyEdgeTx(receipt) from @cappz/sdk (src/lib/functions/edgeJobs.ts): recomputes txHash over the canonical TX and checks the Ed25519 signature against signerPublicKey. payload.signerDeclaration is the hash of the wallet-signed KeyDeclaration (in declarations) that vouches for that key.`;
 
 // ─── Agent 1: signed timestamp (pay on completion) ───────────────────────────
 
@@ -96,7 +167,7 @@ const timestamp = createPaidAgent({
     const { sha256, note } = input as { sha256: string; note?: string };
     const receipt = await signed('HashTimestamped', `${POW}/timestamps/${sha256.toLowerCase()}`, { sha256: sha256.toLowerCase(), note: note ?? null, jobId });
     await Deno.writeTextFile(`${DATA}/timestamp/receipts.jsonl`, JSON.stringify(receipt) + '\n', { append: true });
-    return { receipt, verify: VERIFY_HOW };
+    return { receipt, ...evidenceFor([receipt.payload.signerDeclaration]), verify: VERIFY_HOW };
   },
 });
 
@@ -138,7 +209,8 @@ const webhook = createPaidAgent({
       periodStart: new Date(p.start).toISOString(), periodEnd: new Date(p.end).toISOString(),
       count: records.length, recordsSha256: await sha256HexOf(JSON.stringify(records)),
     });
-    return { bundle, records, verify: VERIFY_HOW };
+    const named = records.map((r) => (r as { payload?: { signerDeclaration?: string } }).payload?.signerDeclaration);
+    return { bundle, records, ...evidenceFor([bundle.payload.signerDeclaration, ...named]), verify: VERIFY_HOW };
   },
 });
 
@@ -217,6 +289,7 @@ const docsFor = (name?: string) => ({
   ...(name ? { skill: `${PUBLIC_BASE}/${name}/SKILL.md` } : { skills: Object.keys(AGENTS).map((n) => `${PUBLIC_BASE}/${n}/SKILL.md`) }),
   verifier: `${PUBLIC_BASE}/verify.mjs`,
 });
+const signerInfo = () => ({ declaredBy: vouch ? { xrplAddress: vouch.address, walletPublicKey: vouch.wallet, declarationHash: vouch.hash, expiresAt: vouch.expiresAt, isPayTo: vouch.address === PAY_TO } : null });
 const wantsHtml = (req: Request) => (req.headers.get('accept') ?? '').includes('text/html');
 
 function openapi(): unknown {
@@ -253,18 +326,19 @@ async function handle(req: Request): Promise<Response> {
   const url = new URL(req.url);
   if (url.pathname === '/agents') return Response.redirect(`${PUBLIC_BASE}/`, 301);
   if (req.method === 'GET' && url.pathname === '/agents/' && !wantsHtml(req)) {
-    return json(200, { node: key!.publicKeyHex, network: NETWORK, payTo: PAY_TO, docs: docsFor(), agents: Object.keys(AGENTS).map((n) => ({ name: n, url: `${PUBLIC_BASE}/${n}`, price: AGENTS[n].agent.card().price, skill: `${PUBLIC_BASE}/${n}/SKILL.md` })) });
+    return json(200, { node: key!.publicKeyHex, ...signerInfo(), keyDeclarations: `${PUBLIC_BASE}/key-declarations.json`, network: NETWORK, payTo: PAY_TO, docs: docsFor(), agents: Object.keys(AGENTS).map((n) => ({ name: n, url: `${PUBLIC_BASE}/${n}`, price: AGENTS[n].agent.card().price, skill: `${PUBLIC_BASE}/${n}/SKILL.md` })) });
   }
   const docPath = url.pathname.startsWith('/agents/') ? url.pathname.slice('/agents'.length) : '';
   if (req.method === 'GET' && DOC_FILES[docPath]) return doc(docPath);
   if (req.method === 'GET' && url.pathname === '/agents/openapi.json') return json(200, openapi());
+  if (req.method === 'GET' && url.pathname === '/agents/key-declarations.json') return json(200, { signerPublicKey: key!.publicKeyHex, ...signerInfo(), declarations: vouch ? [vouch.declaration] : [], revocations });
   const m = ROUTE.exec(url.pathname);
   if (!m) return json(404, { error: 'Not found.', docs: docsFor() });
   const [, name, sub, id, tail, stageN, hookId] = m;
   const a = AGENTS[name];
   // A person opening an agent's URL (e.g. from its marketplace card) lands on the guide.
   if (req.method === 'GET' && (!sub || sub === '/') && wantsHtml(req)) return Response.redirect(`${PUBLIC_BASE}/#try-${name}`, 302);
-  if (req.method === 'GET' && (!sub || sub === '/agent' || sub === '/')) return json(200, { ...a.agent.card(), signerPublicKey: key!.publicKeyHex, howToUse: a.howToUse, docs: docsFor(name) });
+  if (req.method === 'GET' && (!sub || sub === '/agent' || sub === '/')) return json(200, { ...a.agent.card(), signerPublicKey: key!.publicKeyHex, ...signerInfo(), howToUse: a.howToUse, docs: docsFor(name) });
   if (req.method === 'GET' && sub === '/health') return json(200, { ok: true, network: NETWORK, agent: name, payTo: PAY_TO, price: a.agent.offer.price });
   if (req.method === 'POST' && sub === '/jobs') {
     const body = await req.json().catch(() => null) as { input?: unknown } | null;
