@@ -1,3 +1,4 @@
+// @vitest-environment node
 // The edge node's paid agents (packages/cappz-edge-node/agents, 15.43.0): served docs are
 // complete for both networks, and the shipped verifier agrees with signEdgeTx.
 import { describe, expect, it } from 'vitest';
