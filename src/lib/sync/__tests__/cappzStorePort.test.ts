@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { KvBackend } from '../storageEngines/kvBackends';
 
 const flushes: number[] = [];
+const scopes: Array<{ store: string; keys: string[] } | undefined> = [];
 const persisted: Array<{ store: string; keys: string[] | 'all' }> = [];
 const disk = new Map<string, Map<string, unknown>>();
 
@@ -25,8 +26,9 @@ function recordingBackend(): KvBackend {
       persisted.push({ store, keys: changed === 'all' ? 'all' : [...changed] });
       dirty.set(store, rows);
     },
-    async flush() {
+    async flush(scope) {
       flushes.push(Date.now());
+      scopes.push(scope ? { store: scope.store, keys: [...scope.keys] } : undefined);
       for (const [store, rows] of dirty) disk.set(store, new Map(rows));
       dirty = new Map();
     },
@@ -89,6 +91,8 @@ describe('offlineCache on the cappz-store engine', () => {
     const kvPersists = persisted.filter((p) => p.store === 'kv');
     expect(kvPersists).toHaveLength(1);
     expect(kvPersists[0].keys).toEqual(['rec:1', 'journal:1']);
+    // v15-46-00: the call awaits exactly this batch, not every queued write.
+    expect(scopes.at(-1)).toEqual({ store: 'kv', keys: ['rec:1', 'journal:1'] });
     expect([...(disk.get('kv')?.keys() ?? [])]).toEqual(expect.arrayContaining(['rec:1', 'journal:1']));
   });
 

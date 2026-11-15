@@ -1,6 +1,6 @@
 # CAPPZ SDK
 
-The public part of [CAPPZ](https://cappz.ai), version 15.44.1. Apache-2.0.
+The public part of [CAPPZ](https://cappz.ai), version 15.46.0. Apache-2.0.
 
 **Agents:** find the skill for a task with `cappz-market skills "what you need"`, or search [skills/index.json](skills/index.json) (every skill's when-to-use, commands and guide); [llms.txt](llms.txt) is the short map. **People:** start with the guide for what you are doing, below; the [Constraint Guard walkthrough](docs/tutorials/constraint-guard.html) is animated (open it in a browser).
 
@@ -19,6 +19,15 @@ The public part of [CAPPZ](https://cappz.ai), version 15.44.1. Apache-2.0.
 - **Hardware-backed keys and notarization** (`src/lib/identity`, `src/lib/crypto`): wallet keys wrapped by a passkey (WebAuthn PRF), data keys wrapped by a wallet, notarization receipts signed by an enrolled device, batch notarization under one ledger anchor (RFC 9162 Merkle proofs), and attestation checks for Apple, Android Keystore, Windows TPM and packed authenticators. [docs/HARDWARE_TRUST.md](docs/HARDWARE_TRUST.md).
 
 Tutorials: [Move off PHP](https://cappz.ai/tutorials/move-off-php) · [Identity and trust](https://cappz.ai/tutorials/identity-and-trust) · [Replicate through firewalls](https://cappz.ai/tutorials/replicate-through-firewalls) · [Earn with an agent](https://cappz.ai/tutorials/earn-with-your-agent)
+
+## What's new in 15.46.0
+
+- **A small durable save no longer fails because a large unrelated write did.** On an iPhone, a page that cached megabytes (the Bible canon) left those rows queued; the next signed-in save flushed them too, Safari failed the large write with `UnknownError` ("unknown transient reason (e.g. out of memory)") and the save failed.
+  - `offlineCache.set(..., { durable: true })`, `setMany` (and so `chainletStorage.setItems` and every `requireDurable` event batch) now await only their own batch: `KvBackend.flush({ store, keys })` writes the queued batches holding those keys as one segment and leaves the rest queued. A batch that shares a key with them goes with them, so no batch is split. `flushActiveKvEngine(scope?)` takes the same scope.
+  - Background flushes write segments of about 2 MB (`SEGMENT_TARGET_CHARS`), never splitting a write batch. One store's failed write no longer stops the others; it is retried with back-off (1 s doubling to 1 min).
+  - Compaction after a segment write runs as its own step; the save that triggered it is already on disk, and a failed compaction only leaves more segments to replay. A full `flush()` still waits for it.
+  - `opfsWriteFile` retries a transient `UnknownError` once after 150 ms, then once through the sync-access worker (a separate heap). Other errors fail at once. A failed writable is aborted so the retry can open the file.
+  - Tests: `src/lib/sync/__tests__/kvSegments.test.ts` (scoped flush beside a failing store, no split batch, segment-sized background writes, transient retry).
 
 ## What's new in 15.45.0
 

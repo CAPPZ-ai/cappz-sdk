@@ -31,8 +31,17 @@ export interface KvBackend {
   load(store: string): Promise<Map<string, unknown>>;
   /** Queue `rows` for the next flush; `changed` names the keys written or deleted ('all' or omitted = whole store). */
   persist(store: string, rows: Map<string, unknown>, changed?: Iterable<string> | 'all'): void;
-  flush(): Promise<void>;
+  /**
+   * Write queued changes. With `scope`, only the batches holding those keys
+   * (one segment, all-or-nothing) are written and awaited; everything else
+   * stays queued for the background flush, so an unrelated large write that
+   * fails cannot fail a small durable save.
+   */
+  flush(scope?: FlushScope): Promise<void>;
 }
+
+/** The keys a durable caller just wrote and must see on disk. */
+export type FlushScope = { store: string; keys: Iterable<string> };
 
 // ─── JSON codec that survives Uint8Array / Date ───────────────────────────
 function replacer(_k: string, v: unknown): unknown {
@@ -61,7 +70,7 @@ export function createMemoryBackend(): KvBackend {
     async listStores() { return []; },
     async load() { return new Map(); },
     persist() { /* hot tier only */ },
-    async flush() { /* nothing */ },
+    async flush(_scope?: FlushScope) { /* nothing */ },
   };
 }
 
@@ -132,6 +141,32 @@ export const KV_SHARDS = 32;
  */
 export const COMPACT_SEGMENTS = 256;
 export const COMPACT_SEGMENT_BYTES = 16 * 1024 * 1024;
+/**
+ * v15-46-00 — background flushes split queued changes into segments of about
+ * this much JSON, never splitting one write batch, so a large cache fill (a
+ * whole canon) is never one multi-megabyte write held in memory at once.
+ */
+export const SEGMENT_TARGET_CHARS = 2 * 1024 * 1024;
+
+/** Queued changes for one store: write batches in order, or the whole store. */
+type Dirty = { rows: Map<string, unknown>; all: boolean; groups: Set<string>[] };
+/** One write: a whole store (compaction) or a set of keys (one segment). */
+type Unit = { store: string; rows: Map<string, unknown>; all: boolean; groups: Set<string>[] };
+
+const unitKeys = (u: Unit): Set<string> | 'all' => {
+  if (u.all) return 'all';
+  const out = new Set<string>();
+  for (const g of u.groups) for (const k of g) out.add(k);
+  return out;
+};
+
+const rowChars = (rows: Map<string, unknown>, keys: Iterable<string>): number => {
+  let n = 0;
+  for (const k of keys) {
+    try { n += k.length + (rows.has(k) ? (JSON.stringify(rows.get(k), replacer)?.length ?? 4) : 16); } catch { n += 64; }
+  }
+  return n;
+};
 
 /** FNV-1a: stable shard for a key. */
 export function shardOf(key: string): number {
@@ -166,11 +201,19 @@ async function removeFile(name: string): Promise<void> {
 }
 
 export function createOpfsBackend(): KvBackend {
-  const dirty = new Map<string, { rows: Map<string, unknown>; keys: Set<string> | 'all' }>();
+  const dirty = new Map<string, Dirty>();
   /** Per store: next segment number, segments not yet compacted, and their raw size. */
   const segState = new Map<string, { next: number; files: string[]; bytes: number; base: number }>();
   let timer: ReturnType<typeof setTimeout> | null = null;
   let chain: Promise<void> = Promise.resolve();
+  /** Consecutive failed flushes (sets the retry back-off). */
+  let failures = 0;
+  /** Run `step` after every earlier write; one earlier failure never blocks a later write. */
+  const enqueue = (step: () => Promise<void>): Promise<void> => {
+    const run = chain.catch(() => {}).then(step);
+    chain = run.catch(() => {});
+    return run;
+  };
 
   const stateOf = (store: string) => { let st = segState.get(store); if (!st) { st = { next: 1, files: [], bytes: 0, base: 0 }; segState.set(store, st); } return st; };
   /** Stores whose files this backend has read: only those may be compacted (a partial map would drop rows). */
@@ -210,6 +253,19 @@ export function createOpfsBackend(): KvBackend {
     st.bytes = 0;
   }
 
+  /**
+   * Housekeeping compaction after a segment write. It runs as its own queued
+   * step: the segment that triggered it is already on disk, so its caller is
+   * done, and a failed compaction only leaves more segments to replay.
+   */
+  const compactLater = (store: string, rows: Map<string, unknown>) => {
+    void enqueue(async () => {
+      const st = stateOf(store);
+      if (!loaded.has(store) || !(st.files.length >= COMPACT_SEGMENTS || st.bytes >= Math.max(COMPACT_SEGMENT_BYTES, st.base))) return;
+      try { await compact(store, rows); } catch (err) { console.warn(`[cappz-store/opfs] compaction deferred for ${store}`, err); }
+    });
+  };
+
   async function writeStore(store: string, rows: Map<string, unknown>, keys: Set<string> | 'all'): Promise<void> {
     await scan(store);
     if (keys === 'all' && loaded.has(store)) return compact(store, rows);
@@ -221,31 +277,86 @@ export function createOpfsBackend(): KvBackend {
     const name = `${encodeURIComponent(store)}@${String(st.next).padStart(6, '0')}.json`;
     await opfsWriteText(name, text);
     st.next += 1; st.files.push(name); st.bytes += text.length;
-    if (loaded.has(store) && (st.files.length >= COMPACT_SEGMENTS || st.bytes >= Math.max(COMPACT_SEGMENT_BYTES, st.base))) await compact(store, rows);
+    compactLater(store, rows);
   }
+
+  /** Put a failed write back in front of anything queued since, so the next flush retries it. */
+  const requeue = (u: Unit) => {
+    const later = dirty.get(u.store);
+    dirty.set(u.store, {
+      rows: later?.rows ?? u.rows,
+      all: u.all || !!later?.all,
+      groups: [...u.groups, ...(later?.groups ?? [])],
+    });
+    // Back off while writes keep failing (a phone under memory pressure): 1 s, 2 s, 4 s … 1 min.
+    if (!timer) timer = setTimeout(flushInBackground, Math.min(60_000, 1000 * 2 ** Math.min(failures, 6)));
+  };
+
+  async function writeUnits(units: Unit[]): Promise<void> {
+    let first: unknown = null;
+    for (const u of units) {
+      try { await writeStore(u.store, u.rows, unitKeys(u)); }
+      catch (err) {
+        requeue(u);
+        console.warn(`[cappz-store/opfs] write failed for ${u.store}`, err);
+        first ??= err;
+      }
+    }
+    if (first) { failures += 1; throw first; }
+    failures = 0;
+  }
+
+  /** Every queued change, as segment-sized units that never split a write batch. */
+  const takeAll = (): Unit[] => {
+    const units: Unit[] = [];
+    for (const [store, d] of dirty) {
+      if (d.all) { units.push({ store, rows: d.rows, all: true, groups: d.groups }); continue; }
+      let cur: Set<string>[] = []; let chars = 0;
+      for (const g of d.groups) {
+        const c = rowChars(d.rows, g);
+        if (cur.length && chars + c > SEGMENT_TARGET_CHARS) { units.push({ store, rows: d.rows, all: false, groups: cur }); cur = []; chars = 0; }
+        cur.push(g); chars += c;
+      }
+      if (cur.length) units.push({ store, rows: d.rows, all: false, groups: cur });
+    }
+    dirty.clear();
+    return units;
+  };
+
+  /** The queued batches holding `keys` (and any batch sharing a key with them), as one unit. */
+  const takeScoped = (scope: FlushScope): Unit | null => {
+    const d = dirty.get(scope.store);
+    if (!d) return null;
+    if (d.all) { dirty.delete(scope.store); return { store: scope.store, rows: d.rows, all: true, groups: d.groups }; }
+    const want = new Set(scope.keys);
+    const taken: Set<string>[] = [];
+    let rest = d.groups;
+    for (let grew = true; grew;) {
+      grew = false;
+      const keep: Set<string>[] = [];
+      for (const g of rest) {
+        if ([...g].some((k) => want.has(k))) { taken.push(g); for (const k of g) want.add(k); grew = true; }
+        else keep.push(g);
+      }
+      rest = keep;
+    }
+    if (!taken.length) return null;
+    if (rest.length) d.groups = rest; else dirty.delete(scope.store);
+    return { store: scope.store, rows: d.rows, all: false, groups: taken };
+  };
 
   // Background flushes (timer, pagehide, hidden tab) have no caller to report to: the failure is
   // logged and the changes stay queued for the next flush, so their rejection is handled here.
   const flushInBackground = () => { doFlush().catch(() => {}); };
   const doFlush = () => {
-    const batch = [...dirty.entries()];
-    dirty.clear();
     timer = null;
-    chain = chain.catch(() => {}).then(async () => {
-      for (const [store, d] of batch) {
-        try { await writeStore(store, d.rows, d.keys); }
-        catch (err) {
-          // Keep the unwritten changes for the next flush, merged with anything newer.
-          const later = dirty.get(store);
-          const keys = d.keys === 'all' || later?.keys === 'all' ? 'all' : new Set([...d.keys, ...(later?.keys as Set<string> ?? [])]);
-          dirty.set(store, { rows: later?.rows ?? d.rows, keys });
-          console.warn(`[cappz-store/opfs] write failed for ${store}`, err);
-          throw err;
-        }
-      }
-    });
-    return chain;
+    // Take the queue when this step runs, so a write still in flight that fails is retried too.
+    return enqueue(() => writeUnits(takeAll()));
   };
+  const doScopedFlush = (scope: FlushScope) => enqueue(async () => {
+    const unit = takeScoped(scope);
+    if (unit) await writeUnits([unit]);
+  });
 
   if (typeof window !== 'undefined') {
     window.addEventListener('pagehide', flushInBackground);
@@ -283,14 +394,18 @@ export function createOpfsBackend(): KvBackend {
       return rows;
     },
     persist(store, rows, changed = 'all') {
-      const prev = dirty.get(store);
-      const keys = changed === 'all' || prev?.keys === 'all' ? 'all' : new Set([...(prev?.keys as Set<string> ?? []), ...changed]);
-      dirty.set(store, { rows, keys });
+      const d = dirty.get(store) ?? { rows, all: false, groups: [] };
+      d.rows = rows;
+      if (changed === 'all') d.all = true;
+      else { const g = new Set(changed); if (g.size) d.groups.push(g); }
+      dirty.set(store, d);
       if (!timer) timer = setTimeout(flushInBackground, 150);
     },
-    async flush() {
+    async flush(scope) {
+      if (scope) return doScopedFlush(scope);
       if (timer) { clearTimeout(timer); }
       await doFlush();
+      await chain; // a full flush also waits for the compaction it queued
     },
   };
 }

@@ -10,7 +10,7 @@
  * kept old cappz-middleware callers running is retired with them.
  */
 
-import type { KvBackend } from './kvBackends';
+import type { FlushScope, KvBackend } from './kvBackends';
 
 const clone = <T>(v: T): T => {
   try { return typeof structuredClone === 'function' ? structuredClone(v) : v; } catch { return v; }
@@ -68,7 +68,8 @@ export class KvDatabase {
     return out;
   }
 
-  flush() { return this.backend.flush(); }
+  /** Write queued changes; with `scope`, only the batches holding those keys (see KvBackend.flush). */
+  flush(scope?: FlushScope) { return this.backend.flush(scope); }
 
   /** Mark changed keys (or 'all') for the next flush; the backend writes only what changed. */
   touch(name: string, changed: Iterable<string> | 'all' = 'all') { this.backend.persist(name, this.map(name), changed); }

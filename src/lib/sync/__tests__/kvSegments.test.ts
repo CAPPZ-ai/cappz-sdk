@@ -144,3 +144,78 @@ describe('cappz-store segments and shards', () => {
     expect(back.get('k3')).toEqual(row('k3', String(lastK3)));
   });
 });
+
+/**
+ * v15-46-00 — a durable save awaits only its own batch. On an iPhone, the
+ * Bible canon cache queued megabytes of rows; every signed-in session save then
+ * flushed them too, Safari failed the large write with UnknownError and the
+ * save reported "handler_threw". Scoped flushes, segment-sized background
+ * writes and one retry of a transient error keep the small save independent.
+ */
+describe('scoped flushes and segment-sized background writes', () => {
+  let files: Files;
+  beforeEach(() => { vi.resetModules(); files = new Map(); });
+  afterEach(() => vi.unstubAllGlobals());
+  const backend = async () => (await import('../storageEngines/kvBackends')).createOpfsBackend();
+  const settle = () => new Promise((r) => setTimeout(r, 5));
+
+  it('a scoped flush writes only its batch, even while another queued write keeps failing', async () => {
+    const o = fakeOpfs(files, { failOn: (n) => n.includes('cache@') }); vi.stubGlobal('navigator', { storage: o.storage });
+    const b = await backend();
+    const cache = await b.load('cache'); const kv = await b.load('kv'); await settle();
+    for (let i = 0; i < 50; i++) cache.set(`v${i}`, row(`v${i}`));
+    b.persist('cache', cache, [...cache.keys()]);          // the big fill — its writes fail
+    kv.set('other', row('other')); b.persist('kv', kv, ['other']);
+    kv.set('turn', row('turn')); kv.set('index', row('index')); b.persist('kv', kv, ['turn', 'index']);
+    await b.flush({ store: 'kv', keys: ['turn', 'index'] });
+    expect(o.writes.map((w) => w.name)).toEqual(['cappz-store/kv@000001.json']);
+    vi.resetModules();
+    const back = await (await backend()).load('kv');
+    expect([...back.keys()].sort()).toEqual(['index', 'turn']);  // 'other' is still queued, not dragged in
+    await expect(b.flush()).rejects.toThrow(/unknown transient reason/);
+    expect(files.has('cappz-store/kv@000002.json')).toBe(true);   // the failing store did not block 'other'
+  });
+
+  it('a scoped flush includes any batch that shares a key, so no batch is split', async () => {
+    const o = fakeOpfs(files); vi.stubGlobal('navigator', { storage: o.storage });
+    const b = await backend();
+    const kv = await b.load('kv'); await settle();
+    kv.set('a', row('a')); kv.set('b', row('b')); b.persist('kv', kv, ['a', 'b']);
+    kv.set('b', row('b', 'newer')); kv.set('c', row('c')); b.persist('kv', kv, ['b', 'c']);
+    kv.set('z', row('z')); b.persist('kv', kv, ['z']);
+    await b.flush({ store: 'kv', keys: ['c'] });
+    expect(o.writes).toHaveLength(1);
+    vi.resetModules();
+    expect([...(await (await backend()).load('kv')).keys()].sort()).toEqual(['a', 'b', 'c']);
+  });
+
+  it('a large background flush is written as several segments, never splitting a batch', async () => {
+    const { SEGMENT_TARGET_CHARS } = await import('../storageEngines/kvBackends');
+    const o = fakeOpfs(files); vi.stubGlobal('navigator', { storage: o.storage });
+    const b = await backend();
+    const kv = await b.load('kv'); await settle();
+    const big = 'x'.repeat(Math.ceil(SEGMENT_TARGET_CHARS / 4));
+    for (let i = 0; i < 10; i++) { kv.set(`c${i}`, { key: `c${i}`, value: big }); b.persist('kv', kv, [`c${i}`]); }
+    kv.set('p1', row('p1')); kv.set('p2', row('p2')); b.persist('kv', kv, ['p1', 'p2']);
+    await b.flush();
+    expect(o.writes.length).toBeGreaterThanOrEqual(3);
+    expect(Math.max(...o.writes.map((w) => w.raw))).toBeLessThan(SEGMENT_TARGET_CHARS * 1.3);
+    const { decodeRows, decodeStoredText } = await import('../storageEngines/kvBackends');
+    const holding = await Promise.all(o.writes.map(async (w) => decodeRows(await decodeStoredText(files.get(w.name)!)).map(([k]) => k)));
+    expect(holding.filter((keys) => keys.includes('p1') || keys.includes('p2'))).toHaveLength(1);
+    expect(holding.find((keys) => keys.includes('p1'))).toContain('p2');
+    vi.resetModules();
+    expect((await (await backend()).load('kv')).size).toBe(12);
+  });
+
+  it('a transient UnknownError is retried once and the write lands', async () => {
+    let failures = 1;
+    const o = fakeOpfs(files, { failOn: () => failures-- > 0 }); vi.stubGlobal('navigator', { storage: o.storage });
+    const b = await backend();
+    const kv = await b.load('kv'); await settle();
+    kv.set('turn', row('turn')); b.persist('kv', kv, ['turn']);
+    await b.flush({ store: 'kv', keys: ['turn'] });
+    vi.resetModules();
+    expect((await (await backend()).load('kv')).get('turn')).toEqual(row('turn'));
+  });
+});

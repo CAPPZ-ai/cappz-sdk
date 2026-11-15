@@ -509,10 +509,9 @@ export class CappzEventCache<T extends CappzEventCacheEntry> {
         [this._indexKey, [...merged.values()]],
         ...prepared.kvRows,
       ]);
-      // Durable means on disk: OPFS writes are debounced, so await the flush
-      // before the batch is exposed, anchored or reported done (AGENTS.md).
-      const { flushActiveKvEngine } = await import('./storageEngines/engineSelection');
-      await flushActiveKvEngine();
+      // Durable means on disk: setItems resolves only once this batch's segment
+      // is written (v15-46-00: scoped to these keys, so an unrelated queued
+      // write that fails — a large cache fill on a phone — cannot fail it).
       expose();
       await prepared.commit();
       return;

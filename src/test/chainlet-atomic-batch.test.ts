@@ -41,7 +41,9 @@ describe('durable batch append — all or nothing', () => {
     expect(committed).toHaveLength(1);
     expect(committed[0].map(([key]) => key)).toEqual(['test:invoice', 'test:journal', 'test:iso', 'test:__index__', 'syncblock_h', 'sync_head_d']);
     expect(anchored).toEqual([3]);
-    expect(flushes.at(-1)).toBe(1); // flushed to disk after the commit, before exposure/anchor
+    // v15-46-00: setItems resolves once this batch is on disk; no whole-engine flush that an
+    // unrelated queued write could fail.
+    expect(flushes).toEqual([]);
     expect(cache.getCached().map((e) => e.txId)).toEqual(['invoice', 'journal', 'iso']);
   });
 

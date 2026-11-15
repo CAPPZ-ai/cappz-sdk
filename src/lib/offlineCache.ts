@@ -75,7 +75,7 @@ interface Ops {
   keys(store: StoreName): Promise<string[]>;
   remove(store: StoreName, keys: string[]): Promise<void>;
   clear(store: StoreName): Promise<void>;
-  flush(): Promise<void>;
+  flush(scope?: { store: string; keys: string[] }): Promise<void>;
 }
 
 const nativeOps = (db: KvDatabase): Ops => ({
@@ -85,7 +85,7 @@ const nativeOps = (db: KvDatabase): Ops => ({
   keys: (store) => db.keysOf(store),
   remove: (store, keys) => db.remove(store, keys),
   clear: (store) => db.clearStore(store),
-  flush: () => db.flush(),
+  flush: (scope) => db.flush(scope),
 });
 
 let opsPromise: Promise<Ops> | null = null;
@@ -102,7 +102,7 @@ export const offlineCache = {
   async set<T>(store: StoreName, key: string, value: T, opts?: WriteOptions): Promise<void> {
     const o = await ops();
     await o.put(store, [entryOf(store, key, value, opts, Date.now())]);
-    if (opts?.durable ?? DURABLE_STORES.has(store)) await o.flush();
+    if (opts?.durable ?? DURABLE_STORES.has(store)) await o.flush({ store, keys: [key] });
     notify(store, key, 'write');
   },
 
@@ -117,7 +117,8 @@ export const offlineCache = {
     const now = Date.now();
     const o = await ops();
     await o.put(store, rows.map((r) => entryOf(store, r.key, r.value, r, now)));
-    if (opts?.durable ?? true) await o.flush();
+    // v15-46-00: await only this batch's segment; unrelated queued writes stay in the background.
+    if (opts?.durable ?? true) await o.flush({ store, keys: rows.map((r) => r.key) });
     for (const row of rows) notify(store, row.key, 'write');
   },
 
@@ -149,7 +150,7 @@ export const offlineCache = {
   async delete(store: StoreName, key: string): Promise<void> {
     const o = await ops();
     await o.remove(store, [key]);
-    if (DURABLE_STORES.has(store)) await o.flush(); // a removed session must not come back after a crash
+    if (DURABLE_STORES.has(store)) await o.flush({ store, keys: [key] }); // a removed session must not come back after a crash
     notify(store, key, 'delete');
   },
 

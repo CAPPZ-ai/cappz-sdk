@@ -140,9 +140,13 @@ let activeKind: StorageEngineKind | null = null;
 
 export function activeEngineKind(): StorageEngineKind | null { return activeKind; }
 
-/** Await the physical OPFS write for security-sensitive device records. */
-export async function flushActiveKvEngine(): Promise<void> {
-  if (activeKind === 'opfs' && kvDbPromise) await (await kvDbPromise).flush();
+/**
+ * Await the physical OPFS write for security-sensitive device records. With
+ * `scope`, only the batches holding those keys are awaited (v15-46-00): a
+ * durable save never fails because an unrelated queued write did.
+ */
+export async function flushActiveKvEngine(scope?: { store: string; keys: string[] }): Promise<void> {
+  if (activeKind === 'opfs' && kvDbPromise) await (await kvDbPromise).flush(scope);
 }
 
 /** The cappz-store database every store facade (offlineCache, chainletStorage, session) writes to. */
