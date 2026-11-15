@@ -160,7 +160,8 @@ describe('scoped flushes and segment-sized background writes', () => {
   const settle = () => new Promise((r) => setTimeout(r, 5));
 
   it('a scoped flush writes only its batch, even while another queued write keeps failing', async () => {
-    const o = fakeOpfs(files, { failOn: (n) => n.includes('cache@') }); vi.stubGlobal('navigator', { storage: o.storage });
+    let failing = true;
+    const o = fakeOpfs(files, { failOn: (n) => failing && n.includes('cache@') }); vi.stubGlobal('navigator', { storage: o.storage });
     const b = await backend();
     const cache = await b.load('cache'); const kv = await b.load('kv'); await settle();
     for (let i = 0; i < 50; i++) cache.set(`v${i}`, row(`v${i}`));
@@ -174,6 +175,9 @@ describe('scoped flushes and segment-sized background writes', () => {
     expect([...back.keys()].sort()).toEqual(['index', 'turn']);  // 'other' is still queued, not dragged in
     await expect(b.flush()).rejects.toThrow(/unknown transient reason/);
     expect(files.has('cappz-store/kv@000002.json')).toBe(true);   // the failing store did not block 'other'
+    failing = false;
+    await b.flush();                                                // drained: no retry timer outlives the test
+    expect([...files.keys()].some((n) => n.startsWith('cappz-store/cache@'))).toBe(true);
   });
 
   it('a scoped flush includes any batch that shares a key, so no batch is split', async () => {
@@ -187,6 +191,7 @@ describe('scoped flushes and segment-sized background writes', () => {
     expect(o.writes).toHaveLength(1);
     vi.resetModules();
     expect([...(await (await backend()).load('kv')).keys()].sort()).toEqual(['a', 'b', 'c']);
+    await b.flush(); // 'z' is still queued: drain it so its timer cannot write into the next test's files
   });
 
   it('a large background flush is written as several segments, never splitting a batch', async () => {
