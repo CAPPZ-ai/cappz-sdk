@@ -110,7 +110,8 @@ export function offerProblems(o: AgentOffer): string[] {
   if (!o.stages?.length) p.push('Add at least one payment stage.');
   else {
     const total = o.stages.reduce((s, x) => s + x.share, 0);
-    if (o.stages.some((x) => !(x.share > 0))) p.push('Every stage needs a share above 0%.');
+    // 15.47.0: the completion may be free (share 0) when upfront stages carry the whole price: pay first, collect when ready.
+    if (o.stages.some((x, i) => !(x.share > 0) && !(x.share === 0 && isFreeCompletion(o.stages, i)))) p.push('Every stage needs a share above 0% (only a completion after upfront stages that carry the whole price may be free).');
     if (Math.abs(total - 1) > 1e-6) p.push(`Stage shares add up to ${Math.round(total * 1000) / 10}%, not 100%.`);
     if (o.stages.at(-1)!.kind !== 'completion') p.push('The last stage must be the completion.');
     if (o.stages.slice(0, -1).some((x) => x.kind === 'completion')) p.push('Only the last stage can be the completion.');
@@ -118,9 +119,15 @@ export function offerProblems(o: AgentOffer): string[] {
     if (o.stages.slice(firstWork).some((x) => x.kind === 'upfront')) p.push('Upfront payments come before any work stage.');
     if (o.stages.some((x) => !x.label.trim())) p.push('Give every stage a name.');
     if (o.stages.some((x) => x.payTo !== undefined && !isValidClassicAddress(x.payTo))) p.push('A stage\'s payment address is not a valid XRPL address.');
-    if (o.price > 0 && stageAmountsMicro(o).some((a) => a <= 0n)) p.push('The price is too small to split into these stages.');
+    if (o.price > 0 && stageAmountsMicro(o).some((a, i) => a <= 0n && !isFreeCompletion(o.stages, i))) p.push('The price is too small to split into these stages.');
   }
   return p;
+}
+
+/** 15.47.0: a completion stage with share 0 whose earlier stages are all upfront, i.e. paid before the work starts. */
+export function isFreeCompletion(stages: readonly Pick<PaymentStage, 'kind' | 'share'>[], i: number): boolean {
+  const s = stages[i];
+  return !!s && s.kind === 'completion' && s.share === 0 && i === stages.length - 1 && i > 0 && stages.slice(0, i).every((x) => x.kind === 'upfront');
 }
 
 export function defineAgentOffer(o: AgentOffer): AgentOffer {
@@ -269,7 +276,8 @@ export function replayJob(events: readonly JobEvent[], jobId: string): JobView |
   }
   let unlocked = true;
   for (const s of stages) {
-    const done = s.kind === 'upfront' ? !!s.payment : !!s.payment && !!s.result;
+    // A free completion (nothing due, 15.47.0) is released as soon as its result is delivered.
+    const done = s.kind === 'upfront' ? !!s.payment : (!!s.payment || s.amount === '0') && !!s.result;
     s.state = done ? 'released'
       : !unlocked ? 'locked'
       : s.kind === 'upfront' ? 'awaiting-payment'

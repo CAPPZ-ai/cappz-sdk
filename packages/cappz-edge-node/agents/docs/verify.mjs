@@ -2,7 +2,9 @@
 // Verifies CAPPZ signed records offline. No dependencies; Node 20+ or Deno.
 //   node verify.mjs <file.json> [expected signer] [--evidence key-declarations.json] [--offline]
 //   deno run --allow-read --allow-net --allow-env {{BASE}}/verify.mjs <file.json> [expected signer] [--evidence key-declarations.json]
-// Accepts a signed record, a timestamp result {receipt, declarations?}, or a webhook bundle {bundle, records, declarations?}.
+// Accepts a signed record, a timestamp result {receipt, declarations?}, a webhook bundle {bundle, records, declarations?},
+// or a fair draw {draw, commitment, entries?} (15.47.0; --entries <list.txt|list.json> for a list sent only as a hash).
+//   node verify.mjs --hash-entries list.txt   prints a list's entriesSha256 and count (one entry per line, trimmed, blanks dropped)
 // expected signer: the node key (64 hex), the declaring wallet's public key (66 hex), or its XRPL address (r…).
 // How a record is signed: txHash = sha256(canonical JSON of the record without
 // txHash/signature/signerPublicKey, keys sorted); signature = Ed25519(txHash as UTF-8 text).
@@ -217,6 +219,43 @@ async function declaredBy(tx, declarations) {
   return { ok: true, wallet: String(d.walletAddress).toLowerCase(), address: await xrplAddress(d.walletAddress), expiresAt: d.expiresAt, hash: want };
 }
 
+// ─── Fair draw, rule cappz-draw/v1 (keep in step with agents/draw.ts) ─────────
+const entriesFrom = (text, name) => {
+  if (/\.json$/i.test(name) || /^\s*\[/.test(text)) { const v = JSON.parse(text); if (!Array.isArray(v) || v.some((e) => typeof e !== 'string')) throw new Error(`${name}: expected a JSON array of texts`); return v; }
+  return text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+};
+const entriesHash = (entries) => sha256(JSON.stringify(entries));
+async function drawPicks(seedHex, count, winners) {
+  const seed = hex(seedHex); let counter = 0; let words = [];
+  const nextWord = async () => {
+    if (!words.length) {
+      const block = new Uint8Array(seed.length + 4); block.set(seed); new DataView(block.buffer).setUint32(seed.length, counter++, false);
+      const d = new DataView((await digest(block)).buffer); words = Array.from({ length: 8 }, (_, i) => d.getUint32(i * 4, false));
+    }
+    return words.shift();
+  };
+  const uniform = async (n) => { const limit = 2 ** 32 - (2 ** 32 % n); for (;;) { const w = await nextWord(); if (w < limit) return w % n; } };
+  const swapped = new Map(); const at = (i) => swapped.get(i) ?? i; const picks = [];
+  for (let i = 0; i < winners; i++) { const j = i + await uniform(count - i); const a = at(i), b = at(j); swapped.set(i, b); swapped.set(j, a); picks.push(b); }
+  return picks;
+}
+async function ledgerHeader(network, index) {
+  const r = await rpc(network, 'ledger', { ledger_index: index, transactions: false, expand: false });
+  const l = r?.ledger;
+  if (r?.validated !== true || !l) throw new Error(`ledger ${index} is not validated`);
+  return { index: Number(l.ledger_index), hash: String(l.ledger_hash ?? l.hash).toUpperCase(), closeTime: l.close_time_iso ? new Date(l.close_time_iso).toISOString() : new Date((l.close_time + 946684800) * 1000).toISOString() };
+}
+
+const hashAt = args.indexOf('--hash-entries');
+if (hashAt >= 0) {
+  const f = args[hashAt + 1]; if (!f) { console.log('usage: node verify.mjs --hash-entries <list.txt | list.json>'); exit(2); }
+  const entries = entriesFrom(await readText(f), f);
+  console.log(JSON.stringify({ entriesSha256: await entriesHash(entries), count: entries.length }));
+  exit(0);
+}
+const entriesAt = args.indexOf('--entries');
+const entriesArg = entriesAt > 0 ? args.splice(entriesAt, 2)[1] : null;
+
 if (!args[0]) { console.log('usage: node verify.mjs <file.json> [expected signer: node key hex | wallet public key hex | XRPL address r…] [--evidence key-declarations.json] [--offline]'); exit(2); }
 const doc = JSON.parse(await readText(args[0]));
 const records = Array.isArray(doc.records) ? doc.records : [];
@@ -226,7 +265,7 @@ const evidence = evidenceAt > 0 ? JSON.parse(await readText(args.splice(evidence
 const declarations = [doc, evidence].flatMap((x) => [...(Array.isArray(x.declarations) ? x.declarations : []), ...(x.declaration ? [x.declaration] : [])]);
 const revocations = [doc, evidence].flatMap((x) => (Array.isArray(x.revocations) ? x.revocations : []));
 const expected = args[1]?.trim();
-const main = doc.receipt ?? doc.bundle ?? doc;
+const main = doc.receipt ?? doc.bundle ?? doc.draw ?? doc;
 const checks = [];
 const check = (label, ok) => { checks.push(ok); console.log(`${ok ? 'OK  ' : 'FAIL'} ${label}`); };
 
@@ -254,6 +293,36 @@ if (doc.bundle) {
   check(`every record signed by the same key (${records.length - bad}/${records.length})`, bad === 0);
   if (who.ok) check(`every record's key declared by the same wallet (${records.length - undeclared}/${records.length})`, undeclared === 0);
   console.log(`     period ${main.payload.periodStart} → ${main.payload.periodEnd}`);
+}
+if (doc.draw) {
+  const d = main.payload, c = doc.commitment, cp = c?.payload ?? {};
+  check(`DrawCommitted signature (txHash ${String(c?.txHash).slice(0, 16)}…)`, !!c && (await verify(c)) && c.signerPublicKey === main.signerPublicKey);
+  if (c && who.ok) { const w = await declaredBy(c, declarations); check(`commitment's key declared by the same wallet`, w.ok && w.address === who.address); }
+  check('the draw names this commitment', d.commitment === c?.txHash);
+  check('commitment and draw agree (list, count, winners, draw time, rule)', ['entriesSha256', 'count', 'winners', 'drawAt', 'rule'].every((k) => cp[k] === d[k]) && d.rule === 'cappz-draw/v1');
+  check(`committed (${c?.timestamp}) before the draw time (${d.drawAt})`, Date.parse(c?.timestamp) < Date.parse(d.drawAt));
+  check(`commitment followed ledger ${cp.afterLedger?.index}, closed before the draw time`, !!cp.afterLedger && Date.parse(cp.afterLedger.closeTime) < Date.parse(d.drawAt) && d.seedLedger.index > cp.afterLedger.index);
+  let entries = Array.isArray(doc.entries) ? doc.entries : null;
+  if (entriesArg) entries = entriesFrom(await readText(entriesArg), entriesArg);
+  if (entries) {
+    check(`the list (${entries.length} entries) matches entriesSha256 ${d.entriesSha256.slice(0, 16)}…`, (await entriesHash(entries)) === d.entriesSha256 && entries.length === d.count);
+  } else console.log('     list not in this file: pass --entries <list.txt|list.json> to check the names behind the picks');
+  const seed = await sha256(`cappz-draw/v1|${String(d.seedLedger.hash).toUpperCase()}|${d.entriesSha256}|${d.count}|${d.winners}`);
+  check('seed follows from the seed ledger hash and the list', seed === d.seed);
+  const picks = await drawPicks(seed, d.count, d.winners);
+  check(`winners recomputed: ${picks.join(', ')}`, JSON.stringify(picks) === JSON.stringify(d.picks));
+  if (entries && Array.isArray(d.picked)) check('picked entries match the list', JSON.stringify(picks.map((i) => entries[i])) === JSON.stringify(d.picked));
+  if (offline) console.log(`     seed ledger ${d.seedLedger.index} NOT checked against the XRP Ledger (--offline)`);
+  else {
+    try {
+      const net = d.network ?? 'mainnet';
+      const [L, prev] = await Promise.all([ledgerHeader(net, d.seedLedger.index), ledgerHeader(net, d.seedLedger.index - 1)]);
+      check(`seed ledger ${L.index} on ${net}: hash ${L.hash.slice(0, 16)}… matches`, L.hash === String(d.seedLedger.hash).toUpperCase());
+      check(`seed ledger is the first closed at or after the draw time (${prev.closeTime} < ${d.drawAt} ≤ ${L.closeTime})`, Date.parse(prev.closeTime) < Date.parse(d.drawAt) && Date.parse(L.closeTime) >= Date.parse(d.drawAt));
+    } catch (e) { check(`seed ledger could not be read from the XRP Ledger: ${e.message}`, false); }
+  }
+  console.log(`     draw "${d.label ?? ''}": ${d.count} entries, ${d.winners} winner(s) at ${d.drawAt}`);
+  picks.forEach((i, n) => console.log(`     ${n + 1}. entry #${i}${entries ? `  ${entries[i]}` : ''}`));
 }
 if (who.ok && !who.onLedger) console.log(`     revocations checked: ${revocations.length} in this file${evidenceAt > 0 ? ' and --evidence' : ''} (fetch the node's key-declarations.json and pass --evidence for the latest)`);
 console.log(checks.every(Boolean) ? 'VALID' : 'INVALID');

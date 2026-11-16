@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CAPPZ Paid Agents</title>
-<meta name="description" content="Signed timestamps and signed webhook logs from a CAPPZ edge node, paid per job in XRP. No account needed.">
+<meta name="description" content="Signed timestamps, signed webhook logs and provably fair draws from a CAPPZ edge node, paid per job in XRP. No account needed.">
 <link rel="alternate" type="text/plain" href="{{BASE}}/llms.txt" title="llms.txt">
 <link rel="alternate" type="application/json" href="{{BASE}}/openapi.json" title="OpenAPI">
 <style>
@@ -24,7 +24,9 @@ a{color:var(--accent)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px}
 .price{font-weight:650;font-size:1.05rem;margin:6px 0 10px}
 .mute{color:var(--mute);font-size:.93rem}
-.mute,.status,#tsOut p,#whOut p,#vOut div{overflow-wrap:anywhere}
+.mute,.status,#tsOut p,#whOut p,#drOut p,#vOut div{overflow-wrap:anywhere}
+label.inline{display:flex;gap:8px;align-items:center;font-size:.95rem}
+.winners{font-size:1.1rem;margin:8px 0 12px;padding-left:22px}
 ol.steps{padding-left:20px;margin:8px 0 0}
 ol.steps li{margin:4px 0}
 code,pre{font:13.5px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;background:var(--code);border-radius:6px}
@@ -33,7 +35,7 @@ pre{padding:12px 14px;overflow-x:auto;margin:8px 0 14px;white-space:pre}
 button,.btn{font:inherit;font-weight:600;background:var(--accent);color:var(--accent-ink);border:0;border-radius:8px;padding:9px 16px;cursor:pointer;text-decoration:none;display:inline-block}
 button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line);padding:5px 10px;font-size:.88rem}
 button:disabled{opacity:.5;cursor:default}
-input[type=text],textarea{font:inherit;width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
+input[type=text],input[type=number],input[type=datetime-local],textarea{font:inherit;width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
 textarea{font:13px/1.45 ui-monospace,Consolas,monospace;min-height:120px}
 .drop{border:2px dashed var(--line);border-radius:12px;padding:22px;text-align:center;cursor:pointer}
 .drop.over{border-color:var(--accent)}
@@ -70,6 +72,12 @@ td,th{border-top:1px solid var(--line);padding:7px 8px;text-align:left;vertical-
     <p class="mute">A webhook URL whose log you can't secretly edit. Every POST is signed on arrival, and at the end you get the signed bundle. {{WH_DEPOSIT}} XRP opens it; {{WH_REST}} XRP is due when the bundle is ready.</p>
     <a class="btn" href="#try-webhook">Open a webhook URL</a>
   </div>
+  <div class="card" id="draw">
+    <h3>Fair draw</h3>
+    <div class="price">{{DRAW_PRICE}} XRP per draw</div>
+    <p class="mute">Pick giveaway winners, an audit sample or a jury so nobody can rig it, this node included. The list is locked first; the winners come from an XRP Ledger hash nobody knew yet. Anyone can recompute them.</p>
+    <a class="btn" href="#try-draw">Run a draw</a>
+  </div>
 </div>
 
 <h2 id="try-timestamp">Timestamp a file</h2>
@@ -88,10 +96,28 @@ td,th{border-top:1px solid var(--line);padding:7px 8px;text-align:left;vertical-
   <div id="whOut"></div>
 </div>
 
+<h2 id="try-draw">Run a fair draw</h2>
+<div class="card">
+  <p class="mute">One entry per line; each line is one ticket (list a name twice for two tickets). The order is part of the fingerprint, so keep your copy. If the draw is public, use handles or ticket numbers, not emails.</p>
+  <textarea id="drEntries" placeholder="ann&#10;bob&#10;cy&#10;dee"></textarea>
+  <div class="row">
+    <label class="inline">Winners <input type="number" id="drWinners" min="1" max="1000" value="1" style="width:90px"></label>
+    <label class="inline">Draw at <input type="datetime-local" id="drAt"></label>
+    <span class="mute">empty = {{DRAW_LEAD}} min after payment; at most {{DRAW_MAX_DAYS}} days ahead</span>
+  </div>
+  <div class="row"><input type="text" id="drLabel" maxlength="100" placeholder="Label (optional, public), e.g. December giveaway"></div>
+  <div class="row">
+    <label class="inline"><input type="checkbox" id="drPublic" checked> Public result page (entries included) to share</label>
+    <label class="inline"><input type="checkbox" id="drPrivate"> Keep the list private: send only its fingerprint</label>
+  </div>
+  <button id="drGo">Lock the list and pay</button>
+  <div id="drOut"></div>
+</div>
+
 <h2 id="verify">Check a receipt or bundle</h2>
 <div class="card">
   <p class="mute">Paste a receipt or webhook bundle (JSON). It's checked in your browser with the Web Crypto API, so the result doesn't depend on trusting this site.</p>
-  <textarea id="vIn" placeholder='{"receipt":{…}}  or  {"bundle":{…},"records":[…]}'></textarea>
+  <textarea id="vIn" placeholder='{"receipt":{…}}  or  {"bundle":{…},"records":[…]}  or  {"draw":{…},"commitment":{…}}'></textarea>
   <div class="row"><button id="vGo">Check</button><span class="mute">Expected signer: <code>{{NODE}}</code></span></div>
   <div id="vOut"></div>
   <details><summary>Check offline instead</summary>
@@ -108,8 +134,10 @@ node verify.mjs receipt.json {{NODE}}</pre>
     <tr><td><a href="{{BASE}}/llms.txt">llms.txt</a></td><td>A one-page overview and the fastest path.</td></tr>
     <tr><td><a href="{{BASE}}/timestamp/SKILL.md">timestamp/SKILL.md</a></td><td>Agent skill for the timestamp agent (drop it in <code>.claude/skills/</code>).</td></tr>
     <tr><td><a href="{{BASE}}/webhook/SKILL.md">webhook/SKILL.md</a></td><td>Agent skill for the webhook receiver.</td></tr>
+    <tr><td><a href="{{BASE}}/draw/SKILL.md">draw/SKILL.md</a></td><td>Agent skill for the fair draw, with the rule written out.</td></tr>
+    <tr><td><a href="{{BASE}}/draw/log">draw/log</a></td><td>Every draw commitment this node signed, hash-chained.</td></tr>
     <tr><td><a href="{{BASE}}/openapi.json">openapi.json</a></td><td>OpenAPI 3.1 for every route.</td></tr>
-    <tr><td><a href="{{BASE}}/timestamp/agent">timestamp/agent</a> · <a href="{{BASE}}/webhook/agent">webhook/agent</a></td><td>Agent cards: price, stages, payTo, network, signer.</td></tr>
+    <tr><td><a href="{{BASE}}/timestamp/agent">timestamp/agent</a> · <a href="{{BASE}}/webhook/agent">webhook/agent</a> · <a href="{{BASE}}/draw/agent">draw/agent</a></td><td>Agent cards: price, stages, payTo, network, signer.</td></tr>
   </table>
   <p style="margin-top:14px">One command with the <a href="https://github.com/CAPPZ-ai/cappz-sdk/blob/main/skills/using-cappz-marketplace/SKILL.md">cappz-market</a> tool:</p>
   <pre>cappz-market hire {{BASE}}/timestamp --input '{"sha256":"&lt;64 hex&gt;"}' --max {{TS_PRICE}}</pre>
@@ -231,11 +259,63 @@ $('whGo').onclick = async () => {
   }
 };
 
+// ── Draw ──
+async function drawPicks(seedHex, count, winners) {
+  const seed = fromHex(seedHex); let counter = 0; let words = [];
+  const nextWord = async () => {
+    if (!words.length) { const block = new Uint8Array(seed.length + 4); block.set(seed); new DataView(block.buffer).setUint32(seed.length, counter++, false); const d = new DataView(await crypto.subtle.digest('SHA-256', block)); words = Array.from({ length: 8 }, (_, i) => d.getUint32(i * 4, false)); }
+    return words.shift();
+  };
+  const uniform = async (n) => { const limit = 2 ** 32 - (2 ** 32 % n); for (;;) { const w = await nextWord(); if (w < limit) return w % n; } };
+  const swapped = new Map(); const at = (i) => swapped.get(i) ?? i; const picks = [];
+  for (let i = 0; i < winners; i++) { const j = i + await uniform(count - i); const a = at(i), b = at(j); swapped.set(i, b); swapped.set(j, a); picks.push(b); }
+  return picks;
+}
+$('drGo').onclick = async () => {
+  const out = $('drOut');
+  const entries = $('drEntries').value.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const winners = Number($('drWinners').value || 1), label = $('drLabel').value.trim(), at = $('drAt').value;
+  if (!entries.length) { out.innerHTML = '<p class="status bad">Add at least one entry.</p>'; return; }
+  const input = $('drPrivate').checked ? { entriesSha256: await sha256(JSON.stringify(entries)), count: entries.length } : { entries };
+  Object.assign(input, { winners, public: $('drPublic').checked }, label ? { label } : {}, at ? { drawAt: new Date(at).toISOString() } : {});
+  $('drGo').disabled = true;
+  const o = await api('/draw/jobs', { input });
+  if (o.status !== 200) { out.innerHTML = `<p class="status bad">${esc(o.json?.error ?? o.text)}</p>`; $('drGo').disabled = false; return; }
+  const jobId = o.json.job.jobId, cUrl = `${BASE}/draw/commitments/${jobId}`, pUrl = `${BASE}/draw/draws/${jobId}`;
+  out.innerHTML = `<p class="status">Job <code>${esc(jobId)}</code> opened. Save this ID.</p>${payBox(o.json.pay, 'to lock the list (the whole price; the draw is free)')}<p class="mute">Pay before the draw time. Waiting for your payment…</p>`;
+  wireClaim(out, 'draw', jobId);
+  let c = null;
+  for (let i = 0; i < 900 && !c; i++) { const r = await api(`/draw/commitments/${jobId}`); if (r.status === 200) c = r.json; else await sleep(4000); }
+  if (!c) { out.insertAdjacentHTML('beforeend', `<p class="mute">Still waiting. After paying, the commitment appears at <code>${esc(cUrl)}</code>.</p>`); return; }
+  const when = new Date(c.payload.drawAt);
+  out.innerHTML = `<p class="status ok">List locked. The draw happens at ${esc(when.toLocaleString())}.</p>
+    <p>Share the commitment now, before the draw: it proves which list (fingerprint <code>${esc(c.payload.entriesSha256.slice(0, 16))}…</code>, ${c.payload.count} entries) and which draw time you committed to.</p>
+    <div class="pay"><b>Commitment</b><code>${esc(cUrl)}</code>${copyBtn(cUrl)}</div>
+    ${input.public ? `<div class="pay"><b>Result page</b><code>${esc(pUrl)}</code>${copyBtn(pUrl)}</div><p class="mute">The result page works after the draw time.</p>` : ''}
+    ${input.entriesSha256 ? '<p class="mute">Private list: keep it exactly as entered (same lines, same order). Publish it after the draw so anyone can check the winners.</p>' : ''}
+    <p class="mute" id="drWait">Waiting for the draw… keep this page open, or come back to <code>${esc(BASE)}/draw/jobs/${esc(jobId)}/stages/1/result</code>.</p>`;
+  for (;;) {
+    const wait = Date.parse(c.payload.drawAt) - Date.now();
+    await sleep(Math.max(4000, Math.min(wait, 60_000)));
+    const r = await api(`/draw/jobs/${jobId}/stages/1/result`);
+    if (r.status !== 200) continue;
+    const res = r.json, picks = res.draw.payload.picks;
+    const names = res.entries ?? entries;
+    const ok = (await verifyTx(res.draw)) && (await verifyTx(res.commitment)) && JSON.stringify(await drawPicks(res.draw.payload.seed, res.draw.payload.count, res.draw.payload.winners)) === JSON.stringify(picks);
+    $('drWait').outerHTML = `<p class="status ok">Drawn from XRP Ledger ledger ${esc(res.draw.payload.seedLedger.index)}.</p>
+      <ol class="winners">${picks.map((i) => `<li>${esc(names[i])} <span class="mute">(entry #${i})</span></li>`).join('')}</ol>
+      <p>Signatures and winners re-checked here: <b class="${ok ? 'ok' : 'bad'}">${ok ? 'valid' : 'INVALID'}</b>. ${input.public ? `<a href="${esc(pUrl)}" target="_blank">Public page</a>, which also checks the seed ledger on the XRP Ledger.` : ''}</p>
+      <button id="drDl">Download draw.json</button>`;
+    $('drDl').onclick = () => download(`draw-${jobId}.json`, r.text);
+    return;
+  }
+};
+
 // ── Verify ──
 $('vGo').onclick = async () => {
   const out = $('vOut'); let doc;
   try { doc = JSON.parse($('vIn').value); } catch { out.innerHTML = '<p class="status bad">That is not JSON.</p>'; return; }
-  const main = doc.receipt ?? doc.bundle ?? doc, records = Array.isArray(doc.records) ? doc.records : [];
+  const main = doc.receipt ?? doc.bundle ?? doc.draw ?? doc, records = Array.isArray(doc.records) ? doc.records : [];
   const lines = [];
   const line = (ok, t) => lines.push(`<div class="${ok ? 'ok' : 'bad'}">${ok ? '✓' : '✗'} ${esc(t)}</div>`);
   try {
@@ -248,6 +328,15 @@ $('vGo').onclick = async () => {
       line(main.payload.recordsSha256 === (await sha256(JSON.stringify(records))), 'records hash matches the bundle');
       let bad = 0; for (const r of records) if (!(await verifyTx(r)) || r.signerPublicKey !== main.signerPublicKey) bad++;
       line(bad === 0, `every record signed (${records.length - bad}/${records.length})`);
+    }
+    if (doc.draw) {
+      const d = main.payload, c = doc.commitment;
+      line(!!c && await verifyTx(c) && c.signerPublicKey === main.signerPublicKey, 'commitment signature');
+      line(d.commitment === c?.txHash && Date.parse(c.timestamp) < Date.parse(d.drawAt), `committed ${c?.timestamp} before the draw time ${d.drawAt}`);
+      line((await sha256(`cappz-draw/v1|${String(d.seedLedger.hash).toUpperCase()}|${d.entriesSha256}|${d.count}|${d.winners}`)) === d.seed, `seed follows from ledger ${d.seedLedger.index}`);
+      line(JSON.stringify(await drawPicks(d.seed, d.count, d.winners)) === JSON.stringify(d.picks), `winners recomputed: ${d.picks.join(', ')}`);
+      if (Array.isArray(doc.entries)) line((await sha256(JSON.stringify(doc.entries))) === d.entriesSha256, 'the list matches its fingerprint');
+      lines.push(`<div class="mute">Whether ledger ${esc(d.seedLedger.index)} has that hash and was the first closed at or after the draw time is checked on the XRP Ledger by verify.mjs and the public draw page.</div>`);
     }
   } catch (e) { line(false, `could not check: ${e.message}`); }
   out.innerHTML = `<div class="status">${lines.join('')}</div>`;

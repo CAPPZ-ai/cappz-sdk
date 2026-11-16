@@ -9,7 +9,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
-  anchorRef, checkAnchor, declarationMemo, evaluateLedgerDeclaration, isLedgerAnchor, keyzMemoOf, keyzTransaction, parseAnchorRef, type Rpc,
+  anchorRef, checkAnchor, declarationMemo, discoverLedgerAnchors, evaluateLedgerDeclaration, isLedgerAnchor, keyzMemoOf, keyzTransaction, parseAnchorRef, type Rpc,
 } from '../../packages/cappz-edge-node/agents/ledgerKeyz';
 import { normalizeTx, type LedgerTx } from '../lib/xrpl/ledgerCheck';
 import { signEdgeTx } from '../lib/functions/edgeJobs';
@@ -147,5 +147,38 @@ describe('on-ledger KeyZ declarations: verify.mjs reads the ledger itself', () =
     expect(v).toContain("m.type !== 'cappz/keyz'"); expect(l).toContain("KEYZ_MEMO_TYPE = 'cappz/keyz'");
     for (const url of ['https://xrplcluster.com/', 'https://s1.ripple.com:51234/', 'https://s.altnet.rippletest.net:51234/']) { expect(v).toContain(url); expect(l).toContain(url); }
     expect(v).toContain('91 * 86_400_000'); expect(l).toContain('MAX_LEDGER_DECLARATION_DAYS + 1');
+  });
+});
+
+// 15.47.0: the agents find the payout account's declarations in its own history, so the node needs no anchor file.
+describe('on-ledger KeyZ declarations: discovery', () => {
+  const declare = (key: string, purposes = ['signing']) => ({ ...(declarationMemo(key, purposes, 30, T0) as object), n: 'd' });
+  it('finds this key’s declarations by the account, newest first, across pages, and stops at the time window', async () => {
+    const newestFirst = [
+      { ...ledgerEntry(ACCOUNT, declare(NODE), T0, 900), hash: 'D2'.repeat(32) },
+      ledgerEntry('rOther1111111111111111111111', declare(NODE), T0, 890),           // another account's AccountSet
+      ledgerEntry(ACCOUNT, declare('cd'.repeat(32)), T0, 880),                       // another key
+      ledgerEntry(ACCOUNT, declare(NODE, ['hello']), T0, 870),                       // another purpose
+      ledgerEntry(ACCOUNT, declare(NODE), T0, 860, 'tecNO_PERMISSION'),              // failed
+      { ...ledgerEntry(ACCOUNT, declare(NODE), T0 - 10 * 86_400_000, 850), hash: 'D1'.repeat(32) },
+      ledgerEntry(ACCOUNT, declare(NODE), T0 - 120 * 86_400_000, 100),               // older than the window
+    ];
+    const calls: unknown[] = [];
+    const rpc: Rpc = async (_n, method, params) => {
+      calls.push(params.marker ?? null);
+      expect(method).toBe('account_tx');
+      expect(params.forward).toBe(false);
+      const from = Number(params.marker ?? 0);
+      const page = newestFirst.slice(from, from + 3).map((t) => ({ tx: t, meta: t.meta, validated: true, ledger_index: t.ledger_index }));
+      return { transactions: page, ...(from + 3 < newestFirst.length ? { marker: String(from + 3) } : {}) };
+    };
+    const found = await discoverLedgerAnchors('mainnet', ACCOUNT, NODE, 'signing', rpc, { now: T0 });
+    expect(found.map((a) => a.txHash)).toEqual(['D2'.repeat(32), 'D1'.repeat(32)]);
+    expect(found.every((a) => isLedgerAnchor(a) && a.account === ACCOUNT && a.key === NODE && a.network === 'mainnet')).toBe(true);
+    expect(calls.length).toBe(3); // the third page reaches past the window and stops
+  });
+  it('an account that does not exist on that network has declared nothing', async () => {
+    const rpc: Rpc = async () => { throw Object.assign(new Error('Account not found.'), { code: 'actNotFound' }); };
+    expect(await discoverLedgerAnchors('testnet', ACCOUNT, NODE, 'signing', rpc)).toEqual([]);
   });
 });

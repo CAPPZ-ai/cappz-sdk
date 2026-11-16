@@ -176,3 +176,33 @@ export async function checkAnchor(anchor: { network: XrplNetwork; txHash: string
   const later = decl.validated && decl.ledgerIndex !== null ? await accountTxSince(anchor.network, decl.account, decl.ledgerIndex, rpc) : [];
   return { ...evaluateLedgerDeclaration(decl, later, nodeKey, purpose, at), tx: decl };
 }
+
+/**
+ * 15.47.0 — find the declarations of `nodeKey` that `account` made on the ledger, so a node
+ * needs no anchor file: the payout account's own transactions are the evidence. Reads the
+ * account's history newest first back to `days` (default 92, past the 90-day limit) or `maxTx`
+ * transactions, keeps validated, successful AccountSets from the account whose memo declares
+ * this key for `purpose`, and returns them as anchors, newest first. Revocations and expiry are
+ * judged later by checkAnchor, as for an anchor from a file.
+ */
+export async function discoverLedgerAnchors(network: XrplNetwork, account: string, nodeKey: string, purpose = 'signing', rpc: Rpc = xrplRpc, opts: { days?: number; maxTx?: number; now?: number } = {}): Promise<LedgerAnchor[]> {
+  const since = (opts.now ?? Date.now()) - (opts.days ?? 92) * DAY; const maxTx = opts.maxTx ?? 2000;
+  const found: LedgerAnchor[] = []; let marker: unknown; let seen = 0; const at = new Date().toISOString();
+  for (;;) {
+    let r: Record<string, unknown>;
+    try { r = await rpc(network, 'account_tx', { account, ledger_index_min: -1, ledger_index_max: -1, forward: false, limit: 200, ...(marker ? { marker } : {}) }); }
+    catch (e) { if ((e as { code?: unknown }).code === 'actNotFound') return []; throw e; }
+    let older = false;
+    for (const e of (r.transactions as Record<string, unknown>[] | undefined) ?? []) {
+      if (e.validated === false) continue;
+      seen++;
+      const t = entryTx(e, network, at);
+      if (t.closeTime && Date.parse(t.closeTime) < since) { older = true; break; }
+      if (t.type !== 'AccountSet' || t.account !== account || t.result !== 'tesSUCCESS') continue;
+      const m = keyzMemoOf(t);
+      if (m?.op === 'declare' && m.key === nodeKey.toLowerCase() && m.purposes.includes(purpose)) found.push({ v: 'xrpl', network, txHash: t.hash.toUpperCase(), account, key: m.key, until: m.until });
+    }
+    marker = r.marker;
+    if (older || !marker || seen >= maxTx) return found;
+  }
+}

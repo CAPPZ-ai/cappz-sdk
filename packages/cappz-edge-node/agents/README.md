@@ -1,11 +1,12 @@
 # Paid agents for an edge node
 
-Two pay-per-job agents an edge node can sell on the CAPPZ Marketplace, built on the SDK's paid-agent kit (`@cappz/sdk/paidAgent`). Buyers pay in XRP on the XRP Ledger. The node's Ed25519 key signs every result, and anyone can check it offline.
+Pay-per-job agents an edge node can sell on the CAPPZ Marketplace, built on the SDK's paid-agent kit (`@cappz/sdk/paidAgent`). Buyers pay in XRP on the XRP Ledger. The node's Ed25519 key signs every result, and anyone can check it offline.
 
 | Agent | What the buyer gets | Price (default) | Schedule |
 |---|---|---|---|
 | `timestamp` | A receipt saying the node saw a SHA-256 at a time. The file never leaves the buyer. | 0.05 XRP | On completion: the buyer sees the receipt's SHA-256, pays, then downloads it |
 | `webhook` | A webhook URL for 30 days. Each POST becomes a signed record, and at the end a signed bundle of all records. | 2 XRP | 30% deposit opens the URL; 70% when the bundle is ready |
+| `draw` (15.47.0) | A fair draw: winners picked from a list by the hash of an XRP Ledger ledger closed after the list was locked. Anyone can recompute them. | 0.1 XRP | Pay first (the whole price); the signed draw is free when ready |
 
 Each agent speaks the paid-agent protocol that `cappz-market hire` uses (see [skills/hiring-cappz-paid-agents](../../../skills/hiring-cappz-paid-agents/SKILL.md)). The server also serves docs for both kinds of reader, filled with the instance's live price, network, payout address and signer:
 
@@ -20,6 +21,18 @@ Each agent speaks the paid-agent protocol that `cappz-market hire` uses (see [sk
 | `/agents/<agent>/agent` | Agent card (price, stages, payTo, network, signer) with a `docs` field linking the above |
 
 A browser opening an agent's URL, for example from its marketplace card, is redirected to that agent's try-it form.
+
+## Fair draw (15.47.0)
+
+Giveaways, raffles, audit samples, selection by lot: the organizer wants winners nobody can say were rigged.
+
+1. The buyer opens a job with the list (`entries`, up to 10,000) or only its fingerprint (`entriesSha256` = SHA-256 of `JSON.stringify(entries)`, plus `count`, up to 1,000,000), `winners`, an optional `drawAt` (≤ `CAPPZ_DRAW_MAX_DAYS`) and `public`.
+2. They pay the one stage. The node then signs `DrawCommitted`: fingerprint, count, winners, draw time (never sooner than `CAPPZ_DRAW_MIN_LEAD_SECONDS` after the commitment) and `afterLedger`, the latest validated ledger. The commitment is appended to `<data>/draw/commitments.jsonl`, served at `/agents/draw/log` and `/agents/draw/commitments/<jobId>`. Each names the one before it (`seq`, `previousCommitment`).
+3. At the draw time the node finds the first validated ledger closed at or after it (binary search from `afterLedger`), seeds rule `cappz-draw/v1` with its hash, picks, and signs `DrawPerformed`. The result (stage 1, free) holds both records, the winners and the entries if sent. With `public: true` it is also served at `/agents/draw/draws/<jobId>`, a page that re-checks it in the browser.
+
+Why nobody can steer it: the list is paid for and locked before the seed ledger exists. The seed depends only on the ledger hash and the list, so a second commitment of the same list draws the same winners. Another list costs another commitment, and every commitment is on the public log. A buyer who pays after the requested draw time gets the earliest allowed time instead; the commitment records both.
+
+The rule is written out in `draw.ts` and in the served `draw/SKILL.md`. `verify.mjs` repeats it without dependencies: `node verify.mjs draw.json <payout r-address> [--entries list.txt]`. The draw's work waits for its time, so the server matches its payments itself (`watchLong`, as for the webhook) rather than through `tick()`.
 
 ## A wallet vouches for the signer, not the certificate (15.44.0)
 
@@ -81,6 +94,10 @@ deno run --config <sdk>\deno.json --allow-read --allow-write --allow-env <sdk>\p
 ```
 
 Use this when verification must work fully offline, or the node also needs a `hello` declaration (mesh peers and KeyZ Gate read only wallet-signed declarations). Running it on another machine and copying `key-declarations.json` over (it holds only public data) keeps the seed off the node.
+
+### 15.47.0: nothing to copy
+
+The agents read the payout account's ledger history themselves (`discoverLedgerAnchors`, hourly) and use any valid on-ledger declaration of their node key that they find there. After the Xaman approval, first time or renewal, there is no file to copy and no restart: a renewal is picked up within the hour, and the 14-day expiry warning in the log tells you when to renew. Settings: `CAPPZ_KEYZ_ACCOUNT` (default `CAPPZ_AGENT_PAYTO`), `CAPPZ_KEYZ_NETWORK` (default `mainnet`, also for the testnet instance), `CAPPZ_KEYZ_DISCOVER=0` to turn it off. Once the account has declared the key, signing pauses whenever no declaration is valid, as with a file. The script still writes `key-declarations.json`, which keeps working and is what `-Check` reads.
 
 ### Either way
 

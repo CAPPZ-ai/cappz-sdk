@@ -1,6 +1,6 @@
 # CAPPZ paid agents on {{HOST}} ({{NETWORK}})
 
-> Two pay-per-job agents on a CAPPZ edge node, paid in XRP on the XRP Ledger ({{NETWORK}}). Every result is signed with the node's Ed25519 key {{NODE}}, and anyone can check it offline. No account and no API key: open a job over HTTP, pay the stage it shows (with its destination tag), then collect the result. For a work stage you see the result's SHA-256 before you pay.
+> Three pay-per-job agents on a CAPPZ edge node, paid in XRP on the XRP Ledger ({{NETWORK}}). Every result is signed with the node's Ed25519 key {{NODE}}, and anyone can check it offline. No account and no API key: open a job over HTTP, pay the stage it shows (with its destination tag), then collect the result. For a work stage you see the result's SHA-256 before you pay.
 
 Network: {{NETWORK}}. Pays to: {{PAYTO}}. Signer (node key): {{NODE}}.
 The same agents run on {{PEER_NETWORK}}: {{PEER_BASE}}/llms.txt. Validate a flow on testnet (free test XRP) before paying real XRP on mainnet. Every signed record states its network in `payload.network`; only mainnet records carry value as proof.
@@ -9,6 +9,7 @@ The same agents run on {{PEER_NETWORK}}: {{PEER_BASE}}/llms.txt. Validate a flow
 
 - [Signed timestamp]({{BASE}}/timestamp/SKILL.md): send a SHA-256 of a file (the file stays with you) and get a signed receipt saying the node saw that hash at that time. {{TS_PRICE}} XRP, paid once the receipt is ready. Input: `{"sha256":"<64 hex>","note":"optional, ≤200 chars"}`.
 - [Signed webhook receiver]({{BASE}}/webhook/SKILL.md): a webhook URL open for {{DAYS}} days. Every POST becomes a signed record, and at the end you get the signed bundle of all records. {{WH_PRICE}} XRP: {{WH_DEPOSIT}} deposit opens the URL, {{WH_REST}} when the bundle is ready. Input: `{"label":"optional, ≤100 chars"}`.
+- [Fair draw]({{BASE}}/draw/SKILL.md): pick winners from a list (giveaways, raffles, audit samples, selection by lot) by the hash of an XRP Ledger ledger closed after the list was locked, so nobody can steer them and anyone can recompute them. {{DRAW_PRICE}} XRP, paid once up front; the result is free. Input: `{"entries":["…"],"winners":1,"drawAt":"ISO, optional","public":true}` or `{"entriesSha256":"…","count":N,"winners":1}`. Commitments: {{BASE}}/draw/log.
 
 ## Fastest path
 
@@ -24,7 +25,7 @@ The same agents run on {{PEER_NETWORK}}: {{PEER_BASE}}/llms.txt. Validate a flow
 
 - [Guide for people, with try-it forms]({{BASE}}/)
 - [OpenAPI 3.1]({{BASE}}/openapi.json)
-- [Agent cards (JSON)]({{BASE}}/timestamp/agent) and [webhook card]({{BASE}}/webhook/agent)
+- Agent cards (JSON): [timestamp]({{BASE}}/timestamp/agent), [webhook]({{BASE}}/webhook/agent), [draw]({{BASE}}/draw/agent)
 - [Receipt verifier, Node 20+ or Deno]({{BASE}}/verify.mjs)
 - [General skill: hiring CAPPZ paid agents](https://github.com/CAPPZ-ai/cappz-sdk/blob/main/skills/hiring-cappz-paid-agents/SKILL.md)
 
@@ -32,4 +33,5 @@ The same agents run on {{PEER_NETWORK}}: {{PEER_BASE}}/llms.txt. Validate a flow
 
 - Never pay without the stage's `DestinationTag`, and never pay more than `pay.amount`.
 - This node is on {{NETWORK}}. Testnet XRP is free from the XRPL faucet. Move real XRP only with the OK of the person you act for.
-- Limits: webhook bodies up to 64 KB, and at most 10,000 records per period.
+- Limits: webhook bodies up to 64 KB, and at most 10,000 records per period. Draws: up to 10,000 entries inline (1,000,000 by hash), 1,000 winners, {{DRAW_MAX_DAYS}} days ahead.
+- A draw's payment must reach the node before its draw time: the commitment is signed only after payment.

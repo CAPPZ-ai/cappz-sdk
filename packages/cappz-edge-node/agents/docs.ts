@@ -19,6 +19,10 @@ export interface DocSettings {
   timestampPrice: number;
   webhookPrice: number;
   webhookDays: number;
+  /** Fair draw (15.47.0); defaults 0.1 XRP, 30 days, 120 s. */
+  drawPrice?: number;
+  drawMaxDays?: number;
+  drawMinLeadSeconds?: number;
   /** The same agents on the other network ('' when there is none). */
   peerBase?: string;
 }
@@ -33,6 +37,9 @@ export const DOC_FILES: Readonly<Record<string, { file: string; type: string }>>
   '/llms.txt': { file: 'llms.txt', type: 'text/plain; charset=utf-8' },
   '/timestamp/SKILL.md': { file: 'timestamp.SKILL.md', type: 'text/markdown; charset=utf-8' },
   '/webhook/SKILL.md': { file: 'webhook.SKILL.md', type: 'text/markdown; charset=utf-8' },
+  '/draw/SKILL.md': { file: 'draw.SKILL.md', type: 'text/markdown; charset=utf-8' },
+  /** A draw's public page (also served at /draw/draws/<jobId> to browsers). */
+  '/draw/view': { file: 'draw.html', type: 'text/html; charset=utf-8' },
   '/verify.mjs': { file: 'verify.mjs', type: 'text/javascript; charset=utf-8' },
 };
 
@@ -44,6 +51,8 @@ export function docVars(s: DocSettings): Record<string, string> {
     DAYS: String(s.webhookDays), TS_PRICE: round(s.timestampPrice), WH_PRICE: round(s.webhookPrice),
     WH_DEPOSIT: round(s.webhookPrice * WEBHOOK_DEPOSIT_SHARE), WH_REST: round(s.webhookPrice * (1 - WEBHOOK_DEPOSIT_SHARE)),
     PEER_BASE: s.peerBase ?? '', PEER_NETWORK: s.network === 'mainnet' ? 'testnet' : 'mainnet',
+    DRAW_PRICE: round(s.drawPrice ?? 0.1), DRAW_MAX_DAYS: String(s.drawMaxDays ?? 30),
+    DRAW_LEAD: String(Math.round((s.drawMinLeadSeconds ?? 120) / 60 * 10) / 10),
   };
 }
 

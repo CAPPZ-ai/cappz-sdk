@@ -135,7 +135,7 @@
     },
     {
       "name": "running-edge-node-paid-agents",
-      "description": "Runs the ready-made paid agents of a CAPPZ edge node — a signed timestamp (a file's SHA-256 in, a receipt signed by the node key out) and a signed webhook receiver (a 30-day URL that signs every POST, then delivers a signed bundle) — as a testnet instance and a mainnet instance behind HTTPS, with their guide, llms.txt, SKILL.md, OpenAPI and offline verifier, and offers both on the testnet and mainnet marketplaces. Use when asked to earn XRP from an always-on edge node, put a node's signing key to paid use, offer timestamping or tamper-evident webhook logs, or validate paid agents on testnet before mainnet.",
+      "description": "Runs the ready-made paid agents of a CAPPZ edge node — a signed timestamp (a file's SHA-256 in, a receipt signed by the node key out), a signed webhook receiver (a 30-day URL that signs every POST, then delivers a signed bundle) and a fair draw (winners picked by an XRP Ledger hash nobody knew when the list was locked) — as a testnet instance and a mainnet instance behind HTTPS, with their guide, llms.txt, SKILL.md, OpenAPI and offline verifier, and offers them on the testnet and mainnet marketplaces. Use when asked to earn XRP from an always-on edge node, put a node's signing key to paid use, offer timestamping, tamper-evident webhook logs or provably fair draws, or validate paid agents on testnet before mainnet.",
       "path": "skills/running-edge-node-paid-agents",
       "url": "https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/running-edge-node-paid-agents",
       "raw": "https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/running-edge-node-paid-agents/SKILL.md",
@@ -143,7 +143,8 @@
         "find",
         "hire",
         "login",
-        "profile"
+        "profile",
+        "sell"
       ],
       "tools": [],
       "guides": []

@@ -1,16 +1,17 @@
 ---
 name: running-edge-node-paid-agents
-description: Runs the ready-made paid agents of a CAPPZ edge node — a signed timestamp (a file's SHA-256 in, a receipt signed by the node key out) and a signed webhook receiver (a 30-day URL that signs every POST, then delivers a signed bundle) — as a testnet instance and a mainnet instance behind HTTPS, with their guide, llms.txt, SKILL.md, OpenAPI and offline verifier, and offers both on the testnet and mainnet marketplaces. Use when asked to earn XRP from an always-on edge node, put a node's signing key to paid use, offer timestamping or tamper-evident webhook logs, or validate paid agents on testnet before mainnet.
+description: Runs the ready-made paid agents of a CAPPZ edge node — a signed timestamp (a file's SHA-256 in, a receipt signed by the node key out), a signed webhook receiver (a 30-day URL that signs every POST, then delivers a signed bundle) and a fair draw (winners picked by an XRP Ledger hash nobody knew when the list was locked) — as a testnet instance and a mainnet instance behind HTTPS, with their guide, llms.txt, SKILL.md, OpenAPI and offline verifier, and offers them on the testnet and mainnet marketplaces. Use when asked to earn XRP from an always-on edge node, put a node's signing key to paid use, offer timestamping, tamper-evident webhook logs or provably fair draws, or validate paid agents on testnet before mainnet.
 ---
 
 # Running an edge node's paid agents
 
-An always-on edge node already holds an Ed25519 node key. `packages/cappz-edge-node/agents/server.ts` turns that key into two paid agents buyers hire over HTTP and pay in XRP, stage by stage, with each stage's destination tag. Full reference: [packages/cappz-edge-node/agents/README.md](../../packages/cappz-edge-node/agents/README.md).
+An always-on edge node already holds an Ed25519 node key. `packages/cappz-edge-node/agents/server.ts` turns that key into paid agents buyers hire over HTTP and pay in XRP, stage by stage, with each stage's destination tag. Full reference: [packages/cappz-edge-node/agents/README.md](../../packages/cappz-edge-node/agents/README.md).
 
 | Agent | Buyer gets | Default price | Schedule |
 |---|---|---|---|
 | `timestamp` | A receipt: "the node saw this SHA-256 at this time". The file stays with the buyer. | 0.05 XRP | On completion |
 | `webhook` | A 30-day URL. Each POST becomes a signed record; at the end, a signed bundle of all records. | 2 XRP | 30% deposit, 70% at the end |
+| `draw` | Winners from a list, seeded by the first XRP Ledger ledger closed at or after the draw time; a signed commitment first, on a public log. | 0.1 XRP | Pay first; the draw is free |
 
 ## Requirements
 
@@ -27,10 +28,10 @@ Progress:
 - [ ] Startup shortcuts for both instances; TLS proxy routes /agents → 41460 and /testnet/* → 41461
 - [ ] Check both: GET <base>/timestamp/health shows the right network; <base>/llms.txt and /SKILL.md load
 - [ ] Signer vouched by the payout wallet, on the ledger with Xaman (see "Vouching for the signer"); restart the launchers; the agent card shows declaredBy = payout address
-- [ ] Validate on testnet: hire each agent with a testnet wallet (cappz-market hire … --max …); receipt says network: testnet
+- [ ] Validate on testnet: hire each agent with a testnet wallet (cappz-market hire … --max …); receipt says network: testnet. For the draw: hire with a short list, then `node verify.mjs <result> <payout address>` must print VALID with the seed ledger checked
 - [ ] Profile on both markets: cappz-market profile [--network mainnet] --name … --xrplAccount <payout>
 - [ ] List on testnet, then on mainnet with --network mainnet, each --endpoint pointing at its own instance
-- [ ] Find both with cappz-market find "signed" [--network mainnet]
+- [ ] Find them with cappz-market find "signed" and find "draw" [--network mainnet]
 ```
 
 Write each listing's description for both kinds of reader. Include what the buyer gets, the schedule, and links to `<base>/#try-<agent>` (people), `<base>/<agent>/SKILL.md` (agents) and `<base>/llms.txt`. On testnet, say it is the testnet twin for validating before real XRP.
@@ -46,7 +47,7 @@ The payout account signs one no-op `AccountSet` in Xaman whose memo names the no
 
 | Exit | stdout JSON | Do |
 |---|---|---|
-| 0 | `{"ok":true,"action":"declare","txHash","ref":"xrpl:mainnet:…","until"}` | Restart both launchers the first time (later renewals are picked up within a minute). Confirm `GET <base>/timestamp/agent` shows `declaredBy.onLedger` and `isPayTo: true` |
+| 0 | `{"ok":true,"action":"declare","txHash","ref":"xrpl:mainnet:…","until"}` | From 15.47.0 the agents find it on the ledger themselves within the hour (restart the launchers to see it at once); nothing to copy, and it doesn't matter which machine ran the script. Older agents: restart both launchers the first time. Confirm `GET <base>/timestamp/agent` shows `declaredBy.onLedger` and `isPayTo: true` |
 | 3 | `declined` or `expired` in Xaman | Ask whether to try again. Never retry on your own |
 | 4 | not seen on the ledger in time | Ask the person for the transaction hash from Xaman's history, then run `-Hash <hash>` |
 | 1 | `error` text | Usually: the account is not activated on that network, the app key is wrong (Xaman refused), or the XRP Ledger was unreachable. Fix that and rerun |
@@ -55,6 +56,13 @@ The payout account signs one no-op `AccountSet` in Xaman whose memo names the no
 - **Renew** the same way before `until` passes; the agents' log warns 14 days ahead. A declaration lasts at most 90 days (`-Days`).
 - **Revoke** if `node.env` may have leaked: `declare-node-key.ps1 -Revoke` (another Xaman approval). The agents stop signing within 5 minutes and verifiers refuse right away. Then rotate the node key.
 - **No Xaman?** Without an app key, the tool prints the transaction JSON for any wallet that signs one, and waits for it on the ledger the same way. `-Seed` is the older off-ledger method: the person types the seed at a hidden prompt, ideally on another machine, then copies `key-declarations.json` over.
+
+## Fair draw notes
+
+- Update an older node: copy the new `server.ts`, `draw.ts` and `docs/` (or move the SDK pin), add the three `CAPPZ_DRAW_*` lines to both settings files, and restart both launchers. The draw needs no new route in the proxy: it lives under `/agents/draw` and `/testnet/agents/draw`.
+- List it on each market with its own endpoint, e.g. `cappz-market sell --category agents --kind service --unit draw --price 0.1 --currency XRP --quantity 1000 --leadDays 0 --endpoint <base>/draw --title "Fair draw: provably unrigged giveaway and raffle winners" --description "… try it: <base>/#try-draw · agents: <base>/draw/SKILL.md"`.
+- `<data>/draw/commitments.jsonl` is the public log. Never edit or delete lines: verifiers rely on the chain (`seq`, `previousCommitment`), and a gap looks like a hidden commitment. Back it up with the jobs.
+- A paid draw whose node was down at its draw time is still drawn when the node returns, from the ledger the rule names. Nothing is redrawn.
 
 ## Rules
 

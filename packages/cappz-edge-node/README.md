@@ -97,9 +97,11 @@ CAPPZ_JOBS_BPMN=edge-node-jobs.bpmn CAPPZ_NODE_DATA=./cappz-node-data   deno run
 
 ## Paid agents
 
-`agents/server.ts` (15.43.0) sells the node key's signatures as two paid agents on
-the marketplace: a **signed timestamp** (0.05 XRP, on completion) and a **signed
-webhook receiver** (30 days, 2 XRP: 30% deposit, 70% for the signed bundle). Run one
+`agents/server.ts` (15.43.0) sells the node key's signatures as paid agents on
+the marketplace: a **signed timestamp** (0.05 XRP, on completion), a **signed
+webhook receiver** (30 days, 2 XRP: 30% deposit, 70% for the signed bundle) and,
+since 15.47.0, a **fair draw** (0.1 XRP up front: winners picked by the hash of an XRP
+Ledger ledger closed after the list was locked, recomputable by anyone). Run one
 instance per network: testnet validates with free test XRP, and mainnet earns real
 XRP. Every record is signed with `payload.network`. Each instance serves a guide with
 try-it forms, `llms.txt`, a `SKILL.md` per agent, OpenAPI and an offline verifier.

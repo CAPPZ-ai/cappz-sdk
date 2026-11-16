@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fair Draw Result</title>
+<meta name="description" content="A provably fair draw: the list was locked before an XRP Ledger hash nobody knew picked the winners. Checked in your browser.">
+<style>
+:root{--bg:#f7f7f4;--card:#fff;--ink:#1d1f1c;--mute:#5d625a;--line:#dedfd8;--accent:#1f6f4a;--accent-ink:#fff;--ok:#1f6f4a;--bad:#a12a2a;--warn:#8a5a00;--warn-bg:#fff6df;--code:#f0f1ec}
+@media (prefers-color-scheme:dark){:root{--bg:#141613;--card:#1c1f1b;--ink:#e8eae4;--mute:#9da396;--line:#30352e;--accent:#5cc28f;--accent-ink:#0d1a12;--ok:#5cc28f;--bad:#f07a7a;--warn:#f0c05a;--warn-bg:#2b2412;--code:#242822}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:760px;margin:0 auto;padding:32px 16px 64px}
+h1{font-size:1.8rem;line-height:1.2;margin:0 0 6px}
+h2{font-size:1.15rem;margin:28px 0 10px}
+p{margin:0 0 12px}
+a{color:var(--accent)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin:14px 0}
+.mute{color:var(--mute);font-size:.93rem;overflow-wrap:anywhere}
+.note{background:var(--warn-bg);color:var(--warn);border-radius:8px;padding:10px 14px;margin:14px 0;font-size:.95rem}
+code{font:13.5px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;background:var(--code);border-radius:6px;padding:1px 5px;overflow-wrap:anywhere}
+ol.winners{font-size:1.25rem;font-weight:600;padding-left:28px;margin:6px 0}
+ol.winners li{margin:4px 0}
+.checks div{margin:3px 0;overflow-wrap:anywhere}
+.ok{color:var(--ok)} .bad{color:var(--bad)}
+.big{font-size:2rem;font-weight:700;margin:8px 0}
+button{font:inherit;font-weight:600;background:var(--accent);color:var(--accent-ink);border:0;border-radius:8px;padding:9px 16px;cursor:pointer}
+input[type=text]{font:inherit;width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
+details{margin:8px 0} summary{cursor:pointer;font-weight:600}
+</style>
+</head>
+<body>
+<main>
+<h1 id="title">Fair draw</h1>
+<p class="mute" id="sub">Loading…</p>
+<div id="body"></div>
+<div class="card hidden" id="ask" style="display:none">
+  <p>Paste a draw link or job ID:</p>
+  <input type="text" id="jobIn" placeholder="job-…">
+  <p style="margin-top:10px"><button id="jobGo">Open</button></p>
+</div>
+<h2>How this draw is fair</h2>
+<div class="card">
+  <ol>
+    <li>The organizer paid, and this node signed a <b>commitment</b> to the list's fingerprint (SHA-256), its size, the number of winners and the draw time. It went on the node's <a href="{{BASE}}/draw/log">public log</a> at once.</li>
+    <li>The winners come from the hash of the first <b>XRP Ledger</b> ledger that closed at or after the draw time. Nobody, this node included, could know that hash when the list was locked.</li>
+    <li>Anyone can redo the draw. This page does it in your browser: it checks the signatures, reads the ledger from a public XRP Ledger server, and recomputes the winners (rule <code>cappz-draw/v1</code>, written out in <a href="{{BASE}}/draw/SKILL.md">the skill</a>).</li>
+  </ol>
+  <p class="mute">Check offline instead: download the result JSON and <a href="{{BASE}}/verify.mjs">verify.mjs</a>, then run <code>node verify.mjs draw.json {{PAYTO}}</code>.</p>
+</div>
+<p class="mute">Signed by node <code>{{NODE}}</code> on {{NETWORK}}. <a href="{{BASE}}/#try-draw">Run your own draw</a> for {{DRAW_PRICE}} XRP. Part of the <a href="https://cappz.ai/marketplace">CAPPZ Marketplace</a>.</p>
+</main>
+<script>
+const BASE = '{{BASE}}', NODE = '{{NODE}}', NETWORK = '{{NETWORK}}';
+const WSS = { mainnet: ['wss://xrplcluster.com', 'wss://s1.ripple.com'], testnet: ['wss://s.altnet.rippletest.net:51233'], devnet: ['wss://s.devnet.rippletest.net:51233'] };
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const enc = (s) => new TextEncoder().encode(s);
+const toHex = (b) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('');
+const fromHex = (h) => new Uint8Array(h.match(/../g).map((x) => parseInt(x, 16)));
+const sha256 = async (data) => toHex(await crypto.subtle.digest('SHA-256', typeof data === 'string' ? enc(data) : data));
+const canonical = (v) => v === null || typeof v !== 'object' ? JSON.stringify(v) : Array.isArray(v) ? `[${v.map(canonical).join(',')}]` : `{${Object.keys(v).filter((k) => v[k] !== undefined).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(',')}}`;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function verifyTx(tx) {
+  try {
+    const { txHash, signature, signerPublicKey, ...unsigned } = tx;
+    if ((await sha256(canonical(unsigned))) !== txHash) return false;
+    const key = await crypto.subtle.importKey('raw', fromHex(signerPublicKey), { name: 'Ed25519' }, false, ['verify']);
+    return await crypto.subtle.verify('Ed25519', key, fromHex(signature), enc(txHash));
+  } catch { return false; }
+}
+async function drawPicks(seedHex, count, winners) {
+  const seed = fromHex(seedHex); let counter = 0; let words = [];
+  const nextWord = async () => {
+    if (!words.length) { const block = new Uint8Array(seed.length + 4); block.set(seed); new DataView(block.buffer).setUint32(seed.length, counter++, false); const d = new DataView(await crypto.subtle.digest('SHA-256', block)); words = Array.from({ length: 8 }, (_, i) => d.getUint32(i * 4, false)); }
+    return words.shift();
+  };
+  const uniform = async (n) => { const limit = 2 ** 32 - (2 ** 32 % n); for (;;) { const w = await nextWord(); if (w < limit) return w % n; } };
+  const swapped = new Map(); const at = (i) => swapped.get(i) ?? i; const picks = [];
+  for (let i = 0; i < winners; i++) { const j = i + await uniform(count - i); const a = at(i), b = at(j); swapped.set(i, b); swapped.set(j, a); picks.push(b); }
+  return picks;
+}
+/** Two validated ledgers from a public XRP Ledger server (WebSocket: no dependency on this site). */
+function ledgers(network, indices) {
+  const urls = WSS[network] ?? WSS.mainnet;
+  const tryOne = (url) => new Promise((resolve, reject) => {
+    const ws = new WebSocket(url); const got = new Map(); const t = setTimeout(() => { ws.close(); reject(new Error('timeout')); }, 15000);
+    ws.onopen = () => indices.forEach((i) => ws.send(JSON.stringify({ id: i, command: 'ledger', ledger_index: i })));
+    ws.onerror = () => { clearTimeout(t); reject(new Error(`${url} unreachable`)); };
+    ws.onmessage = (m) => {
+      const r = JSON.parse(m.data); const l = r.result?.ledger;
+      if (r.status !== 'success' || !r.result?.validated || !l) { clearTimeout(t); ws.close(); reject(new Error(`ledger ${r.id} not available`)); return; }
+      got.set(r.id, { index: Number(l.ledger_index), hash: String(l.ledger_hash).toUpperCase(), closeTime: l.close_time_iso ? new Date(l.close_time_iso).toISOString() : new Date((l.close_time + 946684800) * 1000).toISOString() });
+      if (got.size === indices.length) { clearTimeout(t); ws.close(); resolve(indices.map((i) => got.get(i))); }
+    };
+  });
+  return urls.reduce((p, url) => p.catch(() => tryOne(url)), Promise.reject(new Error('start')));
+}
+const jobFrom = (s) => (/job-[0-9a-f]{16}/.exec(s) ?? [])[0];
+
+async function show(jobId) {
+  const body = $('body');
+  const r = await fetch(`${BASE}/draw/draws/${jobId}?json`, { headers: { accept: 'application/json' }, cache: 'no-store' });
+  if (r.status !== 200) {
+    const c = await fetch(`${BASE}/draw/commitments/${jobId}`, { headers: { accept: 'application/json' }, cache: 'no-store' });
+    if (c.status !== 200) { $('sub').textContent = 'No draw with this ID here (yet). The organizer may not have paid, or the draw is not public.'; return; }
+    const cm = await c.json(); const at = Date.parse(cm.payload.drawAt);
+    $('title').textContent = cm.payload.label || 'Fair draw';
+    $('sub').innerHTML = `${cm.payload.count} entries · ${cm.payload.winners} winner${cm.payload.winners > 1 ? 's' : ''} · list fingerprint <code>${esc(cm.payload.entriesSha256.slice(0, 16))}…</code>`;
+    const sigOk = await verifyTx(cm) && cm.signerPublicKey === NODE;
+    const tick = () => { const s = Math.max(0, Math.round((at - Date.now()) / 1000)); return s > 0 ? `${Math.floor(s / 86400) ? `${Math.floor(s / 86400)}d ` : ''}${String(Math.floor(s / 3600) % 24).padStart(2, '0')}:${String(Math.floor(s / 60) % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}` : 'drawing…'; };
+    body.innerHTML = `<div class="card"><p>The list is locked. The draw happens at <b>${esc(new Date(at).toLocaleString())}</b>.</p><div class="big" id="cd">${tick()}</div>
+      <p class="mute">Commitment signed ${esc(new Date(cm.timestamp).toLocaleString())}, after XRP Ledger ledger ${esc(cm.payload.afterLedger.index)}. Signature: <b class="${sigOk ? 'ok' : 'bad'}">${sigOk ? 'valid' : 'INVALID'}</b>. Log position #${esc(cm.payload.seq)}.</p></div>`;
+    const iv = setInterval(() => { const el = $('cd'); if (el) el.textContent = tick(); }, 1000);
+    await sleep(Math.max(5000, Math.min(at - Date.now() + 15000, 60000)));
+    clearInterval(iv); return show(jobId);
+  }
+  const doc = await r.json(); const d = doc.draw.payload, c = doc.commitment, cp = c.payload;
+  $('title').textContent = d.label || 'Fair draw';
+  $('sub').innerHTML = `${d.count} entries · ${d.winners} winner${d.winners > 1 ? 's' : ''} · drawn at ${esc(new Date(d.drawAt).toLocaleString())}${d.network !== 'mainnet' ? ` · <b class="bad">${esc(d.network)} (test draw)</b>` : ''}`;
+  const names = doc.entries;
+  body.innerHTML = `<div class="card"><h2 style="margin-top:0">Winners</h2><ol class="winners">${d.picks.map((i) => `<li>${names ? esc(names[i]) : `entry #${i}`} <span class="mute">(#${i})</span></li>`).join('')}</ol></div>
+    <div class="card"><h2 style="margin-top:0">Checked in your browser</h2><div class="checks" id="checks">Checking…</div>
+    <details><summary>The data</summary><p class="mute">Seed ledger ${esc(d.seedLedger.index)} · hash <code>${esc(d.seedLedger.hash)}</code><br>Seed <code>${esc(d.seed)}</code><br>List fingerprint <code>${esc(d.entriesSha256)}</code><br>Commitment <a href="${esc(BASE)}/draw/commitments/${esc(jobId)}"><code>${esc(c.txHash)}</code></a></p>
+    <p><a id="dl" href="#">Download draw.json</a></p>${names ? `<details><summary>All ${names.length} entries</summary><ol start="0" class="mute">${names.map((n) => `<li>${esc(n)}</li>`).join('')}</ol></details>` : '<p class="mute">The list was committed as a fingerprint only. Ask the organizer for it and check it with verify.mjs --entries.</p>'}</details></div>`;
+  $('dl').onclick = (e) => { e.preventDefault(); const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' })); a.download = `draw-${jobId}.json`; a.click(); };
+  const lines = []; const line = (ok, t) => { lines.push(`<div class="${ok ? 'ok' : 'bad'}">${ok ? '✓' : '✗'} ${esc(t)}</div>`); $('checks').innerHTML = lines.join(''); };
+  line(await verifyTx(doc.draw) && doc.draw.signerPublicKey === NODE, 'draw signed by this node');
+  line(await verifyTx(c) && c.signerPublicKey === NODE && d.commitment === c.txHash, 'commitment signed by this node, and the draw names it');
+  line(['entriesSha256', 'count', 'winners', 'drawAt', 'rule'].every((k) => cp[k] === d[k]), 'the draw used exactly the committed list, size, winners and time');
+  line(Date.parse(c.timestamp) < Date.parse(d.drawAt) && Date.parse(cp.afterLedger.closeTime) < Date.parse(d.drawAt), `list locked ${new Date(c.timestamp).toLocaleString()}, before the draw time`);
+  if (names) line((await sha256(JSON.stringify(names))) === d.entriesSha256 && names.length === d.count, 'the entries shown match the committed fingerprint');
+  line((await sha256(`cappz-draw/v1|${String(d.seedLedger.hash).toUpperCase()}|${d.entriesSha256}|${d.count}|${d.winners}`)) === d.seed, 'seed follows from the ledger hash and the list');
+  line(JSON.stringify(await drawPicks(d.seed, d.count, d.winners)) === JSON.stringify(d.picks), 'winners recomputed from the seed');
+  try {
+    const [L, prev] = await ledgers(d.network, [d.seedLedger.index, d.seedLedger.index - 1]);
+    line(L.hash === String(d.seedLedger.hash).toUpperCase(), `XRP Ledger (${d.network}) confirms ledger ${L.index} has this hash`);
+    line(Date.parse(prev.closeTime) < Date.parse(d.drawAt) && Date.parse(L.closeTime) >= Date.parse(d.drawAt), `ledger ${L.index} is the first closed at or after the draw time (${new Date(L.closeTime).toLocaleTimeString()})`);
+  } catch (e) { line(false, `could not reach a public XRP Ledger server to confirm the seed ledger (${e.message}); verify.mjs can`); }
+}
+const id = jobFrom(location.pathname) ?? jobFrom(location.search) ?? jobFrom(location.hash);
+if (id) show(id).catch((e) => { $('sub').textContent = `Could not load: ${e.message}`; });
+else { $('sub').textContent = ''; $('ask').style.display = 'block'; $('jobGo').onclick = () => { const j = jobFrom($('jobIn').value); if (j) location.href = `${BASE}/draw/draws/${j}`; }; }
+</script>
+</body>
+</html>
