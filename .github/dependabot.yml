@@ -10,3 +10,11 @@ updates:
       dev-dependencies:
         dependency-type: development
         update-types: [minor, patch]
+    ignore:
+      # TypeScript 7 (the native compiler) ships no JS compiler API yet; text-scan.test.ts and the
+      # host app's guards parse sources with ts.createSourceFile. Revisit when 7.x exposes the API.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
+      # Types follow the oldest Node the SDK runs on (CI and the edge node: Node 22).
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]

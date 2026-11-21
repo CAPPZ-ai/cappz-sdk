@@ -11,7 +11,7 @@
  * Trust boundaries stay visible: ledger facts, marketplace history and the
  * verdict are separate fields; a missing fact is "unknown", never "fine".
  */
-import { ed25519 } from '@noble/curves/ed25519';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import type { XrplNetwork } from '../xrpl/ledgerCheck';
 import { xrplRpc, XrplRpcError } from '../xrpl/xrplRpc';
 import type { MarketState } from './replay';

@@ -23,7 +23,7 @@
  * ('cw2.') wrap one data key for the owner and for each recipient's declared
  * P-256 encryption key; walletEncryptionKey derives that key from the wallet.
  */
-import { p256 } from '@noble/curves/p256';
+import { p256 } from '@noble/curves/nist.js';
 import { openBytesWith, p256JwkFromHex, sealBytesTo, type CompactSealedBox } from './sealedBox';
 
 export const WALLET_ENVELOPE_PREFIX = 'cw1.';
@@ -180,7 +180,7 @@ export async function walletEncryptionKey(walletPrivateKey: Uint8Array): Promise
   const ikm = await crypto.subtle.importKey('raw', buf(walletPrivateKey), 'HKDF', false, ['deriveBits']);
   const okm = new Uint8Array(await crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt: buf(te.encode(LABEL)), info: buf(te.encode('cappz.wallet-encryption-key.p256.v1')) }, ikm, 384));
   // 48 bytes reduced mod n leaves a negligible bias (FIPS 186-5 A.2.1 style).
-  const n = p256.CURVE.n;
+  const n = p256.Point.CURVE().n;
   let d = 0n;
   for (const b of okm) d = (d << 8n) | BigInt(b);
   d = (d % (n - 1n)) + 1n;

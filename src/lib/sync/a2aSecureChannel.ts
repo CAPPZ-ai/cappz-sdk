@@ -13,7 +13,7 @@
  * Nothing here is persisted; keys live only for the session.
  */
 
-import { x25519 } from '@noble/curves/ed25519';
+import { x25519 } from '@noble/curves/ed25519.js';
 
 export interface ChannelKeyPair {
   secretKey: Uint8Array;
@@ -46,7 +46,7 @@ export async function sha256Hex(data: Uint8Array | string): Promise<string> {
 }
 
 export function generateChannelKeyPair(): ChannelKeyPair {
-  const secretKey = x25519.utils.randomPrivateKey();
+  const secretKey = x25519.utils.randomSecretKey();
   return { secretKey, publicKey: x25519.getPublicKey(secretKey) };
 }
 

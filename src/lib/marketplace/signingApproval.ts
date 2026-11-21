@@ -26,7 +26,7 @@
  * validates, and the marketplace still records settlement only from the
  * validated ledger.
  */
-import { ed25519 } from '@noble/curves/ed25519';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { decode, deriveAddress, verifySignature } from 'xrpl';
 import type { XrplNetwork } from '../xrpl/ledgerCheck';
 import type { MarketState } from './replay';

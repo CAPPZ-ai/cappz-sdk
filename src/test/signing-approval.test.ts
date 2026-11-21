@@ -8,7 +8,7 @@ import { NO_FEES, buildFeeSchedule } from '../lib/marketplace/fees';
 import { approvalHook, coSignTx, evaluateSigningIntent, intentHash, signApproval, verifyApproval, verifyCoSignature, MAX_FEE_DROPS, type CoSignature, type CoSignTerms, type SigningIntent } from '../lib/marketplace/signingApproval';
 import { Wallet } from 'xrpl';
 import { signCheck } from '../lib/marketplace/counterpartyCheck';
-import { ed25519 } from '@noble/curves/ed25519';
+import { ed25519 } from '@noble/curves/ed25519.js';
 
 const START = '2026-11-01T12:00:00.000Z';
 const NOW = '2026-11-01T12:05:00.000Z';

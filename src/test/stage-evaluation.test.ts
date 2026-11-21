@@ -1,6 +1,6 @@
 /** v15-32-00: acceptance criteria, the stage evaluator, the listing drafter and the subcontract scout. */
 import { describe, expect, it } from 'vitest';
-import { ed25519 } from '@noble/curves/ed25519';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { DEMO_YOU, seedDemoMarket, type DemoRunner } from '../lib/marketplace/demo';
 import * as M from '../lib/marketplace/model';
 import { NO_FEES, buildFeeSchedule } from '../lib/marketplace/fees';

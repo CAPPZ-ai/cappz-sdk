@@ -23,7 +23,7 @@
 
 import { canonicalHelloJson, type TransportHello } from './transportContract.ts';
 import { buildBeaconPayload, type UdpBeacon } from './discovery/discoveryPlugins.ts';
-import { ed25519 } from '@noble/curves/ed25519';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { activeKernels } from '../native/cappzNative';
 
 export type SignatureCheck =
@@ -65,7 +65,7 @@ export async function generateSigningKey(): Promise<SigningKey> {
     const raw = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey));
     return { privateKey: pair.privateKey, publicKeyHex: hex(raw) };
   }
-  const secretKey = ed25519.utils.randomPrivateKey();
+  const secretKey = ed25519.utils.randomSecretKey();
   return { secretKey, publicKeyHex: hex(ed25519.getPublicKey(secretKey)) };
 }
 

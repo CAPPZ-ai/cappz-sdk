@@ -14,7 +14,7 @@
  *
  * Every check reports what failed rather than a bare boolean.
  */
-import { p256 } from '@noble/curves/p256';
+import { p256 } from '@noble/curves/nist.js';
 import { cborGet, decodeCbor, decodeCborPrefix, type CborValue } from './cbor';
 import { buf, fromBase64Url, fromHex, sha256, toBase64Url, toHex, utf8 } from './canonical';
 
@@ -81,7 +81,7 @@ export function coseKeyToP256(cose: Map<CborValue, CborValue>): string {
     throw new Error('webauthn: only ES256 (P-256) credential keys are accepted');
   }
   const point = new Uint8Array(65); point[0] = 0x04; point.set(x, 1); point.set(y, 33);
-  p256.ProjectivePoint.fromHex(point).assertValidity();
+  p256.Point.fromBytes(point).assertValidity();
   return toHex(point);
 }
 
@@ -111,7 +111,7 @@ export function ecdsaDerToRaw(der: Uint8Array, size = 32): Uint8Array {
 
 /** Any SEC1 P-256 point (compressed or not) → uncompressed bytes; throws if it is not on the curve. */
 export function p256Uncompressed(publicKeyHex: string): Uint8Array {
-  return p256.ProjectivePoint.fromHex(publicKeyHex.toLowerCase()).toRawBytes(false);
+  return p256.Point.fromHex(publicKeyHex.toLowerCase()).toBytes(false);
 }
 
 /** ES256 over `message`: raw r||s (64 bytes) or DER. */

@@ -60,7 +60,7 @@ import { readBounded } from '../../src/lib/identity/edgeVerify';
 import { attributePublicLog, marketPartition, pullPublicLog, type PublicLogPort } from '../../src/lib/marketplace/publicLog';
 import { resolveMarket, type MarketState } from '../../src/lib/marketplace/replay';
 import { currencyOf } from '../../src/lib/marketplace/paymentAssets';
-import { ed25519 } from '@noble/curves/ed25519';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { evaluationTarget, evaluateDeliverable, signVerdict, deliverableSha256Of, MAX_DELIVERABLE_BYTES, type EvaluationTarget } from '../../src/lib/marketplace/stageEvaluation';
 import { acceptanceHash } from '../../src/lib/marketplace/acceptance';
 import { normalizeDraft, MAX_DRAFT_TEXT } from '../../src/lib/marketplace/listingDraft';

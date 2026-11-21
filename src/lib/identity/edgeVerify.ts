@@ -36,7 +36,7 @@
  * takes effect on the next request.
  */
 
-import { ed25519 } from '@noble/curves/ed25519';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { hasWebCryptoEd25519, signCanonical, verifyCanonical, type SigningKey } from '../sync/helloSignature.ts';
 import { evaluateKey, type KeyDeclaration, type KeyEvidence, type KeyTrustState } from './keyDeclaration.ts';
 import type { HelloKeyDeclaration } from '../sync/helloKeyDeclaration.ts';

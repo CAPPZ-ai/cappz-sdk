@@ -21,7 +21,7 @@
  * A verdict is advice and evidence. It moves no money: a named evaluator may
  * then `accept` (MilestoneAffirmed, citing the verdict); the buyer still pays.
  */
-import { ed25519 } from '@noble/curves/ed25519';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import type { XrplNetwork } from '../xrpl/ledgerCheck';
 import type { MarketState } from './replay';

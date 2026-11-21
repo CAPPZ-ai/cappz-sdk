@@ -20,7 +20,7 @@
  * an MDM account under cappz/config/bridges/<id>, with the target named in its
  * metadata — never by a path segment naming the target.
  */
-import { ed25519 } from '@noble/curves/ed25519';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import type { XrplNetwork } from '../xrpl/ledgerCheck';
 import type { MarketState } from './replay';
 import { canonicalJson, marketFacts, type AccountFacts, type MarketFacts, type Reason } from './counterpartyCheck';

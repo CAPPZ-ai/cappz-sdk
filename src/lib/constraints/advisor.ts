@@ -23,7 +23,7 @@
  * report can be cited.
  */
 
-import { ed25519 } from '@noble/curves/ed25519';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { canonicalJson } from '../identity/canonical.ts';
 import { lintEnvelope, type Constraint, type ConstraintPoint, type PointKind } from './envelope.ts';
 import type { GuardReport } from './guard.ts';

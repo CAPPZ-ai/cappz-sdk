@@ -18,7 +18,7 @@
  */
 import { sha256 as nobleSha256 } from '@noble/hashes/sha2.js';
 import * as secp from '@noble/secp256k1';
-import { ed25519 } from '@noble/curves/ed25519';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { CAPPZ_NATIVE_WASM_MANIFEST_DATA, CAPPZ_NATIVE_SIG_WASM_MANIFEST_DATA } from './wasm/cappz-native.manifest';
 import { GF_EXP, GF_LOG } from './gf256';
 

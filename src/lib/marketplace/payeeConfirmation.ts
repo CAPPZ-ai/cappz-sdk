@@ -32,7 +32,7 @@
  * own lifecycle state; log facts, ledger facts and your history stay in
  * separate fields. A fact that could not be read is unreadable, never fine.
  */
-import { ed25519 } from '@noble/curves/ed25519';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { isValidClassicAddress } from 'xrpl';
 import type { LedgerTx, XrplNetwork } from '../xrpl/ledgerCheck';
 import { normalizeTx } from '../xrpl/ledgerCheck';

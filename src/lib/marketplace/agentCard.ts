@@ -26,7 +26,7 @@
  * key, and `revoked` / `expired` / `bad-signature` / `not-signed` /
  * `malformed` otherwise.
  */
-import { ed25519 } from '@noble/curves/ed25519';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { evaluateKey, type KeyDeclaration, type KeyRevocation } from '../identity/keyDeclaration';
 import { canonicalJson, fromBase64Url, fromHex, toBase64Url, toHex, utf8 } from '../identity/canonical';
 import { AGENT_SIGNED_COMPONENTS } from './agentRequestAuth';

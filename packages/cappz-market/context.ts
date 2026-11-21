@@ -25,7 +25,7 @@ import { MARKETPLACE_POW_ROOT } from '../../src/lib/marketplace/MarketplacePaths
 import type { MarketTx, MarketTxLike } from '../../src/lib/marketplace/ledger';
 import type { Actor } from '../../src/lib/marketplace/model';
 import * as secp from '@noble/secp256k1';
-import { ed25519 } from '@noble/curves/ed25519';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { declarationHash, declareKey, type KeyDeclaration } from '../../src/lib/identity/keyDeclaration';
 import { fromHex, toHex } from '../../src/lib/identity/canonical';
 import type { AgentSigningKey } from '../../src/lib/marketplace/agentRequestAuth';

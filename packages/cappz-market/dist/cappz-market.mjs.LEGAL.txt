@@ -5,7 +5,8 @@ Bundled license information:
   /*! scure-base - MIT License (c) 2022 Paul Miller (paulmillr.com) */
 
 @noble/hashes/utils.js:
-@noble/hashes/esm/utils.js:
+@noble/hashes/utils.js:
+@noble/hashes/utils.js:
   /*! noble-hashes - MIT License (c) 2022 Paul Miller (paulmillr.com) */
 
 @noble/curves/utils.js:
@@ -17,11 +18,17 @@ Bundled license information:
 @noble/curves/abstract/edwards.js:
 @noble/curves/abstract/montgomery.js:
 @noble/curves/ed25519.js:
-@noble/curves/esm/utils.js:
-@noble/curves/esm/abstract/modular.js:
-@noble/curves/esm/abstract/curve.js:
-@noble/curves/esm/abstract/edwards.js:
-@noble/curves/esm/ed25519.js:
+@noble/curves/utils.js:
+@noble/curves/abstract/modular.js:
+@noble/curves/abstract/curve.js:
+@noble/curves/abstract/weierstrass.js:
+@noble/curves/_shortw_utils.js:
+@noble/curves/secp256k1.js:
+@noble/curves/utils.js:
+@noble/curves/abstract/modular.js:
+@noble/curves/abstract/curve.js:
+@noble/curves/abstract/edwards.js:
+@noble/curves/ed25519.js:
   /*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) */
 
 @scure/bip32/lib/index.js:

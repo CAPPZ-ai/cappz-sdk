@@ -21,7 +21,7 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { Client, Wallet } from 'xrpl';
-import { ed25519 } from '@noble/curves/ed25519';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import worker, { type Env } from '../packages/cappz-check-worker/worker';
 import { XRPL_ENDPOINTS } from '../src/lib/xrpl/ledgerCheck';
 import { xrplRpc, XrplRpcError } from '../src/lib/xrpl/xrplRpc';

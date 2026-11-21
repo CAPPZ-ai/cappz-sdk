@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { ed25519 } from '@noble/curves/ed25519';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { Wallet } from 'xrpl';
 import { generateRecoveryPhrase, keyPairFromPhrase } from '../lib/auth/wallet/session';
 import { declareKey, revokeKeyDeclaration } from '../lib/identity/keyDeclaration';
