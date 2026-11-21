@@ -1,37 +1,21 @@
 Bundled license information:
 
 @scure/base/index.js:
-@scure/base/lib/index.js:
   /*! scure-base - MIT License (c) 2022 Paul Miller (paulmillr.com) */
-
-@noble/hashes/utils.js:
-@noble/hashes/utils.js:
-@noble/hashes/utils.js:
-  /*! noble-hashes - MIT License (c) 2022 Paul Miller (paulmillr.com) */
 
 @noble/curves/utils.js:
 @noble/curves/abstract/modular.js:
 @noble/curves/abstract/curve.js:
+@noble/curves/abstract/der.js:
 @noble/curves/abstract/weierstrass.js:
-@noble/curves/_shortw_utils.js:
 @noble/curves/secp256k1.js:
 @noble/curves/abstract/edwards.js:
 @noble/curves/abstract/montgomery.js:
-@noble/curves/ed25519.js:
-@noble/curves/utils.js:
-@noble/curves/abstract/modular.js:
-@noble/curves/abstract/curve.js:
-@noble/curves/abstract/weierstrass.js:
-@noble/curves/_shortw_utils.js:
-@noble/curves/secp256k1.js:
-@noble/curves/utils.js:
-@noble/curves/abstract/modular.js:
-@noble/curves/abstract/curve.js:
-@noble/curves/abstract/edwards.js:
+@noble/curves/abstract/oprf.js:
 @noble/curves/ed25519.js:
   /*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) */
 
-@scure/bip32/lib/index.js:
+@scure/bip32/index.js:
   /*! scure-bip32 - MIT License (c) 2022 Patricio Palladino, Paul Miller (paulmillr.com) */
 
 @scure/bip39/index.js:
