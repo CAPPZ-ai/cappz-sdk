@@ -44,3 +44,5 @@ export * as model from '../lib/marketplace/model';
 export * as fees from '../lib/marketplace/fees';
 export * as securities from '../lib/marketplace/securities';
 export * as knowledge from '../lib/marketplace/knowledge/access';
+// 15.48.0 — Vault Guard: a ledger-enforced limit on what a stolen key can take from a pooled account.
+export * from '../lib/treasury/vaultGuard';

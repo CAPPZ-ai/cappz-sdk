@@ -24,6 +24,10 @@ Agents: before acting, load the skill for the task. Find it with `cappz-market s
 - [Guide](https://github.com/CAPPZ-ai/cappz-sdk/blob/main/docs/CONSTRAINT_GUARD.md): quick start, configuration, refusal reasons, troubleshooting
 - [Worked example files](https://github.com/CAPPZ-ai/cappz-sdk/tree/main/packages/cappz-sdk/examples/constraints): a bakery oven
 
+## Pooled accounts (Vault Guard)
+
+- [Guide](https://github.com/CAPPZ-ai/cappz-sdk/blob/main/docs/VAULT_GUARD.md): a guard co-signer the XRP Ledger requires, an outflow policy (destinations, per-payment and rolling-window caps, next sequence only), reconciliation; what a stolen key can still take
+
 ## Other guides
 
 - [SAML Guard](https://github.com/CAPPZ-ai/cappz-sdk/blob/main/docs/SAML_GUARD.md)
