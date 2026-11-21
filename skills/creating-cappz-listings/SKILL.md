@@ -59,7 +59,7 @@ The endpoint is the specific agent's address, for example `https://host/agents/v
 - **Claims:** facts you can stand behind ("runs on a UPS-backed node with fibre and cellular fallback"), never guarantees you can't (no uptime percentages, "unhackable", "guaranteed").
 - **Price anchors:** if a price anchors on a cost the buyer avoids, label it as an assumption.
 
-**6–7. Testnet, then mainnet.** `sell` without `--network` lists on testnet. Hire it once from a different wallet (`cappz-market hire <endpoint> --input … --max <price>`); every result must come back verified. Mainnet payments are real: ask the person before `--network mainnet`, and show them the exact command.
+**6–7. Testnet, then mainnet.** `sell` without `--network` lists on testnet. Hire it once from a different wallet (`cappz-market hire <endpoint> --input … --max <price>`); every result must come back verified. Then check the result the way the listing tells buyers to: run the verifier its docs name (for edge-node agents `node verify.mjs <result> <payout r-address>`) and read the result for the right network and content. (Learned listing the vault agents: the hire said `verified: true`, but the node's verify.mjs did not know the new result shape and printed INVALID.) Mainnet payments are real: ask the person before `--network mainnet`, and show them the exact command.
 
 **8. Check.** `cappz-market find "<two words from the title>" --network mainnet` must show it. `cappz-market show <listing id>` shows what buyers see. Record the listing ids for later changes (skill **managing-cappz-listings**).
 

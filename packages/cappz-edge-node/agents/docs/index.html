@@ -137,7 +137,7 @@ td,th{border-top:1px solid var(--line);padding:7px 8px;text-align:left;vertical-
 <h2 id="verify">Check a receipt or bundle</h2>
 <div class="card">
   <p class="mute">Paste a receipt or webhook bundle (JSON). It's checked in your browser with the Web Crypto API, so the result doesn't depend on trusting this site.</p>
-  <textarea id="vIn" placeholder='{"receipt":{…}}  or  {"bundle":{…},"records":[…]}  or  {"draw":{…},"commitment":{…}}'></textarea>
+  <textarea id="vIn" placeholder='{"receipt":{…}}  or  {"bundle":{…},"records":[…]}  or  {"draw":{…},"commitment":{…}}  or  {"report":{…}}'></textarea>
   <div class="row"><button id="vGo">Check</button><span class="mute">Expected signer: <code>{{NODE}}</code></span></div>
   <div id="vOut"></div>
   <details><summary>Check offline instead</summary>
@@ -363,7 +363,7 @@ $('drGo').onclick = async () => {
 $('vGo').onclick = async () => {
   const out = $('vOut'); let doc;
   try { doc = JSON.parse($('vIn').value); } catch { out.innerHTML = '<p class="status bad">That is not JSON.</p>'; return; }
-  const main = doc.receipt ?? doc.bundle ?? doc.draw ?? doc, records = Array.isArray(doc.records) ? doc.records : [];
+  const main = doc.receipt ?? doc.bundle ?? doc.draw ?? doc.report ?? doc, records = Array.isArray(doc.records) ? doc.records : [...(Array.isArray(doc.decisions) ? doc.decisions : []), ...(Array.isArray(doc.alerts) ? doc.alerts : [])];
   const lines = [];
   const line = (ok, t) => lines.push(`<div class="${ok ? 'ok' : 'bad'}">${ok ? '✓' : '✗'} ${esc(t)}</div>`);
   try {
@@ -376,6 +376,12 @@ $('vGo').onclick = async () => {
       line(main.payload.recordsSha256 === (await sha256(JSON.stringify(records))), 'records hash matches the bundle');
       let bad = 0; for (const r of records) if (!(await verifyTx(r)) || r.signerPublicKey !== main.signerPublicKey) bad++;
       line(bad === 0, `every record signed (${records.length - bad}/${records.length})`);
+    }
+    if (doc.report) {
+      const p = main.payload ?? {};
+      lines.push(`<div class="mute">${esc(main.eventType)} for ${esc(p.account)}: ${esc(p.state ?? p.setupAtEnd ?? '')}</div>`);
+      if (Array.isArray(doc.decisions) && p.decisionsSha256) line(p.decisionsSha256 === (await sha256(JSON.stringify(doc.decisions))), `decisions hash matches the report (${doc.decisions.length})`);
+      if (records.length) { let bad = 0; for (const r of records) if (!(await verifyTx(r)) || r.signerPublicKey !== main.signerPublicKey) bad++; line(bad === 0, `every decision and alert signed (${records.length - bad}/${records.length})`); }
     }
     if (doc.draw) {
       const d = main.payload, c = doc.commitment;

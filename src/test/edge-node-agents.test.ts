@@ -106,6 +106,23 @@ describe('edge node paid agents: verify.mjs', () => {
     expect(verify({ bundle, records: records.slice(0, 2) }).code).toBe(1);
   });
 
+  // 15.49.0: vault reports. Found on the live node: verify.mjs read {report} as a bare record and printed INVALID.
+  it('verifies a vault check report and a guard period report with its decisions and alerts', async () => {
+    const key = await keyPair();
+    const sha = async (x: string) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(x))), (b) => b.toString(16).padStart(2, '0')).join('');
+    const report = await signEdgeTx(tx('VaultChecked', { account: 'rVault', state: 'guard-load-bearing', findings: [], network: 'mainnet' }), key);
+    const ok = verify({ report }, key.publicKeyHex);
+    expect(ok.code).toBe(0);
+    expect(ok.out).toMatch(/VaultChecked for rVault: guard-load-bearing/);
+    expect(verify({ report: { ...report, payload: { ...report.payload, state: 'edited' } } }).code).toBe(1);
+    const decisions = await Promise.all([true, false].map((approved) => signEdgeTx(tx('VaultCosignDecided', { account: 'rVault', approved, network: 'mainnet' }), key)));
+    const alerts = [await signEdgeTx(tx('VaultOutflowUnapproved', { account: 'rVault', hash: 'H', network: 'mainnet' }), key)];
+    const period = await signEdgeTx(tx('VaultGuardPeriodClosed', { account: 'rVault', decisions: 2, decisionsSha256: await sha(JSON.stringify(decisions)), setupAtEnd: 'guard-load-bearing', network: 'mainnet' }), key);
+    expect(verify({ report: period, decisions, alerts }).code).toBe(0);
+    expect(verify({ report: period, decisions: decisions.slice(0, 1), alerts }).code).toBe(1);
+    expect(verify({ report: period, decisions: [{ ...decisions[0], payload: { ...decisions[0].payload, approved: false } }, decisions[1]], alerts }).code).toBe(1);
+  });
+
   // 15.44.0: a wallet, not the website's certificate, vouches for the signer.
   describe('wallet declarations (KeyZ)', () => {
     const toHex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');

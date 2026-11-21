@@ -3,7 +3,8 @@
 //   node verify.mjs <file.json> [expected signer] [--evidence key-declarations.json] [--offline]
 //   deno run --allow-read --allow-net --allow-env {{BASE}}/verify.mjs <file.json> [expected signer] [--evidence key-declarations.json]
 // Accepts a signed record, a timestamp result {receipt, declarations?}, a webhook bundle {bundle, records, declarations?},
-// or a fair draw {draw, commitment, entries?} (15.47.0; --entries <list.txt|list.json> for a list sent only as a hash).
+// or a fair draw {draw, commitment, entries?} (15.47.0; --entries <list.txt|list.json> for a list sent only as a hash),
+// or a vault report {report, decisions?, alerts?} (15.49.0: vault-check, and the vault guard's period report).
 //   node verify.mjs --hash-entries list.txt   prints a list's entriesSha256 and count (one entry per line, trimmed, blanks dropped)
 // expected signer: the node key (64 hex), the declaring wallet's public key (66 hex), or its XRPL address (r…).
 // How a record is signed: txHash = sha256(canonical JSON of the record without
@@ -265,7 +266,7 @@ const evidence = evidenceAt > 0 ? JSON.parse(await readText(args.splice(evidence
 const declarations = [doc, evidence].flatMap((x) => [...(Array.isArray(x.declarations) ? x.declarations : []), ...(x.declaration ? [x.declaration] : [])]);
 const revocations = [doc, evidence].flatMap((x) => (Array.isArray(x.revocations) ? x.revocations : []));
 const expected = args[1]?.trim();
-const main = doc.receipt ?? doc.bundle ?? doc.draw ?? doc;
+const main = doc.receipt ?? doc.bundle ?? doc.draw ?? doc.report ?? doc;
 const checks = [];
 const check = (label, ok) => { checks.push(ok); console.log(`${ok ? 'OK  ' : 'FAIL'} ${label}`); };
 
@@ -293,6 +294,21 @@ if (doc.bundle) {
   check(`every record signed by the same key (${records.length - bad}/${records.length})`, bad === 0);
   if (who.ok) check(`every record's key declared by the same wallet (${records.length - undeclared}/${records.length})`, undeclared === 0);
   console.log(`     period ${main.payload.periodStart} → ${main.payload.periodEnd}`);
+}
+if (doc.report) {
+  const p = main.payload ?? {};
+  console.log(`     ${main.eventType} for ${p.account}: ${p.state ?? p.setupAtEnd ?? ''}${p.reconciliation ? `  reconciliation ${p.reconciliation.clean ? 'clean' : 'NOT clean'}` : ''}`);
+  const extra = [...(Array.isArray(doc.decisions) ? doc.decisions : []), ...(Array.isArray(doc.alerts) ? doc.alerts : [])];
+  if (Array.isArray(doc.decisions) && p.decisionsSha256) check(`decisionsSha256 matches the ${doc.decisions.length} decisions`, p.decisionsSha256 === (await sha256(JSON.stringify(doc.decisions))));
+  if (extra.length) {
+    let bad = 0; let undeclared = 0;
+    for (const r of extra) {
+      if (!(await verify(r)) || r.signerPublicKey !== main.signerPublicKey) { bad++; continue; }
+      if (who.ok) { const w = await declaredBy(r, declarations); if (!w.ok || w.address !== who.address) undeclared++; }
+    }
+    check(`every decision and alert signed by the same key (${extra.length - bad}/${extra.length})`, bad === 0);
+    if (who.ok) check(`every decision's key declared by the same wallet (${extra.length - undeclared}/${extra.length})`, undeclared === 0);
+  }
 }
 if (doc.draw) {
   const d = main.payload, c = doc.commitment, cp = c?.payload ?? {};
