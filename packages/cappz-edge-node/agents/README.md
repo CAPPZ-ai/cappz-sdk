@@ -7,6 +7,8 @@ Pay-per-job agents an edge node can sell on the CAPPZ Marketplace, built on the 
 | `timestamp` | A receipt saying the node saw a SHA-256 at a time. The file never leaves the buyer. | 0.05 XRP | On completion: the buyer sees the receipt's SHA-256, pays, then downloads it |
 | `webhook` | A webhook URL for 30 days. Each POST becomes a signed record, and at the end a signed bundle of all records. | 2 XRP | 30% deposit opens the URL; 70% when the bundle is ready |
 | `draw` (15.47.0) | A fair draw: winners picked from a list by the hash of an XRP Ledger ledger closed after the list was locked. Anyone can recompute them. | 0.1 XRP | Pay first (the whole price); the signed draw is free when ready |
+| `vault-check` (15.49.0) | A signed report on a pooled XRPL account: whether a guard co-signer is load-bearing or a stolen key could move money alone; with a policy, the worst case; with the guard's approvals, every recent outflow matched. Read from the ledger, no key held. | 1 XRP | On completion |
+| `vault-guard` (15.49.0) | The node is the vault's guard co-signer for 30 days: co-signs only inside the owner's outflow policy, signs every decision, reconciles every 10 minutes and POSTs an alert on any outflow it did not approve, then a signed period report. Needs `CAPPZ_VAULT_GUARD_SECRET`. | 10 XRP per 30 days | Pay first, **from the vault**; the report is free |
 
 Each agent speaks the paid-agent protocol that `cappz-market hire` uses (see [skills/hiring-cappz-paid-agents](../../../skills/hiring-cappz-paid-agents/SKILL.md)). The server also serves docs for both kinds of reader, filled with the instance's live price, network, payout address and signer:
 
@@ -33,6 +35,18 @@ Giveaways, raffles, audit samples, selection by lot: the organizer wants winners
 Why nobody can steer it: the list is paid for and locked before the seed ledger exists. The seed depends only on the ledger hash and the list, so a second commitment of the same list draws the same winners. Another list costs another commitment, and every commitment is on the public log. A buyer who pays after the requested draw time gets the earliest allowed time instead; the commitment records both.
 
 The rule is written out in `draw.ts` and in the served `draw/SKILL.md`. `verify.mjs` repeats it without dependencies: `node verify.mjs draw.json <payout r-address> [--entries list.txt]`. The draw's work waits for its time, so the server matches its payments itself (`watchLong`, as for the webhook) rather than through `tick()`.
+
+## Vault check and vault guard (15.49.0)
+
+Both agents use the SDK's Vault Guard (`src/lib/treasury/vaultGuard.ts`; guide `docs/VAULT_GUARD.md`); the agent code is in `vault.ts`.
+
+- **Guard keys.** Each vault's guard key is derived as HMAC-SHA256(`CAPPZ_VAULT_GUARD_SECRET`, `cappz-vault-guard/v1|<network>|<vault>`), with the first 16 bytes used as Ed25519 entropy. The same vault always gets the same guard address, so renewals keep the signer list. Nothing per vault is stored. Rotating the receipt key (`CAPPZ_NODE_KEY`) never changes a guard. `GET /agents/vault-guard/guard/<vault>` returns the address (free).
+- **Who may start or change a guard.** A period counts only when **the vault paid it**. A job with a policy different from the vault's current one counts only if its payment was signed **without** the guard: the master key before setup, or the recovery keys. Operators can renew the same policy through the guard but can never loosen it. Unauthorised jobs answer co-sign with 403. Tested on testnet: a loosened policy paid through the guard returns `policy-change-needs-recovery`, and a stranger's payment returns `not-from-vault`.
+- **Co-signing.** `POST /agents/vault-guard/cosign/<jobId> {"tx": <autofilled for 2 signers>}`. The node reads the account's next sequence, the current ledger and its validated history since the first guard period, counts the window (validated outflows plus approvals not yet expired), and signs a `VaultCosignDecided` record either way. The approval is appended to `<data>/vault-guard/approvals-<vault>.jsonl` **before** the blob is returned. Requests are serialised, so two can't share one window.
+- **Watching.** Every `CAPPZ_VAULT_RECONCILE_SECONDS` (default 600), each active, authorised period reconciles its vault. Each new unapproved outflow becomes a signed `VaultOutflowUnapproved` record in `alerts-<vault>.jsonl`, POSTed to the buyer's `alertUrl`.
+- **End of period:** a signed `VaultGuardPeriodClosed` report (decisions, reconciliation, alerts, setup state, authorisation), free.
+- **Back up** `CAPPZ_VAULT_GUARD_SECRET` with `node.env`, and `<data>/vault-guard/` with the jobs. A lost secret changes every guard address; customers then need their recovery keys.
+- **Real testnet run:** `npx vite-node tools/vault-agents-testnet.ts` starts this server on 127.0.0.1:41470 with throwaway keys and runs every step above with real payments.
 
 ## A wallet vouches for the signer, not the certificate (15.44.0)
 

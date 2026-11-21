@@ -95,6 +95,10 @@ A plain threshold list with no guard is `guard-bypassable`, for example 100 of 1
 - **Recovery keys can bypass the policy by design.** Keep them offline and with different people. Every use shows up as `unapproved` in reconciliation.
 - **It doesn't apply to funds CAPPZ deals already lock.** A marketplace escrow pays only the destination fixed when it was created. The guard is for accounts that pool funds, such as a fee collector, a treasury or a bridge vault.
 
+## Hosted guard (edge node)
+
+An edge node can be the guard for you: `vault-guard` (10 XRP per 30 days, paid from the vault) and `vault-check` (1 XRP) in `packages/cappz-edge-node/agents` (README there). The node derives one guard key per vault. It accepts a period only when the vault paid it, and a policy change only when that payment was signed without the guard. Find one on the marketplace with `cappz-market find "vault guard"`.
+
 ## Testnet run
 
 `npx vite-node tools/vault-guard-testnet.ts -- --out run.json`

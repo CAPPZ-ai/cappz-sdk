@@ -1,6 +1,6 @@
 # CAPPZ SDK
 
-The public part of [CAPPZ](https://cappz.ai), version 15.48.1. Apache-2.0.
+The public part of [CAPPZ](https://cappz.ai), version 15.49.0. Apache-2.0.
 
 **Agents:** find the skill for a task with `cappz-market skills "what you need"`, or search [skills/index.json](skills/index.json) (every skill's when-to-use, commands and guide); [llms.txt](llms.txt) is the short map. **People:** start with the guide for what you are doing, below; the [Constraint Guard walkthrough](docs/tutorials/constraint-guard.html) is animated (open it in a browser).
 
@@ -15,11 +15,38 @@ The public part of [CAPPZ](https://cappz.ai), version 15.48.1. Apache-2.0.
 - **`@cappz/sdk/network`**: network addresses and testnet → mainnet promotion as one governed run: app-declared promotion checks, preflight evidence that a start must cite (same session, network pair and apps; any network switch invalidates it), a run view replayed from its own TXs (resume from the first step not completed; rollback clean until the first irreversible step), the issuer-grant dry run (DefaultRipple before holder lines, NoRipple repair, fee lines, owner reserve), the config manifest a run compares and anchors (shared entries must match; only a value that differs blocks), and which ledger authority (master or regular key) lets a key sign for an account. [docs/NETWORK_PROMOTION.md](docs/NETWORK_PROMOTION.md).
 - **`@cappz/sdk/constraints`** and the **Constraint Guard** (15.40.0): keep physical systems inside their safe envelope. One signed envelope per device (range, rate, dwell, sensor agreement, response, who may command what, when; loosening needs two operators and a cooling period), **reconciliation** that finds every change nobody signed for and every breach from data the plant already has (historian exports, setpoint read-back, sealed observations), and an **inline guard** on the edge node for HTTP panels, Modbus TCP, BACnet/IP, DNP3, IEC 60870-5-104, MQTT/Sparkplug B and Gremlin (Apache TinkerPop) — shadow first, enforced per point on its report, refusing in each protocol's own terms. Advisory navigation and air-data integrity for vehicles (GNSS spoofing, unreliable airspeed). Marketplace agents: `cappz-market constraints-draft`, `constraints-review`, `constraints-triage`. Guide: [docs/CONSTRAINT_GUARD.md](docs/CONSTRAINT_GUARD.md); skills [securing-control-systems](skills/securing-control-systems/SKILL.md), [monitoring-constraints](skills/monitoring-constraints/SKILL.md).
 - **Vault Guard** (15.48.0, in `@cappz/sdk/marketplace`): limit what a stolen key can take from a pooled XRPL account (a fee collector, treasury or bridge vault), enforced by the ledger. The master key is off and a signer list makes an independent guard co-signer necessary; the guard signs only inside the owner's outflow policy (allowed destinations, per-payment and rolling-window caps, the account's next sequence only); every validated outflow is reconciled against the guard's approvals. [docs/VAULT_GUARD.md](docs/VAULT_GUARD.md).
-- **`packages/cappz-edge-node`**: the CAPPZ edge node (relay, KeyZ Gate, route host, legacy faces), its tools, and its paid agents (signed timestamp, signed webhook receiver, fair draw; [agents/README.md](packages/cappz-edge-node/agents/README.md)).
+- **`packages/cappz-edge-node`**: the CAPPZ edge node (relay, KeyZ Gate, route host, legacy faces), its tools, and its paid agents (signed timestamp, signed webhook receiver, fair draw, vault check, vault guard co-signer; [agents/README.md](packages/cappz-edge-node/agents/README.md)).
 - **`packages/cappz-native`**: Rust kernels for SHA-256, Reed-Solomon erasure coding and signature verification (`src/lib/native`, `src/lib/erasure`). NEON and the ARMv8 SHA-256 instructions natively, SIMD128 WebAssembly in browsers, TypeScript everywhere else. On a Snapdragon 8cx Gen 3: content addressing 8.5× faster, Reed-Solomon 10+4 at 1.4 GB/s with per-shard integrity, notarization hashing (file hash + salted leaf in one streamed pass) 28× faster than `crypto-js`, and secp256k1 signature checks 50× faster (258× on all cores). [docs/NATIVE_KERNELS.md](docs/NATIVE_KERNELS.md).
 - **Hardware-backed keys and notarization** (`src/lib/identity`, `src/lib/crypto`): wallet keys wrapped by a passkey (WebAuthn PRF), data keys wrapped by a wallet, notarization receipts signed by an enrolled device, batch notarization under one ledger anchor (RFC 9162 Merkle proofs), and attestation checks for Apple, Android Keystore, Windows TPM and packed authenticators. [docs/HARDWARE_TRUST.md](docs/HARDWARE_TRUST.md).
 
 Tutorials: [Move off PHP](https://cappz.ai/tutorials/move-off-php) · [Identity and trust](https://cappz.ai/tutorials/identity-and-trust) · [Replicate through firewalls](https://cappz.ai/tutorials/replicate-through-firewalls) · [Earn with an agent](https://cappz.ai/tutorials/earn-with-your-agent)
+
+## What's new in 15.49.0
+
+- **The edge node sells the Vault Guard as two paid agents** (`packages/cappz-edge-node/agents/vault.ts`, wired in `agents/server.ts`; served docs `vault-check.SKILL.md`, `vault-guard.SKILL.md`, guide cards, `llms.txt`, OpenAPI).
+  - **`vault-check`** (1 XRP, on completion): a signed report on a pooled XRPL account. It says whether a guard co-signer is load-bearing or a stolen key could move money alone; with a policy, the worst case; with the guard's approvals, every recent outflow matched. Read from the ledger; no key held.
+  - **`vault-guard`** (10 XRP per 30 days, pay first; the report is free): the node is the vault's guard co-signer.
+    - **Co-signing:** `POST /vault-guard/cosign/<jobId>` co-signs only inside the owner's policy. Every decision is signed. Approvals are recorded before the blob is returned, and requests are serialised.
+    - **Watching:** outflows are reconciled every 10 minutes from the first guard period. A signed alert is POSTed to `alertUrl` for any outflow the guard didn't approve. The period ends with a signed report.
+    - **Guard keys:** derived from `CAPPZ_VAULT_GUARD_SECRET` by network and vault, so the same vault keeps the same guard and the receipt key can rotate freely.
+  - **Only the vault can start or change its guard.** A period counts only when the vault paid it, and a policy change only when that payment was signed without the guard (recovery keys or the master key). A thief holding operator keys can't pay for a looser policy through the guard. Unauthorised jobs get 403.
+  - **Tested on the XRPL testnet** with the real server (`tools/vault-agents-testnet.ts`):
+    - vault check `not-set-up`, then `guard-load-bearing`;
+    - a period paid from the vault was authorised, and an in-policy payment was co-signed and settled;
+    - a drain was refused;
+    - a loosened policy paid through the guard was refused (`policy-change-needs-recovery`), and a stranger-paid period too (`not-from-vault`), both answering 403;
+    - break-glass recovery was alerted by the node.
+  - Unit tests: `src/test/edge-node-vault.test.ts`.
+- **New skill `creating-cappz-listings`:** the path from "list this" to a listing that works when bought. It covers:
+  - the service exists and is tested
+  - the seller account and network
+  - fields and pricing (recurring services as at most 30-day periods)
+  - a description for people and agents
+  - testnet, one hire, then mainnet with the person's OK
+  - a final `find` check
+
+  Linked from skills/README (start here), `llms.txt`, and the using, drafting, managing, selling and edge-node skills.
+- `npm run market:build` now writes `skills/index.json` before bundling the tool. Before, the tool shipped the previous skills index, so a new skill couldn't be found with `cappz-market skills` until a second build.
 
 ## What's new in 15.48.1
 

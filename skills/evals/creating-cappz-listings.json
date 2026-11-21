@@ -1,0 +1,33 @@
+[
+  {
+    "skills": ["creating-cappz-listings"],
+    "query": "List my new vault check agent on the CAPPZ marketplace for 1 XRP. It's at https://node.example.com/agents/vault-check.",
+    "files": [],
+    "expected_behavior": [
+      "Checks the agent exists first: GET <endpoint>/agent and /health answer on the network being listed",
+      "Confirms which CAPPZ_HOME session (seller account) and that a profile exists on that network",
+      "Lists the testnet twin first with its own testnet endpoint, hires it once, then asks the person before --network mainnet",
+      "Uses sell --category agents --kind service --endpoint <the agent's own url> with the price equal to the agent card's",
+      "Verifies with find and records the listing ids"
+    ]
+  },
+  {
+    "skills": ["creating-cappz-listings"],
+    "query": "We designed a new security service but haven't deployed it yet. Put it on the marketplace now so people can see it.",
+    "files": [],
+    "expected_behavior": [
+      "Refuses to list something that does not run yet, or proposes deploying and testing it first",
+      "Explains that a listing is a promise buyers act on and contracts freeze its terms"
+    ]
+  },
+  {
+    "skills": ["creating-cappz-listings"],
+    "query": "Sell a monitoring service at 10 XRP a month on CAPPZ, recommend how to price and structure it.",
+    "files": [],
+    "expected_behavior": [
+      "Structures one order as one period of at most 30 days, renewal as a new order",
+      "Recommends a price with reasoning (comparable listings, running cost and risk, value bounded) and leaves the decision to the person",
+      "Writes the description for people and agents with facts, not uptime guarantees"
+    ]
+  }
+]

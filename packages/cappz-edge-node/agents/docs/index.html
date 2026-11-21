@@ -78,6 +78,18 @@ td,th{border-top:1px solid var(--line);padding:7px 8px;text-align:left;vertical-
     <p class="mute">Pick giveaway winners, an audit sample or a jury so nobody can rig it, this node included. The list is locked first; the winners come from an XRP Ledger hash nobody knew yet. Anyone can recompute them.</p>
     <a class="btn" href="#try-draw">Run a draw</a>
   </div>
+  <div class="card" id="vault-check">
+    <h3>Vault check</h3>
+    <div class="price">{{VC_PRICE}} XRP per report</div>
+    <p class="mute">Could a stolen key empty this XRPL account? A signed report on its master key, regular key and signer list, read from the ledger. No key is held, and you see the report's fingerprint before you pay.</p>
+    <a class="btn" href="#try-vault-check">Check an account</a>
+  </div>
+  <div class="card" id="vault-guard">
+    <h3>Vault guard</h3>
+    <div class="price">{{VG_PRICE}} XRP per {{VG_DAYS}} days</div>
+    <p class="mute">This node becomes your vault's guard co-signer. Stolen operator keys move nothing; the guard signs only inside your policy (allowed destinations, daily caps), and you get an alert on anything it didn't approve.</p>
+    <a class="btn" href="{{BASE}}/vault-guard/SKILL.md">How to set it up</a>
+  </div>
 </div>
 
 <h2 id="try-timestamp">Timestamp a file</h2>
@@ -114,6 +126,14 @@ td,th{border-top:1px solid var(--line);padding:7px 8px;text-align:left;vertical-
   <div id="drOut"></div>
 </div>
 
+<h2 id="try-vault-check">Check an XRPL account</h2>
+<div class="card">
+  <p class="mute">The account to check, and (optional) the guard co-signer it should require. Read from the {{NETWORK}} ledger. For a policy and reconciliation, use the API (<a href="{{BASE}}/vault-check/SKILL.md">vault-check/SKILL.md</a>).</p>
+  <div class="row"><input type="text" id="vcAccount" placeholder="Account (r…)" style="flex:1;min-width:220px"><input type="text" id="vcGuard" placeholder="Guard (r…, optional)" style="flex:1;min-width:220px"></div>
+  <button id="vcGo">Check it</button>
+  <div id="vcOut"></div>
+</div>
+
 <h2 id="verify">Check a receipt or bundle</h2>
 <div class="card">
   <p class="mute">Paste a receipt or webhook bundle (JSON). It's checked in your browser with the Web Crypto API, so the result doesn't depend on trusting this site.</p>
@@ -135,6 +155,7 @@ node verify.mjs receipt.json {{NODE}}</pre>
     <tr><td><a href="{{BASE}}/timestamp/SKILL.md">timestamp/SKILL.md</a></td><td>Agent skill for the timestamp agent (drop it in <code>.claude/skills/</code>).</td></tr>
     <tr><td><a href="{{BASE}}/webhook/SKILL.md">webhook/SKILL.md</a></td><td>Agent skill for the webhook receiver.</td></tr>
     <tr><td><a href="{{BASE}}/draw/SKILL.md">draw/SKILL.md</a></td><td>Agent skill for the fair draw, with the rule written out.</td></tr>
+    <tr><td><a href="{{BASE}}/vault-check/SKILL.md">vault-check/SKILL.md</a> · <a href="{{BASE}}/vault-guard/SKILL.md">vault-guard/SKILL.md</a></td><td>Agent skills for the vault check and the vault guard co-signer.</td></tr>
     <tr><td><a href="{{BASE}}/draw/log">draw/log</a></td><td>Every draw commitment this node signed, hash-chained.</td></tr>
     <tr><td><a href="{{BASE}}/openapi.json">openapi.json</a></td><td>OpenAPI 3.1 for every route.</td></tr>
     <tr><td><a href="{{BASE}}/timestamp/agent">timestamp/agent</a> · <a href="{{BASE}}/webhook/agent">webhook/agent</a> · <a href="{{BASE}}/draw/agent">draw/agent</a></td><td>Agent cards: price, stages, payTo, network, signer.</td></tr>
@@ -232,6 +253,33 @@ $('tsGo').onclick = async () => {
     await sleep(shown ? 4000 : 1000);
   }
   out.insertAdjacentHTML('beforeend', `<p class="mute">Still waiting. Your job is kept: reopen <code>${esc(BASE)}/timestamp/jobs/${esc(jobId)}/stages/0/result</code> after paying.</p>`);
+};
+
+// ── Vault check ──
+$('vcGo').onclick = async () => {
+  const out = $('vcOut'); $('vcGo').disabled = true;
+  const account = $('vcAccount').value.trim(), guard = $('vcGuard').value.trim();
+  const o = await api('/vault-check/jobs', { input: guard ? { account, guard } : { account } });
+  if (o.status !== 200) { out.innerHTML = `<p class="status bad">${esc(o.json?.error ?? o.text)}</p>`; $('vcGo').disabled = false; return; }
+  const jobId = o.json.job.jobId; let shown = false, promised = null;
+  out.innerHTML = '<p class="status">Reading the ledger…</p>';
+  for (let i = 0; i < 900; i++) {
+    const r = await api(`/vault-check/jobs/${jobId}/stages/0/result`);
+    if (r.status === 402 && !shown) {
+      shown = true; promised = r.json.resultSha256;
+      out.innerHTML = `<p class="status">Report ready. Its fingerprint is <code>${esc(promised)}</code></p>${payBox(r.json.pay, 'to release it')}<p class="mute">Waiting for your payment… Job <code>${esc(jobId)}</code></p>`;
+      wireClaim(out, 'vault-check', jobId);
+    } else if (r.status === 200) {
+      const fp = await sha256(r.text), rep = r.json.report, valid = await verifyTx(rep), p = rep.payload;
+      out.innerHTML = `<p class="status ${p.state === 'guard-load-bearing' ? 'ok' : 'bad'}">${esc(p.state)}</p>
+        <ul>${p.findings.map((f) => `<li class="${f.blocking ? 'bad' : ''}">${esc(f.message)}</li>`).join('') || '<li>No findings: no key but the guard can move money.</li>'}</ul>
+        <p>Bytes match the fingerprint: <b class="${fp === promised ? 'ok' : 'bad'}">${fp === promised ? 'yes' : 'no'}</b> · Signature: <b class="${valid ? 'ok' : 'bad'}">${valid ? 'valid' : 'INVALID'}</b></p>
+        <button id="vcDl">Download report.json</button>`;
+      $('vcDl').onclick = () => download(`vault-${account.slice(0, 10)}.json`, r.text);
+      return;
+    }
+    await sleep(shown ? 4000 : 1000);
+  }
 };
 
 // ── Webhook ──

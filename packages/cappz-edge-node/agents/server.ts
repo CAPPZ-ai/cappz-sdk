@@ -6,6 +6,14 @@
  *                      the draw time picks winners from the hash of the first XRPL ledger closed at
  *                      or after it. Anyone can recompute the winners. One payment; the result is free.
  *
+ *   /agents/vault-check  Vault check (15.49.0, vault.ts): a signed report on a pooled XRPL account — is a guard
+ *                      co-signer load-bearing, what a stolen key could take, were recent outflows approved.
+ *                      Read-only; pay on completion.
+ *   /agents/vault-guard  Vault guard (15.49.0): the node is the account's guard co-signer for CAPPZ_VAULT_GUARD_DAYS
+ *                      (default 30). It co-signs only inside the owner's outflow policy, signs every decision,
+ *                      reconciles outflows every 10 minutes (alerting on any it did not approve) and ends with a
+ *                      signed period report. Pay first; the report is free. Needs CAPPZ_VAULT_GUARD_SECRET.
+ *
  *   /agents/timestamp  Signed timestamp: a SHA-256 in, a receipt signed with the
  *                      node key out (verifyEdgeTx checks it). Pay on completion.
  *   /agents/webhook    Signed webhook receiver: an endpoint for CAPPZ_WEBHOOK_DAYS
@@ -68,10 +76,12 @@ import {
 import { signEdgeTx, sha256HexOf } from '../../../src/lib/functions/edgeJobs.ts';
 import { loadNodeKey } from '../signingKey.ts';
 import { declarationHash, evaluateKey, type KeyDeclaration, type KeyRevocation } from '../../../src/lib/identity/keyDeclaration.ts';
-import { deriveAddress } from 'xrpl';
+import { deriveAddress, isValidClassicAddress } from 'xrpl';
 import { anchorRef, checkAnchor, discoverLedgerAnchors, isLedgerAnchor, xrplRpc, type LedgerAnchor } from './ledgerKeyz.ts';
 import { DRAW_RULE, drawInputProblem, drawPicks, drawSeed, effectiveDrawAt, entriesHash, findSeedLedger, rpcDrawLedgerReader, type DrawInput } from './draw.ts';
 import { DOC_FILES, docVars, renderDoc, WEBHOOK_DEPOSIT_SHARE } from './docs.ts';
+import { checkSignerSetup, guardCosign, outflowIntentHash, policyHash, reconcileOutflows, worstCaseLoss, signerWeights, type OutflowApproval, type ReconReport } from '../../../src/lib/treasury/vaultGuard.ts';
+import { authorizeGuardJob, checkInputProblem, fullPolicy, guardInputProblem, guardWalletFor, setupFromAccountInfo, validatedFromAccountTx, windowSpent, GUARD_DERIVATION, type VaultCheckInput, type VaultGuardInput } from './vault.ts';
 
 const env = (k: string, d?: string) => Deno.env.get(k)?.trim() || d;
 const PAY_TO = env('CAPPZ_AGENT_PAYTO')!;
@@ -89,6 +99,12 @@ const DRAW_PRICE = Number(env('CAPPZ_DRAW_PRICE_XRP', '0.1'));
 const DRAW_MAX_DAYS = Number(env('CAPPZ_DRAW_MAX_DAYS', '30'));
 const DRAW_MIN_LEAD_MS = Number(env('CAPPZ_DRAW_MIN_LEAD_SECONDS', '120')) * 1000;
 const DRAW_MAX_BODY = 3 * 1024 * 1024;
+const VAULT_CHECK_PRICE = Number(env('CAPPZ_VAULT_CHECK_PRICE_XRP', '1'));
+const VAULT_GUARD_PRICE = Number(env('CAPPZ_VAULT_GUARD_PRICE_XRP', '10'));
+const VAULT_GUARD_DAYS = Number(env('CAPPZ_VAULT_GUARD_DAYS', '30'));
+/** 32 random bytes (hex) the guard keys are derived from; unset → the guard is not offered. Back it up. */
+const GUARD_SECRET = env('CAPPZ_VAULT_GUARD_SECRET');
+const VAULT_RECONCILE_MS = Number(env('CAPPZ_VAULT_RECONCILE_SECONDS', '600')) * 1000;
 const PRINCIPLE = "m/44'/144'/100'/principles/cope/v1#local-first";
 const DAY = 86_400_000;
 
@@ -366,6 +382,185 @@ const draw = createPaidAgent({
   },
 });
 
+
+// ─── Agent 4: vault check (read-only signed report; pay on completion) ───────
+
+const ledger = <T = Record<string, unknown>>(method: string, params: Record<string, unknown>) => xrplRpc(NETWORK, method, params) as Promise<T>;
+async function readVault(account: string, limit = 200) {
+  const info = await ledger<Record<string, unknown>>('account_info', { account, ledger_index: 'validated', signer_lists: true });
+  const atx = await ledger<{ transactions?: unknown[] }>('account_tx', { account, ledger_index_min: -1, ledger_index_max: -1, limit, forward: false, api_version: 2 });
+  return { setup: setupFromAccountInfo(info as never), validated: validatedFromAccountTx((atx.transactions ?? []) as never) };
+}
+
+const vcStore = await fileJobStore(`${DATA}/vault-check`);
+const vaultCheck = createPaidAgent({
+  offer: defineAgentOffer({
+    name: 'CAPPZ vault check',
+    description: `A signed report on a pooled XRP Ledger account (treasury, fee collector, bridge vault): whether a guard co-signer is load-bearing or a stolen key could move money alone (master key, regular key, signer-list weights), what the stated policy would still let a thief take, and, given the guard's approvals, whether every recent outflow was approved. Read from the ledger; this node never holds a key for the account. Pay on completion.`,
+    payTo: PAY_TO, network: NETWORK, currency: 'XRP', price: VAULT_CHECK_PRICE,
+    stages: SCHEDULE_PRESETS['on-completion'].stages.map((s) => ({ ...s, deliverable: 'Signed vault report (JSON)' })),
+  }),
+  store: vcStore,
+  work: async ({ jobId, input }) => {
+    const x = input as VaultCheckInput;
+    const { setup, validated } = await readVault(x.account, x.limit ?? 200);
+    const guard = x.guard ?? '';
+    const check = checkSignerSetup({ account: x.account, guard }, setup, x.recovery ?? []);
+    const policy = x.policy ? fullPolicy(x.policy, x.account, guard, NETWORK) : null;
+    const recon: ReconReport | null = policy ? await reconcileOutflows(policy, x.approvals ?? [], validated) : null;
+    const report = await signed('VaultChecked', `${POW}/vaults/${x.account}`, {
+      jobId, account: x.account, guard: guard || null, state: check.state, findings: check.findings, setup,
+      worstCase: policy ? worstCaseLoss(policy) : null,
+      reconciliation: recon ? { clean: recon.clean, checked: recon.checked, reportHash: recon.reportHash, unapproved: recon.findings.filter((f) => f.state === 'unapproved') } : null,
+      transactionsRead: validated.length,
+    });
+    return { report, ...(recon ? { reconciliation: recon } : {}), ...evidenceFor([report.payload.signerDeclaration]), verify: VERIFY_HOW };
+  },
+});
+
+// ─── Agent 5: vault guard (the node co-signs for a period; pay first) ────────
+
+const vgStore = await fileJobStore(`${DATA}/vault-guard`);
+const approvalsFile = (vault: string) => `${DATA}/vault-guard/approvals-${vault}.jsonl`;
+const decisionsFile = (jobId: string) => `${DATA}/vault-guard/decisions-${jobId}.jsonl`;
+const alertsFile = (vault: string) => `${DATA}/vault-guard/alerts-${vault}.jsonl`;
+async function readJsonl<T>(path: string): Promise<T[]> {
+  try { return (await Deno.readTextFile(path)).split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l) as T); } catch (e) { onlyMissing(e); return []; }
+}
+async function guardPeriod(jobId: string): Promise<{ start: number; end: number } | null> {
+  const paid = (await vgStore.eventsFor!(jobId)).find((e) => e.type === 'StagePaid' && e.stage === 0);
+  if (!paid) return null;
+  const start = Date.parse(paid.at);
+  return { start, end: start + VAULT_GUARD_DAYS * DAY };
+}
+/**
+ * When the vault's guarding began: its first paid period. Earlier outflows (the payment for that first period,
+ * anything before the setup) are not the guard's to account for.
+ */
+async function vaultSince(vault: string): Promise<number> {
+  let first = Infinity;
+  for (const j of await vaultGuard.jobs()) {
+    if ((j.input as VaultGuardInput).account !== vault) continue;
+    const e = (await vgStore.eventsFor!(j.jobId)).find((x) => x.type === 'StagePaid' && x.stage === 0);
+    if (e) first = Math.min(first, Date.parse(e.at));
+  }
+  return first;
+}
+const since = <T extends { closeTime: string }>(rows: T[], from: number) => rows.filter((r) => Date.parse(r.closeTime) >= from);
+/** Approvals for one vault (every period), as recorded before each co-signed blob was handed out. */
+const vaultApprovals = (vault: string) => readJsonl<OutflowApproval>(approvalsFile(vault));
+/** Payment transactions by hash (validated transactions never change). */
+const paymentTxs = new Map<string, Record<string, unknown>>();
+/**
+ * Every paid job for a vault, in payment order, authorised in turn (vault.ts authorizeGuardJob): the vault must pay,
+ * and a policy change must be paid without the guard. Returns this job's verdict.
+ */
+async function guardAuth(jobId: string): Promise<ReturnType<typeof authorizeGuardJob>> {
+  const me = await vaultGuard.job(jobId);
+  if (!me) return { ok: false, code: 'not-paid', message: 'Unknown job.' };
+  const vault = (me.job.input as VaultGuardInput).account;
+  const guard = (await guardWalletFor(GUARD_SECRET!, NETWORK, vault)).classicAddress;
+  const paid: Array<{ jobId: string; at: string; txHash: string; input: VaultGuardInput }> = [];
+  for (const j of await vaultGuard.jobs()) {
+    if ((j.input as VaultGuardInput).account !== vault) continue;
+    const e = (await vgStore.eventsFor!(j.jobId)).find((x) => x.type === 'StagePaid' && x.stage === 0) as { at: string; txHash: string } | undefined;
+    if (e) paid.push({ jobId: j.jobId, at: e.at, txHash: e.txHash, input: j.input as VaultGuardInput });
+  }
+  paid.sort((a, b) => a.at.localeCompare(b.at));
+  let current: string | null = null;
+  for (const j of paid) {
+    if (!paymentTxs.has(j.txHash)) paymentTxs.set(j.txHash, (await ledger<{ tx_json: Record<string, unknown> }>('tx', { transaction: j.txHash, api_version: 2 })).tx_json);
+    const verdict = authorizeGuardJob({ vault, guard, policyHash: await policyHash(fullPolicy(j.input.policy, vault, guard, NETWORK)), payment: paymentTxs.get(j.txHash)!, currentPolicyHash: current });
+    if (verdict.ok) current = verdict.policyHash;
+    if (j.jobId === jobId) return verdict;
+  }
+  return { ok: false, code: 'not-paid', message: 'The period is not paid yet.' };
+}
+/** Co-sign requests run one at a time, so two requests can never both fit the same window. */
+let cosignQueue: Promise<unknown> = Promise.resolve();
+const lastReconcile = new Map<string, number>();
+
+async function reconcileVault(jobId: string, x: VaultGuardInput, guard: string): Promise<ReconReport> {
+  const policy = fullPolicy(x.policy, x.account, guard, NETWORK);
+  const { validated } = await readVault(x.account);
+  const recon = await reconcileOutflows(policy, await vaultApprovals(x.account), since(validated, await vaultSince(x.account)));
+  const alerted = new Set((await readJsonl<{ payload: { hash: string } }>(alertsFile(x.account))).map((a) => a.payload.hash));
+  for (const f of recon.findings.filter((f) => f.state === 'unapproved' && !alerted.has(f.hash))) {
+    const alert = await signed('VaultOutflowUnapproved', `${POW}/vaults/${x.account}`, { jobId, account: x.account, hash: f.hash, type: f.type, destination: f.destination ?? null, asset: f.asset ?? null, amount: f.amount ?? null, at: f.at, message: f.message });
+    await Deno.writeTextFile(alertsFile(x.account), JSON.stringify(alert) + '\n', { append: true });
+    console.warn(`[agents] vault ${x.account}: UNAPPROVED outflow ${f.hash} (${f.amount ?? '?'} ${f.asset ?? ''})`);
+    if (x.alertUrl) await fetch(x.alertUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(alert), signal: AbortSignal.timeout(10_000) }).catch((e) => console.warn(`[agents] alert POST to ${x.alertUrl} failed: ${(e as Error).message}`));
+  }
+  lastReconcile.set(jobId, Date.now());
+  return recon;
+}
+
+const vaultGuard = createPaidAgent({
+  offer: defineAgentOffer({
+    name: 'CAPPZ vault guard',
+    description: `This node becomes your pooled XRPL account's guard co-signer for ${VAULT_GUARD_DAYS} days. With the master key off and the guard required by the signer list, a stolen operator key (or all of them) cannot move money; the guard co-signs only inside your outflow policy (allowed destinations, per-payment and rolling-window caps, the account's next sequence only, never a key or signer change). Every decision is signed, outflows are reconciled every 10 minutes with an alert on any the guard did not approve, and the period ends with a signed report. Pay first; the report is free.`,
+    payTo: PAY_TO, network: NETWORK, currency: 'XRP', price: VAULT_GUARD_PRICE,
+    stages: [
+      { label: `Pay: guard active for ${VAULT_GUARD_DAYS} days`, kind: 'upfront', share: 1, deliverable: `POST ${PUBLIC_BASE}/vault-guard/cosign/<jobId> co-signs in-policy transactions for ${VAULT_GUARD_DAYS} days; every decision signed` },
+      { label: 'Period ended: signed report', kind: 'completion', share: 0, deliverable: 'Every decision, the period\'s reconciliation and the setup check at the end, signed (JSON). Nothing more to pay.' },
+    ],
+  }),
+  store: vgStore,
+  work: async ({ jobId, input }) => {
+    const x = input as VaultGuardInput;
+    const p = await guardPeriod(jobId);
+    if (!p) throw new Error('The payment is not recorded yet.');
+    if (!GUARD_SECRET) throw new Error('This node no longer offers the vault guard (CAPPZ_VAULT_GUARD_SECRET unset).');
+    const guard = (await guardWalletFor(GUARD_SECRET, NETWORK, x.account)).classicAddress;
+    while (Date.now() < p.end) await sleep(Math.min(DAY, p.end - Date.now()));
+    const recon = await reconcileVault(jobId, x, guard);
+    const { setup } = await readVault(x.account, 1);
+    const check = checkSignerSetup({ account: x.account, guard }, setup, x.recovery ?? []);
+    const decisions = await readJsonl<Signed>(decisionsFile(jobId));
+    const alerts = (await readJsonl<Signed>(alertsFile(x.account))).filter((a) => Date.parse(a.timestamp) >= p.start);
+    const authorized = await guardAuth(jobId);
+    const report = await signed('VaultGuardPeriodClosed', `${POW}/vaults/${x.account}`, {
+      jobId, account: x.account, guard, label: x.label ?? null,
+      periodStart: new Date(p.start).toISOString(), periodEnd: new Date(p.end).toISOString(),
+      decisions: decisions.length, approved: decisions.filter((d) => (d.payload as { approved?: boolean }).approved).length,
+      decisionsSha256: await sha256HexOf(JSON.stringify(decisions)),
+      reconciliation: { clean: recon.clean, reportHash: recon.reportHash, unapproved: recon.findings.filter((f) => f.state === 'unapproved').length },
+      alerts: alerts.length, setupAtEnd: check.state, setupFindings: check.findings,
+      authorized: authorized.ok ? true : { code: authorized.code, message: authorized.message },
+    });
+    const named = [...decisions, ...alerts].map((r) => (r.payload as { signerDeclaration?: string }).signerDeclaration);
+    return { report, decisions, alerts, reconciliation: recon, ...evidenceFor([report.payload.signerDeclaration, ...named]), verify: VERIFY_HOW };
+  },
+});
+
+/** A co-sign request for an active period: evaluate against the policy and the ledger, record, sign. */
+function cosign(jobId: string, x: VaultGuardInput, tx: Record<string, unknown>): Promise<{ code: number; body: unknown }> {
+  const run = async () => {
+    const guardWallet = await guardWalletFor(GUARD_SECRET!, NETWORK, x.account);
+    const policy = fullPolicy(x.policy, x.account, guardWallet.classicAddress, NETWORK);
+    const info = await ledger<{ account_data: { Sequence: number } }>('account_info', { account: x.account, ledger_index: 'current' });
+    const current = await ledger<{ ledger_current_index: number }>('ledger_current', {});
+    const approvals = await vaultApprovals(x.account);
+    const read = await readVault(x.account);
+    const setup = read.setup;
+    const validated = since(read.validated, await vaultSince(x.account));
+    const recon = await reconcileOutflows(policy, approvals, validated);
+    const validatedIntents = new Set(await Promise.all(validated.filter((v) => v.tx.Account === x.account).map((v) => outflowIntentHash(v.tx))));
+    const ctx = { nextSequence: info.account_data.Sequence, currentLedger: current.ledger_current_index, spent: windowSpent(recon.spent, approvals, validatedIntents, current.ledger_current_index) };
+    const now = new Date().toISOString();
+    const { decision, txBlob } = await guardCosign(policy, ctx, tx, guardWallet, now);
+    if (decision.approved) await Deno.writeTextFile(approvalsFile(x.account), JSON.stringify(decision.approval) + '\n', { append: true });
+    const record = await signed('VaultCosignDecided', `${POW}/vaults/${x.account}`, {
+      jobId, account: x.account, approved: decision.approved,
+      ...(decision.approved ? { approval: decision.approval } : { reasons: decision.reasons }),
+    });
+    await Deno.writeTextFile(decisionsFile(jobId), JSON.stringify(record) + '\n', { append: true });
+    const setupState = checkSignerSetup(policy, setup, x.recovery ?? []).state;
+    return { code: decision.approved ? 200 : 422, body: { approved: decision.approved, ...(decision.approved ? { txBlob, approval: decision.approval } : { reasons: decision.reasons }), record, setup: setupState, ...(setupState !== 'guard-load-bearing' ? { warning: 'The guard is not load-bearing on this account yet: a key other than the guard can still move money. Run the setup (GET …/vault-guard/guard/<account>).' } : {}) } };
+  };
+  const pr = cosignQueue.then(run, run); cosignQueue = pr.catch(() => null); return pr;
+}
+
 // ─── Payment watching ────────────────────────────────────────────────────────
 // timestamp: agent.tick(). webhook: its completion work waits for the period, and
 // tick() waits for running work, so payments are matched here and work is (re)started
@@ -398,6 +593,15 @@ setInterval(async () => {
   try { await timestamp.tick(); } catch (e) { console.warn('[agents] timestamp tick:', (e as Error).message); }
   try { await watchLong(webhook); } catch (e) { console.warn('[agents] webhook watch:', (e as Error).message); }
   try { await watchLong(draw); } catch (e) { console.warn('[agents] draw watch:', (e as Error).message); }
+  try { await vaultCheck.tick(); } catch (e) { console.warn('[agents] vault-check tick:', (e as Error).message); }
+  try { await watchLong(vaultGuard); } catch (e) { console.warn('[agents] vault-guard watch:', (e as Error).message); }
+  // Active guard periods: reconcile each vault every 10 minutes (alerts on any outflow the guard did not approve).
+  if (GUARD_SECRET) for (const j of (await vaultGuard.jobs().catch(() => [])).filter((j) => j.state === 'working')) {
+    if (Date.now() - (lastReconcile.get(j.jobId) ?? 0) < VAULT_RECONCILE_MS) continue;
+    const x = j.input as VaultGuardInput;
+    if (!(await guardAuth(j.jobId).catch(() => ({ ok: false }))).ok) { lastReconcile.set(j.jobId, Date.now()); continue; }
+    try { await reconcileVault(j.jobId, x, (await guardWalletFor(GUARD_SECRET, NETWORK, x.account)).classicAddress); } catch (e) { lastReconcile.set(j.jobId, Date.now()); console.warn(`[agents] vault ${x.account} reconcile:`, (e as Error).message); }
+  }
   ticking = false;
 }, 15_000);
 
@@ -425,6 +629,16 @@ const AGENTS: Record<string, { agent: PaidAgent; howToUse: string; validate: (in
       return null;
     },
   },
+  'vault-check': {
+    agent: vaultCheck,
+    howToUse: `cappz-market hire ${PUBLIC_BASE}/vault-check --input '{"account":"r…","guard":"r… (optional)","recovery":["r…"],"policy":{…} (optional)}' --max ${VAULT_CHECK_PRICE} — or POST /jobs → pay → GET /jobs/<id>/stages/0/result`,
+    validate: checkInputProblem,
+  },
+  ...(GUARD_SECRET ? { 'vault-guard': {
+    agent: vaultGuard,
+    howToUse: `1. GET ${PUBLIC_BASE}/vault-guard/guard/<vault r-address> → your guard address and setup. 2. Set up the signer list with it and disable the master key (guardSetupTransactions in @cappz/sdk/marketplace). 3. cappz-market hire ${PUBLIC_BASE}/vault-guard --input '{"account":"r…","policy":{"destinations":[{"address":"r…","label":"…"}],"limits":[{"asset":"XRP","perTx":"20000000","perWindow":"50000000"}]},"recovery":["r…","r…"],"alertUrl":"https://… (optional)"}' --max ${VAULT_GUARD_PRICE}. 4. For each payment: autofill it for 2 signers, POST ${PUBLIC_BASE}/vault-guard/cosign/<jobId> {"tx":…} → txBlob; add one operator signature (multisign) and submit.`,
+    validate: guardInputProblem,
+  } } : {}),
   draw: {
     agent: draw,
     howToUse: `cappz-market hire ${PUBLIC_BASE}/draw --input '{"entries":["ann","bob","cy"],"winners":1,"public":true}' --max ${DRAW_PRICE} — or POST /jobs → pay the one stage → GET ${PUBLIC_BASE}/draw/commitments/<jobId> (share it before the draw) → after drawAt GET /jobs/<id>/stages/1/result (free)`,
@@ -440,6 +654,7 @@ const VARS = docVars({
   publicBase: PUBLIC_BASE, network: NETWORK, payTo: PAY_TO, nodePublicKeyHex: key.publicKeyHex,
   timestampPrice: TIMESTAMP_PRICE, webhookPrice: WEBHOOK_PRICE, webhookDays: WEBHOOK_DAYS,
   drawPrice: DRAW_PRICE, drawMaxDays: DRAW_MAX_DAYS, drawMinLeadSeconds: DRAW_MIN_LEAD_MS / 1000,
+  vaultCheckPrice: VAULT_CHECK_PRICE, vaultGuardPrice: VAULT_GUARD_PRICE, vaultGuardDays: VAULT_GUARD_DAYS,
   peerBase: env('CAPPZ_AGENT_PEER_BASE', '')!.replace(/\/+$/, ''),
 });
 async function doc(path: string): Promise<Response> {
@@ -486,6 +701,32 @@ function openapi(): unknown {
           public: { type: 'boolean', default: false, description: 'Serve the result (with entries, if sent) at /draw/draws/{jobId}.' },
         },
       }),
+      ...agentPaths('vault-check', {
+        type: 'object', required: ['account'],
+        properties: {
+          account: { type: 'string', description: 'The pooled account to check (XRPL classic address).' },
+          guard: { type: 'string', description: 'The guard co-signer it should require.' },
+          recovery: { type: 'array', maxItems: 8, items: { type: 'string' }, description: 'Offline recovery signers (treated as offline, not online keys).' },
+          policy: { type: 'object', description: 'Optional outflow policy (destinations, limits): adds the worst case and reconciliation.' },
+          approvals: { type: 'array', description: 'The guard\'s recorded approvals (with policy): every recent outflow is matched against them.' },
+          limit: { type: 'integer', minimum: 1, maximum: 400, default: 200 },
+        },
+      }),
+      ...(GUARD_SECRET ? {
+        ...agentPaths('vault-guard', {
+          type: 'object', required: ['account', 'policy'],
+          properties: {
+            account: { type: 'string' },
+            policy: { type: 'object', required: ['destinations', 'limits'], properties: { destinations: { type: 'array', items: { type: 'object', required: ['address', 'label'], properties: { address: { type: 'string' }, tag: { type: 'integer' }, label: { type: 'string' } } } }, limits: { type: 'array', items: { type: 'object', required: ['asset', 'perTx', 'perWindow'], properties: { asset: { type: 'string', description: 'XRP (drops) or <currency>/<issuer> (decimal)' }, perTx: { type: 'string' }, perWindow: { type: 'string' } } } }, windowHours: { type: 'number', default: 24 }, maxFeeDrops: { type: 'integer', default: 1000 }, maxLedgerAhead: { type: 'integer', default: 20 } } },
+            recovery: { type: 'array', maxItems: 8, items: { type: 'string' } },
+            alertUrl: { type: 'string', description: 'https URL that receives a signed alert for any outflow the guard did not approve.' },
+            label: { type: 'string', maxLength: 100 },
+          },
+        }),
+        '/vault-guard/guard/{account}': { get: { summary: 'The guard address this node uses for a vault (free), with the signer-list weights to set up', parameters: [{ name: 'account', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: '{ guard, network, derivation, weights }' } } } },
+        '/vault-guard/cosign/{jobId}': { post: { summary: 'Ask the guard to co-sign one prepared (autofilled, unsigned) transaction', parameters: [idParam], requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['tx'], properties: { tx: { type: 'object' } } } } } }, responses: { 200: { description: '{ approved: true, txBlob, approval, record }' }, 422: { description: '{ approved: false, reasons, record }' }, 402: { description: 'Not paid' }, 410: { description: 'Period ended' } } } },
+        '/vault-guard/status/{jobId}': { get: { summary: 'Period, policy, decisions and the last reconciliation time', parameters: [idParam], responses: { 200: { description: 'Status' } } } },
+      } : {}),
       '/draw/log': { get: { summary: 'Every commitment this node signed, oldest first, each naming the one before it (hash chain). No entries.', parameters: [{ name: 'from', in: 'query', schema: { type: 'integer', minimum: 0 } }], responses: { 200: { description: '{ total, from, commitments: [signed DrawCommitted] } (at most 200)' } } } },
       '/draw/commitments/{jobId}': { get: { summary: 'One signed commitment: list SHA-256, count, winners, drawAt, the ledger it followed', parameters: [idParam], responses: { 200: { description: 'Signed DrawCommitted' }, 404: { description: 'No commitment yet (unpaid) or unknown job' } } } },
       '/draw/draws/{jobId}': { get: { summary: 'A public draw\'s result (JSON; a page for browsers)', parameters: [idParam], responses: { 200: { description: 'Result: draw, commitment, winners, entries if sent' }, 404: { description: 'Not public, not drawn yet, or unknown' } } } },
@@ -497,7 +738,7 @@ function openapi(): unknown {
   };
 }
 
-const ROUTE = /^\/agents\/(timestamp|webhook|draw)(\/agent|\/health|\/jobs|\/jobs\/(job-[0-9a-f]{16})(\/payments|\/retry|\/stages\/(\d+)\/result)?|\/hooks\/(job-[0-9a-f]{16}))?\/?$/;
+const ROUTE = /^\/agents\/(timestamp|webhook|draw|vault-check|vault-guard)(\/agent|\/health|\/jobs|\/jobs\/(job-[0-9a-f]{16})(\/payments|\/retry|\/stages\/(\d+)\/result)?|\/hooks\/(job-[0-9a-f]{16}))?\/?$/;
 
 async function handle(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
@@ -522,10 +763,40 @@ async function handle(req: Request): Promise<Response> {
     try { return new Response(await Deno.readFile(`${DATA}/draw/public/${dm[2]}.json`), { headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=300', vary: 'accept', ...CORS } }); }
     catch (e) { onlyMissing(e); return json(404, { error: 'No public result for this job: not drawn yet, or the buyer did not ask for a public draw.', commitment: commitmentOf(dm[2]) ? `${PUBLIC_BASE}/draw/commitments/${dm[2]}` : null }); }
   }
+  const gm = /^\/agents\/vault-guard\/(guard|cosign|status)\/([A-Za-z0-9-]+)\/?$/.exec(url.pathname);
+  if (gm) {
+    if (!GUARD_SECRET) return json(404, { error: 'This node does not offer the vault guard.' });
+    if (gm[1] === 'guard' && req.method === 'GET') {
+      if (!isValidClassicAddress(gm[2])) return json(422, { error: 'Not an XRPL classic address.' });
+      const guard = (await guardWalletFor(GUARD_SECRET, NETWORK, gm[2])).classicAddress;
+      return json(200, { vault: gm[2], guard, network: NETWORK, derivation: GUARD_DERIVATION, note: 'The same vault always gets this guard address on this network, so renewing keeps your signer list.', weights: { perOperator: 1, example: { operators: 2, perSpend: 1, ...signerWeights(2, 1) } }, setup: `guardSetupTransactions('${gm[2]}', '${guard}', [<operator r-addresses>], { perSpend: 1, recovery: [<two or more offline r-addresses>] }) from @cappz/sdk/marketplace; submit both with the master key, then check with checkSignerSetup or ${PUBLIC_BASE}/vault-check.` });
+    }
+    const v = /^job-[0-9a-f]{16}$/.test(gm[2]) ? await vaultGuard.job(gm[2]) : null;
+    if (!v) return json(404, { error: 'Unknown job.' });
+    const x = v.job.input as VaultGuardInput;
+    const p = await guardPeriod(gm[2]);
+    const active = !!p && Date.now() < p.end && v.job.state !== 'cancelled';
+    if (gm[1] === 'status' && req.method === 'GET') {
+      const decisions = await readJsonl<Signed>(decisionsFile(gm[2]));
+      const auth = p ? await guardAuth(gm[2]).catch((e) => ({ ok: false, code: 'unchecked', message: (e as Error).message })) : null;
+      return json(200, { jobId: gm[2], account: x.account, active, authorized: auth,  periodStart: p ? new Date(p.start).toISOString() : null, periodEnd: p ? new Date(p.end).toISOString() : null, policy: x.policy, decisions: decisions.length, lastReconcile: lastReconcile.has(gm[2]) ? new Date(lastReconcile.get(gm[2])!).toISOString() : null, alerts: (await readJsonl<Signed>(alertsFile(x.account))).length });
+    }
+    if (gm[1] === 'cosign' && req.method === 'POST') {
+      if (!active) return json(p ? 410 : 402, { error: p ? 'This guard period has ended: open a new job to renew (same guard address).' : 'Pay the period first.', pay: v.pay ?? null });
+      const auth = await guardAuth(gm[2]);
+      if (!auth.ok) return json(403, { error: auth.message, code: auth.code });
+      const b = await req.json().catch(() => null) as { tx?: Record<string, unknown> } | null;
+      if (!b?.tx || typeof b.tx !== 'object') return json(422, { error: 'Send {"tx": <the prepared, unsigned transaction>}.' });
+      const r = await cosign(gm[2], x, b.tx);
+      return json(r.code, r.body);
+    }
+    return json(405, { error: 'Method not allowed.' });
+  }
   const m = ROUTE.exec(url.pathname);
   if (!m) return json(404, { error: 'Not found.', docs: docsFor() });
   const [, name, sub, id, tail, stageN, hookId] = m;
   const a = AGENTS[name];
+  if (!a) return json(404, { error: `This node does not offer ${name}.`, docs: docsFor() });
   // A person opening an agent's URL (e.g. from its marketplace card) lands on the guide.
   if (req.method === 'GET' && (!sub || sub === '/') && wantsHtml(req)) return Response.redirect(`${PUBLIC_BASE}/#try-${name}`, 302);
   if (req.method === 'GET' && (!sub || sub === '/agent' || sub === '/')) return json(200, { ...a.agent.card(), signerPublicKey: key!.publicKeyHex, ...signerInfo(), howToUse: a.howToUse, docs: docsFor(name) });

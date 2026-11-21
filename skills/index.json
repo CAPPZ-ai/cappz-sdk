@@ -29,6 +29,23 @@
       "guides": []
     },
     {
+      "name": "creating-cappz-listings",
+      "description": "Creates a new listing on the CAPPZ Marketplace from start to finish with the cappz-market tool — confirming the thing sold exists and works, choosing the seller account and network, setting title, category, kind, unit, price, asset, quantity, lead time, endpoint and acceptance criteria, writing a description for people and agents, listing on testnet first, hiring it once, then going live on mainnet with the person's OK and checking it can be found. Use when asked to list, sell, offer, publish or advertise something new on CAPPZ — a paid agent, an edge-node service, work, goods or a subscription-style service — or to put a new agent or service on the marketplace.",
+      "path": "skills/creating-cappz-listings",
+      "url": "https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/creating-cappz-listings",
+      "raw": "https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/creating-cappz-listings/SKILL.md",
+      "commands": [
+        "draft",
+        "find",
+        "hire",
+        "listings",
+        "sell",
+        "show"
+      ],
+      "tools": [],
+      "guides": []
+    },
+    {
       "name": "drafting-cappz-listings",
       "description": "Turns a person's plain description of what they sell or need into a checked CAPPZ Marketplace draft and the exact cappz-market sell or ask command, with suggested acceptance criteria, using the CAPPZ listing drafter (0.02 XRP). Category, unit, kind and region are checked against the catalog, and any price, quantity or date the person did not write is left out and asked for, never invented. Nothing is published until the command is run. Use when someone wants to list, sell, offer, request or post something on the CAPPZ Marketplace but has not given exact fields, or asks for help wording a listing or request.",
       "path": "skills/drafting-cappz-listings",
@@ -135,7 +152,7 @@
     },
     {
       "name": "running-edge-node-paid-agents",
-      "description": "Runs the ready-made paid agents of a CAPPZ edge node — a signed timestamp (a file's SHA-256 in, a receipt signed by the node key out), a signed webhook receiver (a 30-day URL that signs every POST, then delivers a signed bundle) and a fair draw (winners picked by an XRP Ledger hash nobody knew when the list was locked) — as a testnet instance and a mainnet instance behind HTTPS, with their guide, llms.txt, SKILL.md, OpenAPI and offline verifier, and offers them on the testnet and mainnet marketplaces. Use when asked to earn XRP from an always-on edge node, put a node's signing key to paid use, offer timestamping, tamper-evident webhook logs or provably fair draws, or validate paid agents on testnet before mainnet.",
+      "description": "Runs the ready-made paid agents of a CAPPZ edge node — a signed timestamp (a file's SHA-256 in, a receipt signed by the node key out), a signed webhook receiver (a 30-day URL that signs every POST, then delivers a signed bundle), a fair draw (winners picked by an XRP Ledger hash nobody knew when the list was locked), a vault check (a signed report on whether a stolen key could empty an XRPL account) and a vault guard (the node as a pooled account's policy-bound co-signer for 30 days) — as a testnet instance and a mainnet instance behind HTTPS, with their guide, llms.txt, SKILL.md, OpenAPI and offline verifier, and offers them on the testnet and mainnet marketplaces. Use when asked to earn XRP from an always-on edge node, put a node's signing key to paid use, offer timestamping, tamper-evident webhook logs, provably fair draws or vault protection, or validate paid agents on testnet before mainnet.",
       "path": "skills/running-edge-node-paid-agents",
       "url": "https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/running-edge-node-paid-agents",
       "raw": "https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/running-edge-node-paid-agents/SKILL.md",

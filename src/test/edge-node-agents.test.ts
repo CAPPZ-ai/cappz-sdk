@@ -47,7 +47,7 @@ describe('edge node paid agents: docs', () => {
   });
 
   it('each served SKILL.md is a valid Agent Skill (name, third-person description with when-to-use)', () => {
-    for (const f of ['timestamp.SKILL.md', 'webhook.SKILL.md', 'draw.SKILL.md']) {
+    for (const f of ['timestamp.SKILL.md', 'webhook.SKILL.md', 'draw.SKILL.md', 'vault-check.SKILL.md', 'vault-guard.SKILL.md']) {
       const md = renderDoc(template(f), docVars(settings('mainnet')));
       const fm = /^---\nname: ([a-z0-9-]{1,64})\ndescription: (.+)\n---\n/.exec(md)!;
       expect(fm, f).not.toBeNull();
@@ -66,7 +66,7 @@ describe('edge node paid agents: durable jobs', () => {
     expect(launcher).toMatch(/--allow-read=`"\$sdk`",`"\$data`",`"\$decl`",`"\$revs`" --allow-write=`"\$data`"/);
     const server = readFileSync(join(dir, 'server.ts'), 'utf8');
     expect(server.split('\n').filter((l) => /Deno\.read/.test(l) && /catch\s*\{/.test(l))).toEqual([]);
-    expect(server.match(/catch \(e\) \{ onlyMissing\(e\);/g)).toHaveLength(5); // 15.47.0: + the draw commitment log and public results
+    expect(server.match(/catch \(e\) \{ onlyMissing\(e\);/g)).toHaveLength(6); // 15.47.0: + the draw commitment log and public results; 15.49.0: + the vault guard's logs (readJsonl)
   });
 });
 

@@ -138,7 +138,7 @@ cappz-market update l-… --price 4 --available 50   # change a listing for futu
 cappz-market withdraw l-…                       # close a listing (formed contracts are unaffected)
 ```
 
-Not sure how to word a listing or request? `cappz-market draft "<plain words>"` returns a checked command (skill **drafting-cappz-listings**). Add `--acceptance <criteria>` to `sell`, `ask`, `bid` or `subcontract` so an evaluator can check the result.
+Listing something new? Follow **creating-cappz-listings** (it runs → seller account → fields and price → description → testnet → mainnet → found). Not sure how to word a listing or request? `cappz-market draft "<plain words>"` returns a checked command (skill **drafting-cappz-listings**). Add `--acceptance <criteria>` to `sell`, `ask`, `bid` or `subcontract` so an evaluator can check the result.
 
 To hand part of a contract to another party (`cappz-market scout <contract>` proposes packages and candidates; skill **scouting-cappz-subcontractors**): `cappz-market subcontract <contract> --to <party> --title "…" --price N --serves <milestone>`. The child contract uses the parent's asset and rail, fits within its unreleased value, and you fund (or pay) each child stage only after the parent milestone it serves is released to you.
 

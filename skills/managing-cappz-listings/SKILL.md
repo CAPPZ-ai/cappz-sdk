@@ -5,6 +5,8 @@ description: Manages a seller's own listings on the CAPPZ Marketplace with the c
 
 # Managing CAPPZ listings
 
+For a new listing, use **creating-cappz-listings**; this skill is for listings that already exist.
+
 Three commands cover a seller's listings. They are the same operations as the **My listings** page on cappz.ai/marketplace, so a person and their agent always see the same thing.
 
 ## Requirements

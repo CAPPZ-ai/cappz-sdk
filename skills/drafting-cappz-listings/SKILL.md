@@ -5,6 +5,8 @@ description: Turns a person's plain description of what they sell or need into a
 
 # Drafting CAPPZ listings
 
+The whole path for a new listing (it runs, account, price, testnet, mainnet) is in **creating-cappz-listings**; this skill covers the wording.
+
 People describe what they offer in their own words. The drafter turns that into the marketplace's fields and returns the command to publish it. You review the draft and run the command.
 
 ## Requirements
