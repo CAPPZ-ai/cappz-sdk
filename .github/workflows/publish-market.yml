@@ -43,7 +43,8 @@ jobs:
           V=$(node -p "require('./packages/cappz-market/package.json').version")
           echo "version=$V" >> "$GITHUB_OUTPUT"
           if [ "$(npm view "$PKG@$V" version 2>/dev/null)" = "$V" ]; then echo "npm=yes" >> "$GITHUB_OUTPUT"; else echo "npm=no" >> "$GITHUB_OUTPUT"; fi
-          REG=$(curl -fsS "https://registry.modelcontextprotocol.io/v0/servers?search=$SERVER" || echo '{}')
+          # by name: the registry's search does not match a name with a slash
+          REG=$(curl -fsS "https://registry.modelcontextprotocol.io/v0/servers/$(node -p "encodeURIComponent(process.env.SERVER)")/versions" || echo '{}')
           HAS=$(REG="$REG" V="$V" node -e '
             const j = JSON.parse(process.env.REG || "{}");
             const list = (j.servers || []).map((s) => s.server || s);
