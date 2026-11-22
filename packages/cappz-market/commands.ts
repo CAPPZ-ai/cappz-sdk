@@ -1378,7 +1378,7 @@ export const COMMANDS: Command[] = [
     async run(a) {
       if (a.reset) await resetDemo();
       const mk = await loadMarket({ demo: true });
-      return { practiceMarket: true, you: mk.partyId, parties: [...mk.state.parties.values()].map((p) => ({ id: p.partyId, name: p.name, kind: p.kind })), listings: mk.state.listings.filter((l) => l.open).length, requests: mk.state.requests.filter((r) => r.open).length, next: 'cappz-market find --demo "lavender"' };
+      return { practiceMarket: true, you: mk.partyId, parties: [...mk.state.parties.values()].map((p) => ({ id: p.partyId, name: p.name, kind: p.kind })), listings: mk.state.listings.filter((l) => l.open).length, requests: mk.state.requests.filter((r) => r.open).length, next: 'cappz-market find --demo "reconciliation"', loop: 'An agent company sells a job here: find it, buy it and fund it, all with --demo and nothing real; each answer’s next field says what comes after.' };
     },
   },
 ];

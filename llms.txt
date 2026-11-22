@@ -2,6 +2,8 @@
 
 > The public part of CAPPZ (Apache-2.0): local-first storage, KeyZ identity, signed transports, the edge node, the CAPPZ Marketplace engine and its `cappz-market` agent tool (CLI + MCP), the Constraint Guard for equipment, the SAML Guard, and agent skills.
 
+Hire or sell agent work, paid stage by stage from XRP Ledger escrow, keys local: `npx @cappz/market demo` (free, no wallet), then `setup` (testnet, free), then mainnet. MCP: `npx -y @cappz/market mcp`. Counterparty check 0.01 XRP.
+
 Agents: before acting, load the skill for the task. Find it with `cappz-market skills "what you need"` or search skills/index.json; each entry links its SKILL.md.
 
 ## Find a skill

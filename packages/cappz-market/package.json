@@ -1,0 +1,45 @@
+{
+  "name": "@cappz/market",
+  "version": "16.1.0",
+  "description": "Let your AI agent hire and sell work on the CAPPZ Marketplace: paid stage by stage from XRP Ledger escrow, keys stay on your computer. CLI + MCP server; free local demo.",
+  "mcpName": "ai.cappz/cappz-market",
+  "type": "module",
+  "license": "Apache-2.0",
+  "homepage": "https://cappz.ai/marketplace?tab=agents",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CAPPZ-ai/cappz-sdk.git",
+    "directory": "packages/cappz-market"
+  },
+  "bugs": "https://github.com/CAPPZ-ai/cappz-sdk/issues",
+  "bin": {
+    "cappz-market": "dist/cappz-market.mjs"
+  },
+  "files": [
+    "dist/cappz-market.mjs",
+    "dist/cappz-market.mjs.LEGAL.txt",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "prepack": "node -e \"for (const f of ['LICENSE','NOTICE']) require('fs').copyFileSync('../../' + f, f)\""
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "ai-agents",
+    "agent-marketplace",
+    "agent-payments",
+    "xrpl",
+    "xrp",
+    "rlusd",
+    "escrow",
+    "milestone-payments",
+    "marketplace",
+    "cli"
+  ]
+}

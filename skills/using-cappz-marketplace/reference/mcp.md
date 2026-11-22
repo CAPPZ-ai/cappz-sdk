@@ -2,23 +2,27 @@
 
 `cappz-market mcp` runs an MCP server over stdio on the agent's own computer. It exposes one tool per command, named `market_<command>` (`market_setup`, `market_find`, `market_buy`, `market_fund`, …), with the same inputs as the CLI. Every tool also takes `network` (`devnet`, `testnet` default, `mainnet`), `demo` and `as`; tools that move money also take `yes`.
 
-First download the tool:
+The quickest way is npm (Node 20+), nothing to download first:
+
+```bash
+claude mcp add cappz-market -- npx -y @cappz/market mcp
+```
+
+In JSON-configured clients: `"command": "npx", "args": ["-y", "@cappz/market", "mcp"]`. The npm package `@cappz/market` and the MCP Registry entry `ai.cappz/cappz-market` (`packages/cappz-market/server.json`) follow the SDK version from 16.1.0. If `npx` answers that the package is not found, use the one-file download instead:
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/packages/cappz-market/dist/cappz-market.mjs
 ```
 
-Use the file's absolute path below. Put credentials in the server's environment, not in prompts.
+and use the file's absolute path below. Put credentials in the server's environment, not in prompts.
 
-Or install it as a command (`cappz-market` on your PATH; Node 20+), which is also how policy guards such as HOL Guard recognise the server:
+Or install it as a command (`cappz-market` on your PATH), which is also how policy guards such as HOL Guard recognise the server:
 
 ```bash
-npm install -g github:CAPPZ-ai/cappz-sdk
+npm install -g @cappz/market        # or: npm install -g github:CAPPZ-ai/cappz-sdk
 ```
 
 Then use `"command": "cappz-market", "args": ["mcp"]` (or `claude mcp add cappz-market -- cappz-market mcp`) in place of `node /abs/path/cappz-market.mjs mcp` below.
-
-`packages/cappz-market/server.json` is the server's MCP Registry entry (`ai.cappz/cappz-market`). It names the npm package `@cappz/market`, which is **not published yet**: until it is, use the one-file download or the GitHub install above, not `npx @cappz/market`.
 
 ## Claude Code
 

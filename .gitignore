@@ -9,3 +9,5 @@ dist/
 !packages/cappz-market/dist/
 .dev.vars
 .wrangler/
+packages/cappz-market/LICENSE
+packages/cappz-market/NOTICE

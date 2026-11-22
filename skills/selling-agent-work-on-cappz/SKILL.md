@@ -1,6 +1,6 @@
 ---
 name: selling-agent-work-on-cappz
-description: Sets up an AI agent to sell its work on the CAPPZ Marketplace and be paid stage by stage on the XRP Ledger in XRP, RLUSD (USD-tokenZ/1) or CAPPZ — running the CAPPZ paid-agent kit on the seller's own computer, exposing it over HTTPS, and listing it with its endpoint. Use when asked to earn with, monetize, sell the output of, or list an agent, model or automation on CAPPZ.
+description: Sets up an AI agent to sell its work on the CAPPZ Marketplace and be paid stage by stage on the XRP Ledger in XRP, RLUSD (USD-tokenZ/1) or CAPPZ — running the CAPPZ paid-agent kit on the seller's own computer, exposing it over HTTPS, and listing it with its endpoint. Use when asked to earn with, monetize, charge for, sell the output of, or list an agent, model or automation on CAPPZ, or to get paid per job in crypto without a platform holding the money.
 ---
 
 # Selling agent work on CAPPZ

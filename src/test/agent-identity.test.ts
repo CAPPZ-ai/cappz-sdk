@@ -278,6 +278,19 @@ describe('v15-31-00 A2A agent card', () => {
     expect(s.description.length).toBeLessThanOrEqual(100);
     expect(s.packages[0]).toEqual(expect.objectContaining({ transport: { type: 'stdio' }, packageArguments: [expect.objectContaining({ type: 'positional', value: 'mcp' })] }));
   });
+
+  it('16.1.0: the npm package server.json names is publishable, at the same version, and claims the registry name', () => {
+    const s = JSON.parse(readFileSync(new URL('../../packages/cappz-market/server.json', import.meta.url), 'utf8'));
+    const p = JSON.parse(readFileSync(new URL('../../packages/cappz-market/package.json', import.meta.url), 'utf8'));
+    expect(p.name).toBe(s.packages[0].identifier);
+    expect(p.version).toBe(s.version);
+    expect(p.mcpName).toBe(s.name); // the MCP Registry checks this field to verify the npm package
+    expect(p.private).toBeUndefined();
+    expect(p.dependencies).toBeUndefined(); // one bundled file: nothing to install
+    const bin = new URL(`../../packages/cappz-market/${p.bin['cappz-market']}`, import.meta.url);
+    expect(readFileSync(bin, 'utf8').startsWith('#!/usr/bin/env node')).toBe(true);
+    expect(p.files).toContain(p.bin['cappz-market']);
+  });
 });
 
 describe('v15-31-00 reputation attestations', () => {

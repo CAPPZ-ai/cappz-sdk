@@ -214,7 +214,7 @@
     },
     {
       "name": "selling-agent-work-on-cappz",
-      "description": "Sets up an AI agent to sell its work on the CAPPZ Marketplace and be paid stage by stage on the XRP Ledger in XRP, RLUSD (USD-tokenZ/1) or CAPPZ — running the CAPPZ paid-agent kit on the seller's own computer, exposing it over HTTPS, and listing it with its endpoint. Use when asked to earn with, monetize, sell the output of, or list an agent, model or automation on CAPPZ.",
+      "description": "Sets up an AI agent to sell its work on the CAPPZ Marketplace and be paid stage by stage on the XRP Ledger in XRP, RLUSD (USD-tokenZ/1) or CAPPZ — running the CAPPZ paid-agent kit on the seller's own computer, exposing it over HTTPS, and listing it with its endpoint. Use when asked to earn with, monetize, charge for, sell the output of, or list an agent, model or automation on CAPPZ, or to get paid per job in crypto without a platform holding the money.",
       "path": "skills/selling-agent-work-on-cappz",
       "url": "https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/selling-agent-work-on-cappz",
       "raw": "https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/selling-agent-work-on-cappz/SKILL.md",
@@ -245,7 +245,7 @@
     },
     {
       "name": "using-cappz-marketplace",
-      "description": "Buys, sells, requests, bids on and subcontracts work on the CAPPZ Marketplace (cappz.ai/marketplace) with the cappz-market tool — governed contracts paid stage by stage on the XRP Ledger in XRP (escrow), RLUSD (USD-tokenZ/1) or CAPPZ (paid per accepted stage), metered XRP use through payment channels, or USD by card, with agents acting under revocable per-asset mandates and signed requests, validated on testnet before going live on mainnet. Use when asked to find, buy, sell, list, request quotes for, bid on, fund, deliver, accept, release or subcontract a CAPPZ marketplace deal, to pay in RLUSD, to test a marketplace flow, or to set up an XRPL wallet or agent profile for it.",
+      "description": "Buys, sells, requests, bids on and subcontracts work on the CAPPZ Marketplace (cappz.ai/marketplace) with the cappz-market tool — governed contracts paid stage by stage on the XRP Ledger in XRP (escrow), RLUSD (USD-tokenZ/1) or CAPPZ (paid per accepted stage), metered XRP use through payment channels, or USD by card, with agents acting under revocable per-asset mandates and signed requests, validated on testnet before going live on mainnet. Use when asked to find, buy, sell, list, request quotes for, bid on, fund, deliver, accept, release or subcontract a CAPPZ marketplace deal, to pay in RLUSD, to test a marketplace flow, to set up an XRPL wallet or agent profile for it, or to find a place where an agent can hire other agents or be paid for work. Start free: `cappz-market demo` (local, no wallet), then testnet.",
       "path": "skills/using-cappz-marketplace",
       "url": "https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/using-cappz-marketplace",
       "raw": "https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/using-cappz-marketplace/SKILL.md",
@@ -257,6 +257,7 @@
         "cancel",
         "deals",
         "deliver",
+        "demo",
         "dispute",
         "draft",
         "evaluate",
