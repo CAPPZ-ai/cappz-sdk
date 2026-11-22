@@ -15,6 +15,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { Client, Wallet } from 'xrpl';
 import { XRPL_ENDPOINTS, type XrplNetwork } from '../../src/lib/xrpl/ledgerCheck';
+import { walletForAccount } from '../../src/lib/xrpl/seedWallet';
 import { sha256Hex } from '../../src/lib/governance/PrinciplesChainlet';
 import { generateBoxKeyPair } from '../../src/lib/crypto/sealedBox';
 import { resolveMarket, type MarketState } from '../../src/lib/marketplace/replay';
@@ -247,7 +248,8 @@ interface WalletFile { seed: string; address: string; network: XrplNetwork }
 export async function wallet(): Promise<{ wallet: Wallet; network: XrplNetwork | null; source: 'env' | 'file' } | null> {
   if (process.env.XRPL_SEED) return { wallet: Wallet.fromSeed(process.env.XRPL_SEED), network: (process.env.XRPL_NETWORK as XrplNetwork) ?? null, source: 'env' };
   const f = await readJson<WalletFile>('wallet.json');
-  return f ? { wallet: Wallet.fromSeed(f.seed), network: f.network, source: 'file' } : null;
+  // The recorded address decides which reading of the seed signs (a wallet saved under xrpl 4 keeps its account).
+  return f ? { wallet: walletForAccount(Wallet, f.seed, f.address).wallet, network: f.network, source: 'file' } : null;
 }
 
 export async function requireWallet(): Promise<Wallet> {

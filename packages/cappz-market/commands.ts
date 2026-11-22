@@ -29,7 +29,6 @@ import { fundingNeed, fundingSummary, prepareTrustSet } from '../../src/lib/mark
 import { liveSigningDeps, seedSigner, signAndSubmit, signAndSubmitAll, type SigningDeps } from '../../src/lib/marketplace/ledgerSigning';
 import { approvalHook, coSignTx, verifyCoSignature, type CoSignature, type CoSignTerms } from '../../src/lib/marketplace/signingApproval';
 import { milestoneEscrowLegs } from '../../src/lib/marketplace/settlement';
-import { Wallet } from 'xrpl';
 import { xrpNeededForStage } from '../../src/lib/marketplace/walletFunding';
 import { AGENT_OPERATIONS, executeAgentOperation, type AgentOperation } from '../../src/lib/marketplace/agentApi';
 import { readTrustLine, verifyCheck, type SignedCheck } from '../../src/lib/marketplace/counterpartyCheck';
@@ -369,7 +368,7 @@ export const COMMANDS: Command[] = [
       if (!seller) throw new ToolError('The seller has no XRPL account on their profile yet.');
       const amountDrops = action === 'channel' ? channelCapDrops(c).toString() : (action === 'pay' ? stagePaymentLegs(c, milestone, seller).map((l) => l.units) : milestoneEscrowLegs(c, milestone, seller).map((l) => l.drops)).reduce((s, u) => s + BigInt(u), 0n).toString();
       const terms: CoSignTerms = { network: mk.policy.network as XrplNetwork, contractId: c.contractId, milestone, action, amountDrops, expiresAt: new Date(Date.now() + num(a, 'hours', 24) * 3_600_000).toISOString() };
-      const signed = Wallet.fromSeed(w.seed).sign(coSignTx(w.classicAddress, terms) as never);
+      const signed = w.sign(coSignTx(w.classicAddress, terms) as never);
       const cs: CoSignature = { terms, txBlob: signed.tx_blob };
       const problems = verifyCoSignature(cs, w.classicAddress, new Date().toISOString());
       if (problems.length) throw new ToolError(`Could not make a valid co-signature: ${problems.join(' ')}`);
