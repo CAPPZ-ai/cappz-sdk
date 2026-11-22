@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import legacyFixture from './fixtures/aes-cryptojs-legacy.json';
 import { aesDecrypt, aesEncrypt, base64ToBytes, bytesToBase64, isLegacyCryptoJs, AES_COMPAT_PREFIX } from '../lib/crypto/aesCompat';
 
 function bytes(n: number, seed = 1): Uint8Array {
@@ -10,7 +10,8 @@ function bytes(n: number, seed = 1): Uint8Array {
 }
 const SECRET = 'f'.repeat(64);
 // Real crypto-js 4.2.0 output, recorded before the SDK dropped crypto-js (16.0.4).
-const LEGACY = JSON.parse(readFileSync(new URL('./fixtures/aes-cryptojs-legacy.json', import.meta.url), 'utf8')) as {
+// Imported as a module (not read from disk), so it loads in a host app's jsdom runner too.
+const LEGACY = legacyFixture as {
   secret: string; texts: { n: number; ciphertext: string }[]; file: { n: number; seed: number; ciphertext: string }; patientRecord: string;
 };
 const same = (a: Uint8Array, b: Uint8Array) => Buffer.from(a).equals(Buffer.from(b));
