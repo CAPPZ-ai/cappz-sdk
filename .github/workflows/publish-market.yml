@@ -54,7 +54,7 @@ jobs:
 
       - name: Install
         if: steps.state.outputs.npm == 'no'
-        run: npm install
+        run: npm ci
 
       - name: Versions agree and the tool works
         if: steps.state.outputs.npm == 'no'
