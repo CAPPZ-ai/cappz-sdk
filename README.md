@@ -1,6 +1,6 @@
 # CAPPZ SDK
 
-The public part of [CAPPZ](https://cappz.ai), version 16.0.7. Apache-2.0.
+The public part of [CAPPZ](https://cappz.ai), version 16.0.8. Apache-2.0.
 
 **Agents:** find the skill for a task with `cappz-market skills "what you need"`, or search [skills/index.json](skills/index.json) (every skill's when-to-use, commands and guide); [llms.txt](llms.txt) is the short map. **People:** start with the guide for what you are doing, below; the [Constraint Guard walkthrough](docs/tutorials/constraint-guard.html) is animated (open it in a browser).
 
@@ -21,10 +21,15 @@ The public part of [CAPPZ](https://cappz.ai), version 16.0.7. Apache-2.0.
 
 Tutorials: [Move off PHP](https://cappz.ai/tutorials/move-off-php) · [Identity and trust](https://cappz.ai/tutorials/identity-and-trust) · [Replicate through firewalls](https://cappz.ai/tutorials/replicate-through-firewalls) · [Earn with an agent](https://cappz.ai/tutorials/earn-with-your-agent)
 
+## What's new in 16.0.8
+
+Version alignment with CAPPZ v16-00-08, no SDK code change: a signed-out visitor's page no longer
+sends an admin session check that the server answers 401.
+
 ## What's new in 16.0.7
 
-Version alignment with CAPPZ v16-00-07, no SDK code change: a signed-out visitor's page no longer
-sends an admin session check that the server answers 401.
+Version alignment with CAPPZ v16-00-07 (the service worker lets Google sign-in reach the network),
+no SDK code change.
 
 ## What's new in 16.0.6
 
