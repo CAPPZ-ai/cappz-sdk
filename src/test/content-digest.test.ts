@@ -5,7 +5,6 @@ import vm from 'node:vm';
 import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import CryptoJS from 'crypto-js';
 import { typescriptKernels, loadWasmKernels, loadNativeLibrary, nativeLibraryName, nodeFfi, type NativeKernels } from '../lib/native/cappzNative';
 import { digestContent } from '../lib/crypto/contentDigest';
 import { computeSaltedHash, verifyClient } from '../lib/crypto/clientVerify';
@@ -40,10 +39,8 @@ describe('v15-15-00 notarization leaves are unchanged', () => {
     expect(await computeSaltedHash(CONTENT, SALT)).toBe(LEAF_SALT_TEXT);
   });
 
-  it('raw-salt-byte leaf (XRPL notary service) matches crypto-js and the fixed vector', async () => {
+  it('raw-salt-byte leaf (XRPL notary service) matches the fixed vector (recorded from crypto-js)', async () => {
     const raw = new Uint8Array(Buffer.from(SALT, 'base64url'));
-    const viaCryptoJs = CryptoJS.SHA256(CryptoJS.lib.WordArray.create(raw).concat(CryptoJS.lib.WordArray.create(CONTENT))).toString().toUpperCase();
-    expect(viaCryptoJs).toBe(LEAF_SALT_BYTES);
     expect((await digestContent(CONTENT, { leafPrefix: raw })).leaf).toBe(LEAF_SALT_BYTES);
   });
 

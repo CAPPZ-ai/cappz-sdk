@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import CryptoJS from 'crypto-js';
+import { readFileSync } from 'node:fs';
 import { aesDecrypt, aesEncrypt, base64ToBytes, bytesToBase64, isLegacyCryptoJs, AES_COMPAT_PREFIX } from '../lib/crypto/aesCompat';
 
 function bytes(n: number, seed = 1): Uint8Array {
@@ -9,21 +9,26 @@ function bytes(n: number, seed = 1): Uint8Array {
   return out;
 }
 const SECRET = 'f'.repeat(64);
+// Real crypto-js 4.2.0 output, recorded before the SDK dropped crypto-js (16.0.4).
+const LEGACY = JSON.parse(readFileSync(new URL('./fixtures/aes-cryptojs-legacy.json', import.meta.url), 'utf8')) as {
+  secret: string; texts: { n: number; ciphertext: string }[]; file: { n: number; seed: number; ciphertext: string }; patientRecord: string;
+};
 const same = (a: Uint8Array, b: Uint8Array) => Buffer.from(a).equals(Buffer.from(b));
 
 describe('v15-17-00 AES on WebCrypto, compatible with crypto-js', () => {
   it('opens what crypto-js wrote, text and hex-encoded files, at every padding length', async () => {
-    for (const n of [0, 1, 15, 16, 17, 1000]) {
+    expect(LEGACY.secret).toBe(SECRET);
+    expect(LEGACY.texts.map((t) => t.n)).toEqual([0, 1, 15, 16, 17, 1000]);
+    for (const { n, ciphertext: legacy } of LEGACY.texts) {
       const text = Buffer.from(bytes(n, n + 1)).toString('base64');
-      const legacy = CryptoJS.AES.encrypt(text, SECRET).toString();
       expect(isLegacyCryptoJs(legacy)).toBe(true);
       const r = await aesDecrypt(legacy, SECRET);
       expect(r?.legacy).toBe(true);
       expect(new TextDecoder().decode(r!.bytes), `n=${n}`).toBe(text);
     }
     // The notarizer stored hex text of the file: decoding the hex gives the file back.
-    const file = bytes(70_001, 9);
-    const legacyFile = CryptoJS.AES.encrypt(CryptoJS.lib.WordArray.create(file).toString(), SECRET).toString();
+    const file = bytes(LEGACY.file.n, LEGACY.file.seed);
+    const legacyFile = LEGACY.file.ciphertext;
     const r = await aesDecrypt(legacyFile, SECRET);
     expect(same(Uint8Array.from(Buffer.from(new TextDecoder().decode(r!.bytes), 'hex')), file)).toBe(true);
   });
@@ -43,7 +48,7 @@ describe('v15-17-00 AES on WebCrypto, compatible with crypto-js', () => {
   });
 
   it('a wrong secret on legacy data does not return the plaintext', async () => {
-    const legacy = CryptoJS.AES.encrypt('patient record', SECRET).toString();
+    const legacy = LEGACY.patientRecord;
     const r = await aesDecrypt(legacy, 'e'.repeat(64));
     expect(r === null || new TextDecoder().decode(r.bytes) !== 'patient record').toBe(true);
     expect(await aesDecrypt('not ciphertext', SECRET)).toBeNull();

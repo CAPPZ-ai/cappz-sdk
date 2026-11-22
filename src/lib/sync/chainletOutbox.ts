@@ -17,7 +17,7 @@ import { chainletStorage } from './chainletStorage';
 import { ChainletStoreParamType, getChainletParam } from './chainletStoreParams';
 import { xrplChainletAnchor } from '../xrplChainletAnchor';
 import type { SyncBlock } from './chainletSyncAdapter';
-import CryptoJS from 'crypto-js';
+import { sha256HexOfText } from '../crypto/hashHex';
 
 
 // ─── Types ────────────────────────────────────────────────────
@@ -323,7 +323,7 @@ class ChainletOutboxManager {
 
   private async anchorBlock(block: SyncBlock): Promise<void> {
     // Individual-anchor path uses the same XRPL memo shape, singleton batch.
-    const merkleRoot = CryptoJS.SHA256(JSON.stringify(block.value)).toString();
+    const merkleRoot = sha256HexOfText(JSON.stringify(block.value));
     const result = await xrplChainletAnchor.anchorBatch({
       merkleRoot,
       blockHashes: [block.blockHash],
@@ -342,7 +342,7 @@ class ChainletOutboxManager {
     for (let i = 0; i < hashes.length; i += 2) {
       const left = hashes[i];
       const right = hashes[i + 1] || left; // Duplicate last if odd
-      nextLevel.push(CryptoJS.SHA256(left + right).toString());
+      nextLevel.push(sha256HexOfText(left + right));
     }
 
     return this.computeMerkleRoot(nextLevel);

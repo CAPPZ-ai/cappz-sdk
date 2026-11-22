@@ -6,9 +6,7 @@
     "npm:@noble/hashes@^2.4.0": "2.4.0",
     "npm:@noble/secp256k1@^3.2.0": "3.2.0",
     "npm:@scure/bip39@^2.4.0": "2.4.0",
-    "npm:@types/crypto-js@^4.2.2": "4.2.2",
     "npm:@types/node@^22.7.9": "22.20.5",
-    "npm:crypto-js@^4.2.0": "4.2.0",
     "npm:esbuild@~0.28.2": "0.28.2",
     "npm:fflate@~0.8.3": "0.8.3",
     "npm:graphology@0.26": "0.26.0_graphology-types@0.24.8",
@@ -338,9 +336,6 @@
         "assertion-error"
       ]
     },
-    "@types/crypto-js@4.2.2": {
-      "integrity": "sha512-sDOLlVbHhXpAUAL0YHDUUwDZf3iN4Bwi4W6a0W0b+QcAezUbRtH4FVb+9J4h+XFPW7l/gQ9F8qC7P+Ec4k8QVQ=="
-    },
     "@types/deep-eql@4.0.2": {
       "integrity": "sha512-c9h9dVVMigMPc4bwTvC5dxqtqJZwQPePsWjPlpSOnojbor6pGqdk541lfA7AqFQr5pB1BRdq0juY9db81BwyFw=="
     },
@@ -398,10 +393,6 @@
     },
     "chai@6.3.0": {
       "integrity": "sha512-XWAtwJ6OHO+tj0EKCs0Y2UamnyOxseZWltU4x2U2wh8g4AigdjwvtUjvLP2tqkA/avxHEtzxNaqGq/YGNwckKg=="
-    },
-    "crypto-js@4.2.0": {
-      "integrity": "sha512-KALDyEYgpY+Rlob/iriUtjV6d5Eq+Y191A5g4UqLAi8CyGP9N1+FdVbkc1SxKc2r4YAYqG8JzO2KGL+AizD70Q==",
-      "deprecated": true
     },
     "detect-libc@2.1.2": {
       "integrity": "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ=="
@@ -779,9 +770,7 @@
         "npm:@noble/hashes@^2.4.0",
         "npm:@noble/secp256k1@^3.2.0",
         "npm:@scure/bip39@^2.4.0",
-        "npm:@types/crypto-js@^4.2.2",
         "npm:@types/node@^22.7.9",
-        "npm:crypto-js@^4.2.0",
         "npm:esbuild@~0.28.2",
         "npm:fflate@~0.8.3",
         "npm:graphology@0.26",

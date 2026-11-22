@@ -1,6 +1,6 @@
 // A2A Protocol: Agent-to-Agent Communication Protocol
 
-import CryptoJS from 'crypto-js';
+import { hmacSha256HexOfText } from './crypto/hashHex';
 
 export type A2AMessageType =
   | 'SYNC_REQUEST'
@@ -371,7 +371,7 @@ export class A2AProtocol {
    */
   private signPayload(payload: any, signingKey: string): string {
     const message = JSON.stringify(payload);
-    return CryptoJS.HmacSHA256(message, signingKey).toString();
+    return hmacSha256HexOfText(message, signingKey);
   }
 
   /**

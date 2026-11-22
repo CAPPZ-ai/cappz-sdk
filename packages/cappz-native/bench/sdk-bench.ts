@@ -13,7 +13,6 @@ import { sha256 as nobleSha256 } from '@noble/hashes/sha2.js';
 import { typescriptKernels, loadWasmKernels, loadNativeLibrary, nativeLibraryName, type NativeKernels } from '../../../src/lib/native/cappzNative';
 import { rsEncode, rsDecode } from '../../../src/lib/erasure/reedSolomon';
 import { digestContent } from '../../../src/lib/crypto/contentDigest';
-import CryptoJS from 'crypto-js';
 import * as secp from '@noble/secp256k1';
 import { buildNotaryBatch, verifyNotaryInclusion } from '../../../src/lib/crypto/notaryBatch';
 import { generateRecoveryPhrase, keyPairFromPhrase, signMessage } from '../../../src/lib/auth/wallet/session';
@@ -84,15 +83,7 @@ for (const size of [1024, 64 * 1024, 64 * MiB]) {
   const salt = new Uint8Array(16).fill(7);
   const g = `notarize a ${size / MiB} MiB file (file hash + salted leaf)`;
   const mb = size / MiB;
-  // Today: the UI hashes the file with crypto-js in 1 MiB pieces, then the
-  // XRPL notary service hashes salt || file with crypto-js over the whole file.
-  await measure(g, 'crypto-js: UI file hash + notary leaf (today, 2 passes)', mb, async () => {
-    const h = CryptoJS.algo.SHA256.create();
-    for (let at = 0; at < size; at += MiB) h.update(CryptoJS.lib.WordArray.create(data.subarray(at, at + MiB)));
-    h.finalize().toString();
-    const all = new Uint8Array(await blob.arrayBuffer());
-    CryptoJS.SHA256(CryptoJS.lib.WordArray.create(salt).concat(CryptoJS.lib.WordArray.create(all))).toString();
-  }, 3);
+  // 16.0.4: crypto-js (the old two-pass path, no longer maintained) is gone from the SDK; these are the paths in use.
   await measure(g, 'digestContent · WebCrypto, one buffer (browser ≤ 64 MiB)', mb, () => digestContent(blob, { leafPrefix: salt, kernels: typescriptKernels }));
   for (const b of backends) {
     const runs = b.backend === 'typescript' ? 3 : undefined;

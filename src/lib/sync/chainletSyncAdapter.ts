@@ -27,7 +27,7 @@ import {
   getEquivalentEventTypes,
 } from './chainletStoreParams';
 import { chainletOutbox } from './chainletOutbox';
-import CryptoJS from 'crypto-js';
+import { sha256HexOfText } from '../crypto/hashHex';
 
 // ─── Device Identity ──────────────────────────────────────────
 
@@ -129,7 +129,7 @@ function computeBlockHash(block: Omit<SyncBlock, 'blockHash'>): string {
     previousHdAddress: block.previousHdAddress,
     meta: block.meta ?? null,
   });
-  return CryptoJS.SHA256(payload).toString();
+  return sha256HexOfText(payload);
 }
 
 function computeHdAddress(hdRoot: string, deviceId: string, timestamp: number): string {
@@ -143,12 +143,12 @@ function computeHdAddress(hdRoot: string, deviceId: string, timestamp: number): 
  * lands on the same address instead of forking a per-device copy.
  */
 function computeTemplateHdAddress(templateRoot: string, key: string, value: unknown): string {
-  const contentHash = CryptoJS.SHA256(JSON.stringify({ key, value })).toString();
+  const contentHash = sha256HexOfText(JSON.stringify({ key, value }));
   return `${templateRoot}/tpl/${contentHash.slice(0, 32)}`;
 }
 
 function templatePartitionKey(templateRoot: string): string {
-  return `tpl_${CryptoJS.SHA256(templateRoot).toString().slice(0, 24)}`;
+  return `tpl_${sha256HexOfText(templateRoot).slice(0, 24)}`;
 }
 
 /** Every (store, key, value) a block carries — one for a plain block, many for a batch. */
@@ -520,7 +520,7 @@ class ChainletSyncManager {
     }
 
     // Online + auto-sync: anchor immediately
-    const merkleRoot = CryptoJS.SHA256(JSON.stringify(block.value)).toString();
+    const merkleRoot = sha256HexOfText(JSON.stringify(block.value));
 
     const { error } = await hostedClient('direct').from('chainlet_blocks').insert([{
       block_number: this.blockCount,

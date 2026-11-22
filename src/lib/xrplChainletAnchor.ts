@@ -1,6 +1,5 @@
 import { Client, Wallet, xrpToDrops, dropsToXrp } from 'xrpl';
 import type { ChainletBlock, Chainlet } from './chainletTypes';
-import CryptoJS from 'crypto-js';
 
 /**
  * XRPLChainletAnchor

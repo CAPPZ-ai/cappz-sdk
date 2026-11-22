@@ -1,6 +1,6 @@
 # CAPPZ SDK
 
-The public part of [CAPPZ](https://cappz.ai), version 16.0.3. Apache-2.0.
+The public part of [CAPPZ](https://cappz.ai), version 16.0.4. Apache-2.0.
 
 **Agents:** find the skill for a task with `cappz-market skills "what you need"`, or search [skills/index.json](skills/index.json) (every skill's when-to-use, commands and guide); [llms.txt](llms.txt) is the short map. **People:** start with the guide for what you are doing, below; the [Constraint Guard walkthrough](docs/tutorials/constraint-guard.html) is animated (open it in a browser).
 
@@ -20,6 +20,14 @@ The public part of [CAPPZ](https://cappz.ai), version 16.0.3. Apache-2.0.
 - **Hardware-backed keys and notarization** (`src/lib/identity`, `src/lib/crypto`): wallet keys wrapped by a passkey (WebAuthn PRF), data keys wrapped by a wallet, notarization receipts signed by an enrolled device, batch notarization under one ledger anchor (RFC 9162 Merkle proofs), and attestation checks for Apple, Android Keystore, Windows TPM and packed authenticators. [docs/HARDWARE_TRUST.md](docs/HARDWARE_TRUST.md).
 
 Tutorials: [Move off PHP](https://cappz.ai/tutorials/move-off-php) · [Identity and trust](https://cappz.ai/tutorials/identity-and-trust) · [Replicate through firewalls](https://cappz.ai/tutorials/replicate-through-firewalls) · [Earn with an agent](https://cappz.ai/tutorials/earn-with-your-agent)
+
+## What's new in 16.0.4
+
+- **No crypto-js.** CryptoJS is no longer maintained, and deploying a node warned about it. SHA-256 and
+  HMAC-SHA256 of text now come from `@noble/hashes` (`src/lib/crypto/hashHex.ts`), byte-identical to
+  what crypto-js produced, so chainlet hashes, Merkle roots and A2A signatures are unchanged. AES moved
+  to WebCrypto in 15.17.0; `aesCompat` still opens what crypto-js wrote (its test now reads recorded
+  crypto-js ciphertexts). The edge node's module graph no longer contains crypto-js.
 
 ## What's new in 16.0.3
 
