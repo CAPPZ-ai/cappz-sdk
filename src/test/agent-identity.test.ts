@@ -291,6 +291,16 @@ describe('v15-31-00 A2A agent card', () => {
     expect(readFileSync(bin, 'utf8').startsWith('#!/usr/bin/env node')).toBe(true);
     expect(p.files).toContain(p.bin['cappz-market']);
   });
+
+  it('every version on main is published by CI: npm with provenance, then the MCP Registry, from the committed bundle', () => {
+    const w = readFileSync(new URL('../../.github/workflows/publish-market.yml', import.meta.url), 'utf8');
+    expect(w).toMatch(/branches: \[main\]/);
+    expect(w).toContain('id-token: write');
+    expect(w).toContain('npm publish --access public --provenance');
+    expect(w).toContain('git diff --exit-code'); // npm and the one-file download carry the same bytes
+    expect(w).toMatch(/MCP_PUBLISHER_SHA256: [0-9a-f]{64}/); // pinned, checked download
+    expect(w).toContain('working-directory: packages/cappz-market');
+  });
 });
 
 describe('v15-31-00 reputation attestations', () => {

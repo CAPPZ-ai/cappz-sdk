@@ -1,0 +1,92 @@
+# Publishes cappz-market to npm (@cappz/market) and the MCP Registry (ai.cappz/cappz-market)
+# whenever main carries an SDK version that is not there yet. Every SDK release bumps the
+# version (lockstep with CAPPZ), so every release is published; a push that doesn't change
+# the version publishes nothing.
+#
+# npm: trusted publishing (OIDC from this workflow, with provenance), no token stored. Until
+# that is set up on npmjs.com, an NPM_TOKEN repository secret works instead.
+# MCP Registry: DNS authentication for cappz.ai; the MCP_PRIVATE_KEY secret holds the Ed25519
+# key whose public half is in cappz.ai's TXT record. Without the secret the step is skipped.
+name: publish cappz-market
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # npm trusted publishing and provenance
+
+concurrency:
+  group: publish-market
+  cancel-in-progress: false
+
+env:
+  PKG: "@cappz/market"
+  SERVER: ai.cappz/cappz-market
+  MCP_PUBLISHER_VERSION: v1.8.8
+  MCP_PUBLISHER_SHA256: 09f1fa70ee146b640584274a1a6b2b8a0310b05d4321fa9224e6df6a016d67f4
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24 # npm 11: trusted publishing
+          registry-url: https://registry.npmjs.org
+
+      - name: What is already published
+        id: state
+        run: |
+          V=$(node -p "require('./packages/cappz-market/package.json').version")
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          if [ "$(npm view "$PKG@$V" version 2>/dev/null)" = "$V" ]; then echo "npm=yes" >> "$GITHUB_OUTPUT"; else echo "npm=no" >> "$GITHUB_OUTPUT"; fi
+          REG=$(curl -fsS "https://registry.modelcontextprotocol.io/v0/servers?search=$SERVER" || echo '{}')
+          HAS=$(REG="$REG" V="$V" node -e '
+            const j = JSON.parse(process.env.REG || "{}");
+            const list = (j.servers || []).map((s) => s.server || s);
+            console.log(list.some((s) => s.name === process.env.SERVER && s.version === process.env.V) ? "yes" : "no");')
+          echo "registry=$HAS" >> "$GITHUB_OUTPUT"
+          echo "cappz-market $V: on npm already? $(grep '^npm=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2); in the MCP Registry? $HAS"
+
+      - name: Install
+        if: steps.state.outputs.npm == 'no'
+        run: npm install
+
+      - name: Versions agree and the tool works
+        if: steps.state.outputs.npm == 'no'
+        run: npx vitest run src/test/agent-identity.test.ts src/test/cappz-market-tool.test.ts
+
+      - name: The committed bundle is the one this source builds
+        if: steps.state.outputs.npm == 'no'
+        run: |
+          npm run market:build
+          if ! git diff --exit-code --stat -- packages/cappz-market/dist skills/index.json skills/using-cappz-marketplace/reference/commands.md; then
+            echo "::error::dist/cappz-market.mjs is stale: run 'npm run market:build' and commit, so npm and the one-file download carry the same bytes."
+            exit 1
+          fi
+
+      - name: Publish to npm
+        if: steps.state.outputs.npm == 'no'
+        working-directory: packages/cappz-market
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance
+
+      - name: Publish to the MCP Registry
+        if: steps.state.outputs.registry == 'no'
+        env:
+          MCP_PRIVATE_KEY: ${{ secrets.MCP_PRIVATE_KEY }}
+          V: ${{ steps.state.outputs.version }}
+        run: |
+          if [ -z "$MCP_PRIVATE_KEY" ]; then echo "::warning::MCP_PRIVATE_KEY is not set; skipping the MCP Registry."; exit 0; fi
+          # The registry checks the npm package's mcpName, so wait until npm serves this version.
+          for i in $(seq 1 30); do [ "$(npm view "$PKG@$V" version 2>/dev/null)" = "$V" ] && break; sleep 10; done
+          [ "$(npm view "$PKG@$V" version 2>/dev/null)" = "$V" ] || { echo "::error::$PKG@$V is not on npm yet"; exit 1; }
+          curl -fsSL -o mcp-publisher.tar.gz "https://github.com/modelcontextprotocol/registry/releases/download/$MCP_PUBLISHER_VERSION/mcp-publisher_linux_amd64.tar.gz"
+          echo "$MCP_PUBLISHER_SHA256  mcp-publisher.tar.gz" | sha256sum -c -
+          tar xzf mcp-publisher.tar.gz mcp-publisher
+          ./mcp-publisher login dns --domain cappz.ai --private-key "$MCP_PRIVATE_KEY"
+          cd packages/cappz-market && ../../mcp-publisher publish

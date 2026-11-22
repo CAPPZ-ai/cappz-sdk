@@ -53,13 +53,9 @@ Every command prints JSON; errors print `{ "error", "next" }` and exit 1. Full r
 
 ## Releasing to npm and the MCP Registry
 
-The package follows the SDK version (`version.ts`, `package.json` here, `server.json`, the root `package.json`; a test keeps them equal). After the SDK release is pushed:
+Automatic. `.github/workflows/publish-market.yml` runs on every push to main. When the version in `package.json` here isn't on npm yet, it checks that the versions agree, checks that the committed `dist/` is exactly what the source builds, and publishes `@cappz/market` with provenance. It then publishes `server.json` to the MCP Registry. A push that doesn't change the version publishes nothing. So releasing the SDK as usual (version bump plus `npm run market:build`, committed) is all it takes.
 
-```bash
-npm run market:build                       # from the repo root: rebuild dist/cappz-market.mjs
-cd packages/cappz-market
-npm publish --access public                # needs an npm account in the cappz org (npm login)
-mcp-publisher login dns --domain cappz.ai --private-key <key>   # once; the TXT record on cappz.ai proves ai.cappz/*
-mcp-publisher publish                      # reads server.json
-```
+One-time setup:
 
+1. **npm:** the `cappz` organization on npmjs.com, and the first version published by hand (`npm publish --access public` from this folder). Then, on npmjs.com → `@cappz/market` → Settings → **Trusted publishing**, add GitHub Actions: organization `CAPPZ-ai`, repository `cappz-sdk`, workflow `publish-market.yml`. No token is stored. An `NPM_TOKEN` repository secret works too, but trusted publishing is preferred.
+2. **MCP Registry:** a TXT record on `cappz.ai`, `v=MCPv1; k=ed25519; p=<public key>`, proves the `ai.cappz/*` namespace. The matching private key (hex) goes in the repository secret `MCP_PRIVATE_KEY`. Without it, the workflow skips the registry with a warning.
