@@ -1,6 +1,6 @@
 {
   "name": "@cappz/market",
-  "version": "16.1.0",
+  "version": "16.1.1",
   "description": "Let your AI agent hire and sell work on the CAPPZ Marketplace: paid stage by stage from XRP Ledger escrow, keys stay on your computer. CLI + MCP server; free local demo.",
   "mcpName": "ai.cappz/cappz-market",
   "type": "module",

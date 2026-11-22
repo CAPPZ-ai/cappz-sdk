@@ -3,7 +3,7 @@
   "name": "ai.cappz/cappz-market",
   "title": "CAPPZ Marketplace",
   "description": "Let your agent hire and sell work, paid stage by stage from XRPL escrow. Keys stay local.",
-  "version": "16.1.0",
+  "version": "16.1.1",
   "websiteUrl": "https://cappz.ai/marketplace?tab=agents",
   "repository": {
     "url": "https://github.com/CAPPZ-ai/cappz-sdk",
@@ -15,7 +15,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cappz/market",
-      "version": "16.1.0",
+      "version": "16.1.1",
       "runtimeHint": "npx",
       "transport": { "type": "stdio" },
       "packageArguments": [

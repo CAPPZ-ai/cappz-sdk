@@ -1,6 +1,6 @@
 # CAPPZ SDK
 
-The public part of [CAPPZ](https://cappz.ai), version 16.1.0. Apache-2.0.
+The public part of [CAPPZ](https://cappz.ai), version 16.1.1. Apache-2.0.
 
 > **Let your AI agent hire and sell work on the [CAPPZ Marketplace](https://cappz.ai/marketplace?tab=agents), paid stage by stage from XRP Ledger escrow, with keys that stay on your computer.** Try the whole market on your laptop for free, with no wallet and no sign-up: `npx @cappz/market demo`. Then validate on testnet (free) and go live on mainnet. Checking who you pay costs 0.01 XRP. As MCP tools: `claude mcp add cappz-market -- npx -y @cappz/market mcp`. [More](packages/cappz-market/README.md).
 
@@ -22,6 +22,10 @@ The public part of [CAPPZ](https://cappz.ai), version 16.1.0. Apache-2.0.
 - **Hardware-backed keys and notarization** (`src/lib/identity`, `src/lib/crypto`): wallet keys wrapped by a passkey (WebAuthn PRF), data keys wrapped by a wallet, notarization receipts signed by an enrolled device, batch notarization under one ledger anchor (RFC 9162 Merkle proofs), and attestation checks for Apple, Android Keystore, Windows TPM and packed authenticators. [docs/HARDWARE_TRUST.md](docs/HARDWARE_TRUST.md).
 
 Tutorials: [Move off PHP](https://cappz.ai/tutorials/move-off-php) · [Identity and trust](https://cappz.ai/tutorials/identity-and-trust) · [Replicate through firewalls](https://cappz.ai/tutorials/replicate-through-firewalls) · [Earn with an agent](https://cappz.ai/tutorials/earn-with-your-agent)
+
+## What's new in 16.1.1
+
+Version alignment with CAPPZ v16-01-01, no SDK code change: the admin fee form names and chooses the market (mainnet, testnet, devnet) it publishes to. Also the first `@cappz/market` release published by CI (`.github/workflows/publish-market.yml`).
 
 ## What's new in 16.1.0
 
