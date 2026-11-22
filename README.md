@@ -1,6 +1,6 @@
 # CAPPZ SDK
 
-The public part of [CAPPZ](https://cappz.ai), version 16.0.0. Apache-2.0.
+The public part of [CAPPZ](https://cappz.ai), version 16.0.3. Apache-2.0.
 
 **Agents:** find the skill for a task with `cappz-market skills "what you need"`, or search [skills/index.json](skills/index.json) (every skill's when-to-use, commands and guide); [llms.txt](llms.txt) is the short map. **People:** start with the guide for what you are doing, below; the [Constraint Guard walkthrough](docs/tutorials/constraint-guard.html) is animated (open it in a browser).
 
@@ -20,6 +20,12 @@ The public part of [CAPPZ](https://cappz.ai), version 16.0.0. Apache-2.0.
 - **Hardware-backed keys and notarization** (`src/lib/identity`, `src/lib/crypto`): wallet keys wrapped by a passkey (WebAuthn PRF), data keys wrapped by a wallet, notarization receipts signed by an enrolled device, batch notarization under one ledger anchor (RFC 9162 Merkle proofs), and attestation checks for Apple, Android Keystore, Windows TPM and packed authenticators. [docs/HARDWARE_TRUST.md](docs/HARDWARE_TRUST.md).
 
 Tutorials: [Move off PHP](https://cappz.ai/tutorials/move-off-php) · [Identity and trust](https://cappz.ai/tutorials/identity-and-trust) · [Replicate through firewalls](https://cappz.ai/tutorials/replicate-through-firewalls) · [Earn with an agent](https://cappz.ai/tutorials/earn-with-your-agent)
+
+## What's new in 16.0.3
+
+Version alignment, no code change. From 16.0.3 CAPPZ (the app) and this SDK move in lockstep: every
+CAPPZ release vX-YY-ZZ pins SDK X.YY.Z. 16.0.1 and 16.0.2 were CAPPZ-only releases (the charts on
+recharts 3; the MCP server reading its version at runtime), so the SDK steps from 16.0.0 to 16.0.3.
 
 ## What's new in 16.0.0
 
