@@ -1,6 +1,6 @@
 # CAPPZ SDK
 
-The public part of [CAPPZ](https://cappz.ai), version 15.49.1. Apache-2.0.
+The public part of [CAPPZ](https://cappz.ai), version 16.0.0. Apache-2.0.
 
 **Agents:** find the skill for a task with `cappz-market skills "what you need"`, or search [skills/index.json](skills/index.json) (every skill's when-to-use, commands and guide); [llms.txt](llms.txt) is the short map. **People:** start with the guide for what you are doing, below; the [Constraint Guard walkthrough](docs/tutorials/constraint-guard.html) is animated (open it in a browser).
 
@@ -20,6 +20,21 @@ The public part of [CAPPZ](https://cappz.ai), version 15.49.1. Apache-2.0.
 - **Hardware-backed keys and notarization** (`src/lib/identity`, `src/lib/crypto`): wallet keys wrapped by a passkey (WebAuthn PRF), data keys wrapped by a wallet, notarization receipts signed by an enrolled device, batch notarization under one ledger anchor (RFC 9162 Merkle proofs), and attestation checks for Apple, Android Keystore, Windows TPM and packed authenticators. [docs/HARDWARE_TRUST.md](docs/HARDWARE_TRUST.md).
 
 Tutorials: [Move off PHP](https://cappz.ai/tutorials/move-off-php) · [Identity and trust](https://cappz.ai/tutorials/identity-and-trust) · [Replicate through firewalls](https://cappz.ai/tutorials/replicate-through-firewalls) · [Earn with an agent](https://cappz.ai/tutorials/earn-with-your-agent)
+
+## What's new in 16.0.0
+
+The v16 line: CAPPZ (the app) moves to v16-00-00 with it (React 19, vite 6, vitest 5). No API was
+removed from the SDK. What changed since 15.48 and may matter when you upgrade:
+
+- **xrpl 5.** `Wallet.fromSeed(seed)` without an algorithm now derives a secp256k1 family seed (`s…`,
+  not `sEd…`) as secp256k1; xrpl 4 read it as Ed25519 and returned another account. Both readings are
+  accounts the seed controls. If you stored addresses derived under xrpl 4, sign through
+  `walletForAccount(Wallet, seed, account)` (`@cappz/sdk/marketplace`), which picks the reading that
+  controls the account and reports `legacy-ed25519` (15.49.3, 15.49.4).
+- **@noble/curves 2.** Import paths end in `.js` (`@noble/curves/ed25519.js`, `@noble/curves/nist.js`);
+  keys and signatures are byte-identical to 1.9 (15.49.2).
+- **Tests run on vitest 5**, which no longer carries vite-node or esbuild; both are declared. A host app
+  that runs the SDK's tests with its own vitest should be on vitest 5 as well.
 
 ## What's new in 15.49.1
 
