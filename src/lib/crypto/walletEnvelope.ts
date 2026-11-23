@@ -24,7 +24,8 @@
  * P-256 encryption key; walletEncryptionKey derives that key from the wallet.
  */
 import { p256 } from '@noble/curves/nist.js';
-import { openBytesWith, p256JwkFromHex, sealBytesTo, type CompactSealedBox } from './sealedBox';
+import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
+import { openBytesWith, p256JwkFromHex, sealBytesTo, type BoxJwk, type CompactSealedBox } from './sealedBox';
 
 export const WALLET_ENVELOPE_PREFIX = 'cw1.';
 const LABEL = 'cappz.wallet-envelope.v1';
@@ -106,8 +107,10 @@ const unb64u = (s: string) => fromBase64(s.replace(/-/g, '+').replace(/_/g, '/')
 
 /**
  * Encrypt `plain` once and give each party its own wrap of the data key:
- * the owner's wallet (as sealForWallet) and every recipient's declared P-256
- * encryption key (ECDH sealed box). `context` is the associated data of the
+ * the owner's wallet (as sealForWallet) and every recipient's declared
+ * encryption key (sealed box: hybrid P-256 + ML-KEM-768 for a
+ * 'p256+ml-kem-768' key, P-256 ECDH for a 'p256' key; the wrap kind stays
+ * 'p256' and the box records its scheme). `context` is the associated data of the
  * record, so a wrap cannot be moved onto another record's ciphertext.
  * Verify each recipient's key declaration (purpose 'encryption') first.
  */
@@ -171,12 +174,24 @@ export async function openSharedEnvelope(stored: string, context: string, as: { 
 }
 
 /**
- * A wallet's P-256 encryption key, derived from its private key (HKDF, then
+ * A wallet's encryption key, derived from its private key (HKDF, then
  * reduced into the curve's scalar range), so the recovery phrase recovers it
  * on any device. Publish `publicKey` with a KeyZ declaration (purpose
- * 'encryption', algorithm 'p256') so others can seal records to it.
+ * 'encryption', the returned `algorithm`) so others can seal records to it.
+ *
+ * v16-02-00: given the wallet's `pqSeed` (WalletKeyPair.pqSeed, from the
+ * recovery phrase), the key is hybrid — the P-256 key plus an ML-KEM-768 key
+ * seeded from pqSeed — and `publicKey` is the P-256 point followed by the
+ * ML-KEM-768 key (algorithm 'p256+ml-kem-768'), so records shared with it stay
+ * closed to a future quantum computer. The ML-KEM seed never comes from the
+ * private key: the wallet address is its public key, so a quantum computer
+ * recovers the private key and everything derived from it. Without pqSeed (or
+ * with `postQuantum: false`) the key is P-256 only. The P-256 half is the same
+ * either way, so records sealed to an earlier 'p256' declaration still open.
+ * Declare the hybrid key only where every unlock path restores pqSeed, or the
+ * wallet cannot open what is sealed to it.
  */
-export async function walletEncryptionKey(walletPrivateKey: Uint8Array): Promise<{ publicKey: string; privateKey: JsonWebKey }> {
+export async function walletEncryptionKey(walletPrivateKey: Uint8Array, opts: { pqSeed?: Uint8Array; postQuantum?: boolean } = {}): Promise<{ publicKey: string; privateKey: BoxJwk; algorithm: 'p256' | 'p256+ml-kem-768' }> {
   const ikm = await crypto.subtle.importKey('raw', buf(walletPrivateKey), 'HKDF', false, ['deriveBits']);
   const okm = new Uint8Array(await crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt: buf(te.encode(LABEL)), info: buf(te.encode('cappz.wallet-encryption-key.p256.v1')) }, ikm, 384));
   // 48 bytes reduced mod n leaves a negligible bias (FIPS 186-5 A.2.1 style).
@@ -188,7 +203,15 @@ export async function walletEncryptionKey(walletPrivateKey: Uint8Array): Promise
   const dBytes = new Uint8Array(32);
   for (let i = 31, x = d; i >= 0; i--, x >>= 8n) dBytes[i] = Number(x & 0xffn);
   const point = p256.getPublicKey(dBytes, false);
-  const jwk = { ...p256JwkFromHex(Array.from(point, (b) => b.toString(16).padStart(2, '0')).join('')), d: b64u(dBytes) };
+  const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+  const jwk: BoxJwk = { ...p256JwkFromHex(hex(point)), d: b64u(dBytes) };
   dBytes.fill(0);
-  return { publicKey: Array.from(point, (b) => b.toString(16).padStart(2, '0')).join(''), privateKey: jwk };
+  if (opts.postQuantum === false || !opts.pqSeed) return { publicKey: hex(point), privateKey: jwk, algorithm: 'p256' };
+  if (opts.pqSeed.length < 32) throw new Error('wallet encryption key: pqSeed must be at least 32 bytes');
+  const pqIkm = await crypto.subtle.importKey('raw', buf(opts.pqSeed), 'HKDF', false, ['deriveBits']);
+  const seed = new Uint8Array(await crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt: buf(te.encode(LABEL)), info: buf(te.encode('cappz.wallet-encryption-key.ml-kem-768.v1')) }, pqIkm, 512));
+  const kemPub = ml_kem768.keygen(seed).publicKey;
+  const hybrid: BoxJwk = { ...jwk, cappz_mlkem768: b64u(kemPub), cappz_mlkem768_seed: b64u(seed) };
+  seed.fill(0);
+  return { publicKey: hex(point) + hex(kemPub), privateKey: hybrid, algorithm: 'p256+ml-kem-768' };
 }

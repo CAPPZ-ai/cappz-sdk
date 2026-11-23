@@ -50,7 +50,10 @@ describe('v15-18-00 shared records: one data key, a wrap per party', () => {
   it('derives a stable P-256 encryption key from the wallet, recoverable from the phrase', async () => {
     const a = await walletEncryptionKey(pharmacy.privateKey);
     const b = await walletEncryptionKey(pharmacy.privateKey.slice());
+    // v16-02-00: P-256 from the private key alone; hybrid (point ‖ ML-KEM-768 key) only with the phrase's pqSeed.
     expect(a.publicKey).toMatch(/^04[0-9a-f]{128}$/);
+    expect(a.algorithm).toBe('p256');
+    expect((await walletEncryptionKey(pharmacy.privateKey, { pqSeed: pharmacy.pqSeed })).publicKey).toMatch(/^04[0-9a-f]{2496}$/);
     expect(b.publicKey).toBe(a.publicKey);
     expect((await walletEncryptionKey(patient.privateKey)).publicKey).not.toBe(a.publicKey);
     // The JWK is usable by WebCrypto ECDH.

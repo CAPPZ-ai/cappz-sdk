@@ -4,7 +4,8 @@
 //   deno run --allow-read --allow-net --allow-env {{BASE}}/verify.mjs <file.json> [expected signer] [--evidence key-declarations.json]
 // Accepts a signed record, a timestamp result {receipt, declarations?}, a webhook bundle {bundle, records, declarations?},
 // or a fair draw {draw, commitment, entries?} (15.47.0; --entries <list.txt|list.json> for a list sent only as a hash),
-// or a vault report {report, decisions?, alerts?} (15.49.0: vault-check, and the vault guard's period report).
+// or a vault report {report, decisions?, alerts?} (15.49.0: vault-check, and the vault guard's period report),
+// or a key exposure report {report, details, vault?, plans} (16.2.0: key-exposure).
 //   node verify.mjs --hash-entries list.txt   prints a list's entriesSha256 and count (one entry per line, trimmed, blanks dropped)
 // expected signer: the node key (64 hex), the declaring wallet's public key (66 hex), or its XRPL address (r…).
 // How a record is signed: txHash = sha256(canonical JSON of the record without
@@ -295,7 +296,18 @@ if (doc.bundle) {
   if (who.ok) check(`every record's key declared by the same wallet (${records.length - undeclared}/${records.length})`, undeclared === 0);
   console.log(`     period ${main.payload.periodStart} → ${main.payload.periodEnd}`);
 }
-if (doc.report) {
+if (doc.report && main.eventType === 'KeyExposureChecked') {
+  // 16.2.0 key-exposure: the signed report names each account's posture and the hash of its full detail report.
+  const p = main.payload ?? {};
+  const rows = Array.isArray(p.accounts) ? p.accounts : [];
+  for (const a of rows) console.log(`     ${a.account}: ${a.posture} (master ${a.master}, regular key ${a.regularKey}${a.historyComplete ? '' : ', history incomplete'})`);
+  const details = Array.isArray(doc.details) ? doc.details : [];
+  const detailOk = async (d, want) => { if (!d || !want) return false; const { reportHash, ...body } = d; return reportHash === want && (await sha256(canonical(body))) === want; };
+  let good = 0; for (let i = 0; i < rows.length; i++) if (await detailOk(details[i], rows[i].reportHash)) good++;
+  check(`each account's detail report matches the signed hash (${good}/${rows.length})`, rows.length > 0 && good === rows.length);
+  if (p.vault) check(`vault ${p.vault.account} detail matches the signed hash`, await detailOk(doc.vault, p.vault.reportHash));
+  console.log(`     ledger signatures: ${p.ledgerSignatures}`);
+} else if (doc.report) {
   const p = main.payload ?? {};
   console.log(`     ${main.eventType} for ${p.account}: ${p.state ?? p.setupAtEnd ?? ''}${p.reconciliation ? `  reconciliation ${p.reconciliation.clean ? 'clean' : 'NOT clean'}` : ''}`);
   const extra = [...(Array.isArray(doc.decisions) ? doc.decisions : []), ...(Array.isArray(doc.alerts) ? doc.alerts : [])];

@@ -84,6 +84,12 @@ td,th{border-top:1px solid var(--line);padding:7px 8px;text-align:left;vertical-
     <p class="mute">Could a stolen key empty this XRPL account? A signed report on its master key, regular key and signer list, read from the ledger. No key is held, and you see the report's fingerprint before you pay.</p>
     <a class="btn" href="#try-vault-check">Check an account</a>
   </div>
+  <div class="card" id="key-exposure">
+    <h3>Quantum key exposure check</h3>
+    <div class="price">{{KE_PRICE}} XRP per report</div>
+    <p class="mute">A quantum computer attacks keys whose public key is on the ledger. Which of your accounts' signing keys have published theirs, since when, and is the master key still live? A signed report with the transactions to rotate keys and sweep funds to a vault that never signed.</p>
+    <a class="btn" href="{{BASE}}/key-exposure/SKILL.md">How to hire it</a>
+  </div>
   <div class="card" id="vault-guard">
     <h3>Vault guard</h3>
     <div class="price">{{VG_PRICE}} XRP per {{VG_DAYS}} days</div>
@@ -156,6 +162,7 @@ node verify.mjs receipt.json {{NODE}}</pre>
     <tr><td><a href="{{BASE}}/webhook/SKILL.md">webhook/SKILL.md</a></td><td>Agent skill for the webhook receiver.</td></tr>
     <tr><td><a href="{{BASE}}/draw/SKILL.md">draw/SKILL.md</a></td><td>Agent skill for the fair draw, with the rule written out.</td></tr>
     <tr><td><a href="{{BASE}}/vault-check/SKILL.md">vault-check/SKILL.md</a> · <a href="{{BASE}}/vault-guard/SKILL.md">vault-guard/SKILL.md</a></td><td>Agent skills for the vault check and the vault guard co-signer.</td></tr>
+    <tr><td><a href="{{BASE}}/key-exposure/SKILL.md">key-exposure/SKILL.md</a></td><td>Agent skill for the quantum key exposure check ({{KE_PRICE}} XRP): which keys published their public key, rotation and quickSweep.</td></tr>
     <tr><td><a href="{{BASE}}/draw/log">draw/log</a></td><td>Every draw commitment this node signed, hash-chained.</td></tr>
     <tr><td><a href="{{BASE}}/openapi.json">openapi.json</a></td><td>OpenAPI 3.1 for every route.</td></tr>
     <tr><td><a href="{{BASE}}/timestamp/agent">timestamp/agent</a> · <a href="{{BASE}}/webhook/agent">webhook/agent</a> · <a href="{{BASE}}/draw/agent">draw/agent</a></td><td>Agent cards: price, stages, payTo, network, signer.</td></tr>

@@ -16,7 +16,7 @@ import { join, resolve } from 'node:path';
 import type { XrplNetwork } from '../../src/lib/xrpl/ledgerCheck';
 import { isValidClassicAddress } from 'xrpl';
 import { fetchLedgerTx } from '../../src/lib/xrpl/ledgerCheck';
-import { openWith, sealTo, type SealedBox } from '../../src/lib/crypto/sealedBox';
+import { isHybridBoxKey, openWith, sealTo, type SealedBox } from '../../src/lib/crypto/sealedBox';
 import * as M from '../../src/lib/marketplace/model';
 import { CATEGORIES, REGIONS, categoryOf, rootCategoryOf } from '../../src/lib/marketplace/catalog';
 import { milestoneAmounts, defaultMilestones, subcontractGate } from '../../src/lib/marketplace/rules';
@@ -448,7 +448,7 @@ export const COMMANDS: Command[] = [
       const l = s.listings.find((x) => x.listingId === id); if (l) return { listing: { ...listingCard(s, l), description: l.description, delivery: l.delivery, paymentSchedule: l.milestones ?? 'category default', attributes: l.attributes, knowledge: l.knowledge ?? null, open: l.open } };
       const r = s.requests.find((x) => x.requestId === id); if (r) return { request: { ...requestCard(s, r), description: r.description, contractType: r.contractType, recurring: r.recurring ?? null, bids: r.offers.filter((x) => !x.withdrawn).map((x) => ({ id: x.offerId, seller: x.sellerId, sellerName: s.parties.get(x.sellerId)?.name ?? null, price: price(x.pricePerUnit, r.unit), quantity: x.quantity, delivers: x.deliveryDate, stages: x.milestones.length, awarded: x.awardedQuantity })) } };
       const c = s.contracts.find((x) => x.contractId === id); if (c) return { deal: dealCard(c, mk.partyId) };
-      const p = s.parties.get(id); if (p) return { party: { ...p, encryptionKey: p.encryptionKey ? 'present' : null, reputation: s.reputation.get(id) ?? null } };
+      const p = s.parties.get(id); if (p) return { party: { ...p, encryptionKey: p.encryptionKey ? (isHybridBoxKey(p.encryptionKey) ? 'present (post-quantum: P-256 + ML-KEM-768)' : 'present (P-256 only: run profile to upgrade)') : null, reputation: s.reputation.get(id) ?? null } };
       const t = s.tokens.find((x) => x.content.tokenId === id); if (t) return { token: { ...t.content, balances: t.balances, redeemed: t.redeemed } };
       throw new ToolError(`Nothing with id ${id}.`, 'Ids come from find, deals or show.');
     },

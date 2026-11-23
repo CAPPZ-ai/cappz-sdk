@@ -21,5 +21,11 @@ Bundled license information:
 @scure/bip39/index.js:
   /*! scure-bip39 - MIT License (c) 2022 Patricio Palladino, Paul Miller (paulmillr.com) */
 
+@noble/post-quantum/utils.js:
+@noble/post-quantum/_crystals.js:
+@noble/post-quantum/ml-kem.js:
+@noble/post-quantum/ml-dsa.js:
+  /*! noble-post-quantum - MIT License (c) 2024 Paul Miller (paulmillr.com) */
+
 @noble/secp256k1/index.js:
   /*! noble-secp256k1 - MIT License (c) 2019 Paul Miller (paulmillr.com) */

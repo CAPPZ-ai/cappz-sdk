@@ -19,6 +19,7 @@
 import * as secp from '@noble/secp256k1';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { hmac } from '@noble/hashes/hmac.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
 import { mnemonicToSeedSync, generateMnemonic, validateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { sha256Hex } from '../../sync/a2aSecureChannel';
@@ -45,6 +46,12 @@ export interface WalletKeyPair {
   publicKey: Uint8Array;
   /** Compressed public key hex — the wallet's sign-in address. */
   address: string;
+  /**
+   * v16-02-00: 32 bytes for post-quantum keys (HKDF of the BIP39 seed), memory only. The address IS the public key,
+   * so a quantum computer recovers `privateKey` — and anything derived from it — from public data; this seed comes
+   * from the recovery phrase by a one-way path and is not. Present only when the key came from the phrase.
+   */
+  pqSeed?: Uint8Array;
 }
 
 export function generateRecoveryPhrase(): string {
@@ -59,7 +66,8 @@ export function keyPairFromPhrase(phrase: string): WalletKeyPair {
   // dependency-light; the phrase is the root of truth either way.
   const privateKey = secp.etc.numberToBytesBE(secp.etc.secretKeyToScalar(sha256(seed.slice(0, 32))));
   const publicKey = secp.getPublicKey(privateKey, true);
-  return { privateKey, publicKey, address: secp.etc.bytesToHex(publicKey) };
+  const pqSeed = hkdf(sha256, seed, new TextEncoder().encode('cappz.pq-seed.v1'), new TextEncoder().encode('wallet'), 32);
+  return { privateKey, publicKey, address: secp.etc.bytesToHex(publicKey), pqSeed };
 }
 
 // @noble/secp256k1 v3 needs explicit hashes for sign/verify.

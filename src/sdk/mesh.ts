@@ -16,7 +16,7 @@ export { runSimulation, memoryLinkPair, rng } from '../lib/mesh/meshSim';
 export type { SimConfig, SimResult, Mobility, AdversaryMix } from '../lib/mesh/meshSim';
 export { MESH_EVALS, runMeshEvals, formatEvalReport } from '../lib/mesh/meshEvals';
 export type { MeshEval, MeshEvalOutcome, MeshEvalReport } from '../lib/mesh/meshEvals';
-export { sealBytesTo, openBytesWith, p256JwkFromHex, p256HexFromJwk } from '../lib/crypto/sealedBox';
+export { sealBytesTo, openBytesWith, p256JwkFromHex, p256HexFromJwk, boxPublicKeyHex } from '../lib/crypto/sealedBox';
 export { offerPairing, answerPairing, encodeSignal, decodeSignal } from '../lib/mesh/meshWebRtc';
 export type { PendingPair } from '../lib/mesh/meshWebRtc';
 export { RadioMedium, AirtimeBudget, loraTimeOnAirMs, loraBitRate, RADIO_HEADER_BYTES } from '../lib/mesh/meshRadio';

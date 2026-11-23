@@ -14,6 +14,11 @@
  *                      reconciles outflows every 10 minutes (alerting on any it did not approve) and ends with a
  *                      signed period report. Pay first; the report is free. Needs CAPPZ_VAULT_GUARD_SECRET.
  *
+ *   /agents/key-exposure  Quantum key exposure (16.2.0, keyExposure.ts in the SDK): a signed report on up to 10
+ *                      XRPL accounts — which signing keys have published their public key (what a quantum
+ *                      computer attacks), since when, whether the master key is still live — with unsigned
+ *                      rotation and quickSweep transactions to fix it. Read-only; pay on completion.
+ *
  *   /agents/timestamp  Signed timestamp: a SHA-256 in, a receipt signed with the
  *                      node key out (verifyEdgeTx checks it). Pay on completion.
  *   /agents/webhook    Signed webhook receiver: an endpoint for CAPPZ_WEBHOOK_DAYS
@@ -81,7 +86,8 @@ import { anchorRef, checkAnchor, discoverLedgerAnchors, isLedgerAnchor, xrplRpc,
 import { DRAW_RULE, drawInputProblem, drawPicks, drawSeed, effectiveDrawAt, entriesHash, findSeedLedger, rpcDrawLedgerReader, type DrawInput } from './draw.ts';
 import { DOC_FILES, docVars, renderDoc, WEBHOOK_DEPOSIT_SHARE } from './docs.ts';
 import { checkSignerSetup, guardCosign, outflowIntentHash, policyHash, reconcileOutflows, worstCaseLoss, signerWeights, type OutflowApproval, type ReconReport } from '../../../src/lib/treasury/vaultGuard.ts';
-import { authorizeGuardJob, checkInputProblem, fullPolicy, guardInputProblem, guardWalletFor, setupFromAccountInfo, validatedFromAccountTx, windowSpent, GUARD_DERIVATION, type VaultCheckInput, type VaultGuardInput } from './vault.ts';
+import { keyExposure, quickSweepTransaction, disableMasterTransaction, type KeyExposureReport } from '../../../src/lib/treasury/keyExposure.ts';
+import { authorizeGuardJob, checkInputProblem, keyExposureInputProblem, type KeyExposureInput, fullPolicy, guardInputProblem, guardWalletFor, setupFromAccountInfo, validatedFromAccountTx, windowSpent, GUARD_DERIVATION, type VaultCheckInput, type VaultGuardInput } from './vault.ts';
 
 const env = (k: string, d?: string) => Deno.env.get(k)?.trim() || d;
 const PAY_TO = env('CAPPZ_AGENT_PAYTO')!;
@@ -100,6 +106,7 @@ const DRAW_MAX_DAYS = Number(env('CAPPZ_DRAW_MAX_DAYS', '30'));
 const DRAW_MIN_LEAD_MS = Number(env('CAPPZ_DRAW_MIN_LEAD_SECONDS', '120')) * 1000;
 const DRAW_MAX_BODY = 3 * 1024 * 1024;
 const VAULT_CHECK_PRICE = Number(env('CAPPZ_VAULT_CHECK_PRICE_XRP', '1'));
+const KEY_EXPOSURE_PRICE = Number(env('CAPPZ_KEY_EXPOSURE_PRICE_XRP', '1'));
 const VAULT_GUARD_PRICE = Number(env('CAPPZ_VAULT_GUARD_PRICE_XRP', '10'));
 const VAULT_GUARD_DAYS = Number(env('CAPPZ_VAULT_GUARD_DAYS', '30'));
 /** 32 random bytes (hex) the guard keys are derived from; unset → the guard is not offered. Back it up. */
@@ -418,6 +425,63 @@ const vaultCheck = createPaidAgent({
   },
 });
 
+// ─── Agent 6: quantum key exposure (read-only signed report; pay on completion) ─
+
+const HISTORY_CAP = 5000;
+/** Every transaction the account appears in, newest first, up to HISTORY_CAP; complete = no marker left. */
+async function readHistory(account: string): Promise<{ txs: ReturnType<typeof validatedFromAccountTx>; complete: boolean }> {
+  const rows: unknown[] = [];
+  let marker: unknown;
+  do {
+    const r = await ledger<{ transactions?: unknown[]; marker?: unknown }>('account_tx', { account, ledger_index_min: -1, ledger_index_max: -1, limit: 400, forward: false, api_version: 2, ...(marker ? { marker } : {}) });
+    rows.push(...(r.transactions ?? []));
+    marker = r.marker;
+  } while (marker && rows.length < HISTORY_CAP);
+  return { txs: validatedFromAccountTx(rows as never), complete: !marker };
+}
+async function reserveDrops(ownerCount: number): Promise<bigint> {
+  const st = await ledger<{ state?: { validated_ledger?: { reserve_base?: number; reserve_inc?: number } } }>('server_state', {});
+  const v = st.state?.validated_ledger;
+  return BigInt(v?.reserve_base ?? 1_000_000) + BigInt(v?.reserve_inc ?? 200_000) * BigInt(ownerCount);
+}
+
+const keStore = await fileJobStore(`${DATA}/key-exposure`);
+const keyExposureAgent = createPaidAgent({
+  offer: defineAgentOffer({
+    name: 'CAPPZ quantum key exposure check',
+    description: `A signed report on up to 10 XRP Ledger accounts: which keys that can sign have published their public key on the ledger (what a quantum computer would attack), since when, whether the master key is still live, and which accounts are safe receive-only vaults. Includes the unsigned transactions to fix it: rotate to a fresh regular key, disable an exposed master key, and quickSweep funds above a buffer to a vault whose key never signed. Reads the full history; this node never holds a key. Pay on completion.`,
+    payTo: PAY_TO, network: NETWORK, currency: 'XRP', price: KEY_EXPOSURE_PRICE,
+    stages: SCHEDULE_PRESETS['on-completion'].stages.map((s) => ({ ...s, deliverable: 'Signed key exposure report (JSON)' })),
+  }),
+  store: keStore,
+  work: async ({ jobId, input }) => {
+    const x = input as KeyExposureInput;
+    const read = async (account: string) => {
+      const info = await ledger<{ account_data?: { Balance?: string; OwnerCount?: number } }>('account_info', { account, ledger_index: 'validated', signer_lists: true }).catch(() => null);
+      const { txs, complete } = await readHistory(account);
+      const report = await keyExposure({ account, setup: info ? setupFromAccountInfo(info as never) : { flags: 0 }, txs, historyComplete: complete, maxExposureDays: x.maxExposureDays });
+      return { account, report, funded: !!info?.account_data, balance: info?.account_data?.Balance ?? '0', ownerCount: Number(info?.account_data?.OwnerCount ?? 0) };
+    };
+    const accounts = [];
+    for (const a of x.accounts) accounts.push(await read(a));
+    const vault = x.vault ? (await read(x.vault)).report : null;
+    const plans = await Promise.all(accounts.map(async (a) => {
+      const fixes: Array<{ why: string; tx: Record<string, unknown> }> = [];
+      const r: KeyExposureReport = a.report;
+      if (r.posture === 'master-exposed' || r.posture === 'stale-exposure') fixes.push({ why: 'Move signing to a key that never signed (generate it offline; replace <fresh r-address>), sign with the current key.', tx: { TransactionType: 'SetRegularKey', Account: a.account, RegularKey: '<fresh r-address>' } });
+      if (r.posture === 'master-exposed') fixes.push({ why: 'Then disable the exposed master key (only after the regular key has signed something successfully).', tx: disableMasterTransaction(a.account) });
+      const sweep = vault && a.funded ? quickSweepTransaction({ account: a.account, balanceDrops: a.balance, reserveDrops: (await reserveDrops(a.ownerCount)).toString(), bufferDrops: String(Math.round((x.bufferXrp ?? 0) * 1_000_000)), vault }) : null;
+      return { account: a.account, fixes, ...(sweep ? { quickSweep: sweep } : {}) };
+    }));
+    const report = await signed('KeyExposureChecked', `${POW}/key-exposure/${x.accounts[0]}`, {
+      jobId, accounts: accounts.map((a) => ({ account: a.account, funded: a.funded, posture: a.report.posture, master: a.report.master.state, regularKey: a.report.regularKey.state, historyComplete: a.report.historyComplete, reportHash: a.report.reportHash })),
+      ...(vault ? { vault: { account: vault.account, posture: vault.posture, reportHash: vault.reportHash } } : {}),
+      ledgerSignatures: 'classical-only',
+    });
+    return { report, details: accounts.map((a) => a.report), ...(vault ? { vault } : {}), plans, ...evidenceFor([report.payload.signerDeclaration]), verify: VERIFY_HOW };
+  },
+});
+
 // ─── Agent 5: vault guard (the node co-signs for a period; pay first) ────────
 
 const vgStore = await fileJobStore(`${DATA}/vault-guard`);
@@ -594,6 +658,7 @@ setInterval(async () => {
   try { await watchLong(webhook); } catch (e) { console.warn('[agents] webhook watch:', (e as Error).message); }
   try { await watchLong(draw); } catch (e) { console.warn('[agents] draw watch:', (e as Error).message); }
   try { await vaultCheck.tick(); } catch (e) { console.warn('[agents] vault-check tick:', (e as Error).message); }
+  try { await keyExposureAgent.tick(); } catch (e) { console.warn('[agents] key-exposure tick:', (e as Error).message); }
   try { await watchLong(vaultGuard); } catch (e) { console.warn('[agents] vault-guard watch:', (e as Error).message); }
   // Active guard periods: reconcile each vault every 10 minutes (alerts on any outflow the guard did not approve).
   if (GUARD_SECRET) for (const j of (await vaultGuard.jobs().catch(() => [])).filter((j) => j.state === 'working')) {
@@ -634,6 +699,11 @@ const AGENTS: Record<string, { agent: PaidAgent; howToUse: string; validate: (in
     howToUse: `cappz-market hire ${PUBLIC_BASE}/vault-check --input '{"account":"r…","guard":"r… (optional)","recovery":["r…"],"policy":{…} (optional)}' --max ${VAULT_CHECK_PRICE} — or POST /jobs → pay → GET /jobs/<id>/stages/0/result`,
     validate: checkInputProblem,
   },
+  'key-exposure': {
+    agent: keyExposureAgent,
+    howToUse: `cappz-market hire ${PUBLIC_BASE}/key-exposure --input '{"accounts":["r…"],"vault":"r… never-signed vault (optional)","bufferXrp":20,"maxExposureDays":30}' --max ${KEY_EXPOSURE_PRICE} — or POST /jobs → pay → GET /jobs/<id>/stages/0/result`,
+    validate: keyExposureInputProblem,
+  },
   ...(GUARD_SECRET ? { 'vault-guard': {
     agent: vaultGuard,
     howToUse: `1. GET ${PUBLIC_BASE}/vault-guard/guard/<vault r-address> → your guard address and setup. 2. Set up the signer list with it and disable the master key (guardSetupTransactions in @cappz/sdk/marketplace). 3. cappz-market hire ${PUBLIC_BASE}/vault-guard --input '{"account":"r…","policy":{"destinations":[{"address":"r…","label":"…"}],"limits":[{"asset":"XRP","perTx":"20000000","perWindow":"50000000"}]},"recovery":["r…","r…"],"alertUrl":"https://… (optional)"}' --max ${VAULT_GUARD_PRICE}. 4. For each payment: autofill it for 2 signers, POST ${PUBLIC_BASE}/vault-guard/cosign/<jobId> {"tx":…} → txBlob; add one operator signature (multisign) and submit.`,
@@ -655,6 +725,7 @@ const VARS = docVars({
   timestampPrice: TIMESTAMP_PRICE, webhookPrice: WEBHOOK_PRICE, webhookDays: WEBHOOK_DAYS,
   drawPrice: DRAW_PRICE, drawMaxDays: DRAW_MAX_DAYS, drawMinLeadSeconds: DRAW_MIN_LEAD_MS / 1000,
   vaultCheckPrice: VAULT_CHECK_PRICE, vaultGuardPrice: VAULT_GUARD_PRICE, vaultGuardDays: VAULT_GUARD_DAYS,
+  keyExposurePrice: KEY_EXPOSURE_PRICE,
   peerBase: env('CAPPZ_AGENT_PEER_BASE', '')!.replace(/\/+$/, ''),
 });
 async function doc(path: string): Promise<Response> {
@@ -712,6 +783,15 @@ function openapi(): unknown {
           limit: { type: 'integer', minimum: 1, maximum: 400, default: 200 },
         },
       }),
+      ...agentPaths('key-exposure', {
+        type: 'object', required: ['accounts'],
+        properties: {
+          accounts: { type: 'array', minItems: 1, maxItems: 10, items: { type: 'string' }, description: 'XRPL classic addresses to check.' },
+          vault: { type: 'string', description: 'A vault whose keys never signed: adds a quickSweep transaction per account (refused if the vault is exposed).' },
+          bufferXrp: { type: 'number', minimum: 0, description: 'XRP to keep in each account above its reserve when sweeping.' },
+          maxExposureDays: { type: 'integer', minimum: 1, maximum: 3650, default: 30, description: 'How long a signing key may stay exposed before rotation is due.' },
+        },
+      }),
       ...(GUARD_SECRET ? {
         ...agentPaths('vault-guard', {
           type: 'object', required: ['account', 'policy'],
@@ -738,7 +818,7 @@ function openapi(): unknown {
   };
 }
 
-const ROUTE = /^\/agents\/(timestamp|webhook|draw|vault-check|vault-guard)(\/agent|\/health|\/jobs|\/jobs\/(job-[0-9a-f]{16})(\/payments|\/retry|\/stages\/(\d+)\/result)?|\/hooks\/(job-[0-9a-f]{16}))?\/?$/;
+const ROUTE = /^\/agents\/(timestamp|webhook|draw|vault-check|vault-guard|key-exposure)(\/agent|\/health|\/jobs|\/jobs\/(job-[0-9a-f]{16})(\/payments|\/retry|\/stages\/(\d+)\/result)?|\/hooks\/(job-[0-9a-f]{16}))?\/?$/;
 
 async function handle(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });

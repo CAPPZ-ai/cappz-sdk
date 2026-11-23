@@ -37,6 +37,8 @@ import { resolveMissingState, type SyncFork } from './missingStateResolver';
 import {
   b64ToBytes,
   bytesToB64,
+  channelKemAccept,
+  channelKemOffer,
   generateChannelKeyPair,
   openSecureChannel,
   sha256Hex,
@@ -329,8 +331,10 @@ export class A2ASyncEngine {
     const corr = req.requestId;
     const reqKey = requester.channelKey ?? generateChannelKeyPair();
     const srcKey = source.channelKey ?? generateChannelKeyPair();
-    const srcChannel = await openSecureChannel({ sessionId, mine: srcKey, peerPublicKey: reqKey.publicKey });
-    const reqChannel = await openSecureChannel({ sessionId, mine: reqKey, peerPublicKey: srcKey.publicKey });
+    // Hybrid (X25519 + ML-KEM-768) when the source has a KEM key: the requester encapsulates to it.
+    const offer = srcKey.kem && reqKey.kem ? channelKemOffer(srcKey.kem.publicKey) : null;
+    const srcChannel = await openSecureChannel({ sessionId, mine: srcKey, peerPublicKey: reqKey.publicKey, ...(offer ? { pq: { cipherText: offer.cipherText, sharedSecret: channelKemAccept(srcKey, offer.cipherText) } } : {}) });
+    const reqChannel = await openSecureChannel({ sessionId, mine: reqKey, peerPublicKey: srcKey.publicKey, ...(offer ? { pq: offer } : {}) });
 
     // A2ASend — session wallet gets hashes + public keys only.
     const manifestHash = await sha256Hex(JSON.stringify(req.missing));
@@ -343,6 +347,7 @@ export class A2ASyncEngine {
         source: source.copyId,
         requesterPublicKey: toHex(reqKey.publicKey),
         sourcePublicKey: toHex(srcKey.publicKey),
+        channelSuite: srcChannel.suite,
         manifestHash,
         itemCount: req.missing.length,
         transport: transport.kind,

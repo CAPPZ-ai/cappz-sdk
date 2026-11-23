@@ -162,3 +162,18 @@ export function authorizeGuardJob(o: { vault: string; guard: string; policyHash:
   }
   return { ok: true, policyHash: o.policyHash };
 }
+
+/** Key exposure check input (16.2.0): up to 10 accounts, an optional never-signed vault to sweep to, the exposure limit. */
+export interface KeyExposureInput { accounts: string[]; vault?: string; bufferXrp?: number; maxExposureDays?: number }
+
+export function keyExposureInputProblem(i: unknown): string | null {
+  const x = i as KeyExposureInput | undefined;
+  if (!x || !Array.isArray(x.accounts) || x.accounts.length < 1 || x.accounts.length > 10) return 'input.accounts: 1 to 10 XRPL classic addresses.';
+  if (x.accounts.some((a) => typeof a !== 'string' || !isValidClassicAddress(a))) return 'input.accounts: each must be an XRPL classic address.';
+  if (new Set(x.accounts).size !== x.accounts.length) return 'input.accounts: an address appears twice.';
+  if (x.vault !== undefined && (typeof x.vault !== 'string' || !isValidClassicAddress(x.vault))) return 'input.vault, when given, is an XRPL classic address.';
+  if (x.vault !== undefined && x.accounts.includes(x.vault)) return 'input.vault must not be one of input.accounts.';
+  if (x.bufferXrp !== undefined && (!Number.isFinite(x.bufferXrp) || x.bufferXrp < 0 || x.bufferXrp > 1e9)) return 'input.bufferXrp: the XRP to leave in each account above its reserve (0 or more).';
+  if (x.maxExposureDays !== undefined && (!Number.isInteger(x.maxExposureDays) || x.maxExposureDays < 1 || x.maxExposureDays > 3650)) return 'input.maxExposureDays: 1 to 3650.';
+  return null;
+}

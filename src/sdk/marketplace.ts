@@ -46,5 +46,6 @@ export * as securities from '../lib/marketplace/securities';
 export * as knowledge from '../lib/marketplace/knowledge/access';
 // 15.48.0 — Vault Guard: a ledger-enforced limit on what a stolen key can take from a pooled account.
 export * from '../lib/treasury/vaultGuard';
+export * from '../lib/treasury/keyExposure';
 // 15.49.4 — which reading of an XRPL seed controls a recorded account (xrpl 4 read secp256k1 seeds as Ed25519).
 export * from '../lib/xrpl/seedWallet';

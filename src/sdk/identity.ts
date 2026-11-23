@@ -7,8 +7,8 @@ export { makeDisclosure, decodeDisclosure, issueSdJwt, presentSdJwt, verifyPrese
 export type { EvidenceLevel, PresentationState, PresentationResult } from '../lib/identity/sdJwt';
 export { didKeyFor, parseDidKey } from '../lib/identity/didKey';
 // Trust without a CA: wallet-signed declarations, replayed revocations, short delegations.
-export { declareKey, verifyKeyDeclaration, revokeKeyDeclaration, verifyKeyRevocation, delegateKey, verifyKeyDelegation, evaluateKey, declaredKeysFor, withoutRevokedKeys, asKeyDeclaration, declarationHash, KEY_DECLARATION_TTL_MS, KEY_DELEGATION_MAX_TTL_MS } from '../lib/identity/keyDeclaration';
-export type { KeyDeclaration, KeyRevocation, KeyDelegation, KeyPurpose, KeyAlgorithm, KeyTrust, KeyTrustState, KeyEvidence } from '../lib/identity/keyDeclaration';
+export { declareKey, verifyKeyDeclaration, revokeKeyDeclaration, verifyKeyRevocation, delegateKey, verifyKeyDelegation, evaluateKey, declaredKeysFor, withoutRevokedKeys, asKeyDeclaration, declarationHash, KEY_DECLARATION_TTL_MS, KEY_DELEGATION_MAX_TTL_MS, declarePqAnchor, pqCosign, pqAnchorState, generatePqKey, pqKeyFromSeed, pqMessage } from '../lib/identity/keyDeclaration';
+export type { KeyDeclaration, KeyRevocation, KeyDelegation, KeyPurpose, KeyAlgorithm, KeyTrust, KeyTrustState, KeyEvidence, PqCosign, PqPosture, PqAnchorState, PqSigningKey } from '../lib/identity/keyDeclaration';
 // X.509 as a projection of a declaration (mTLS, QUIC, WebTransport, enterprise clients).
 export { issueSelfSignedCertificate, parseCertificate, verifySelfSignature, certificateBindings, toPem, fromPem, KEYDECL_URI_PREFIX } from '../lib/identity/x509';
 export type { CertificateRequest, IssuedCertificate, ParsedCertificate } from '../lib/identity/x509';
@@ -18,7 +18,8 @@ export type { DemoStep, DemoReport } from '../lib/identity/identityTrustDemo';
 // What a holder, issuer or verifier needs alongside: wallet keys (memory only) and sealing keys / content keys.
 export { keyPairFromPhrase, generateRecoveryPhrase } from '../lib/auth/wallet/session';
 export type { WalletKeyPair } from '../lib/auth/wallet/session';
-export { generateBoxKeyPair, newContentKey, sealTo, openWith } from '../lib/crypto/sealedBox';
+export { generateBoxKeyPair, upgradeBoxKeyPair, isHybridBoxKey, boxPublicKeyHex, newContentKey, sealTo, openWith, HYBRID_BOX_SCHEME, CLASSIC_BOX_SCHEME } from '../lib/crypto/sealedBox';
+export type { BoxJwk, SealedBox, BoxScheme } from '../lib/crypto/sealedBox';
 // v15-11-00 — CAPPZ key declarations vs X.509, measured (revocation window, CPU per check, cost per million, tradeoffs).
 export { runTrustComparison, exposureRows, buildPki, signCrl, verifyX509, TRADEOFFS, DEFAULT_COMPARISON_ASSUMPTIONS, ASSUMPTION_LABELS } from '../lib/identity/trustComparison';
 export type { ComparisonReport, ComparisonAssumptions, ExposureRow, LatencyRow, CostRow, Tradeoff, X509Verdict } from '../lib/identity/trustComparison';

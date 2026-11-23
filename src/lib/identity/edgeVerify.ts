@@ -382,7 +382,14 @@ export function isDeclarationShape(d: unknown): d is HelloKeyDeclaration | KeyDe
   const str = (k: string, re: RegExp) => typeof x[k] === 'string' && re.test(x[k] as string);
   const common = str('walletAddress', WALLET_RE) && str('signature', /^[0-9a-f]{120,160}$/i) && str('issuedAt', /^\d{4}-/) && str('expiresAt', /^\d{4}-/);
   if (x.v === 1) return common && str('devicePublicKey', /^[0-9a-f]{64}$/i);
-  if (x.v === 2) return common && str('publicKey', /^[0-9a-f]{64,130}$/i) && ['hello', 'tls', 'signing', 'encryption'].includes(x.purpose as string) && ['ed25519', 'p256', 'secp256k1', 'x25519'].includes(x.algorithm as string);
+  if (x.v === 2) {
+    // Key length follows the algorithm: 32-byte or SEC1 keys, P-256 ‖ ML-KEM-768 (1249 bytes), ML-DSA-65 (1952 bytes).
+    const keyRe = x.algorithm === 'p256+ml-kem-768' ? /^[0-9a-f]{2498}$/i : x.algorithm === 'ml-dsa-65' ? /^[0-9a-f]{3904}$/i : /^[0-9a-f]{64,130}$/i;
+    const pq = x.pq as Record<string, unknown> | undefined;
+    // An ML-DSA-65 signature is 3309 bytes; the anchor is a declaration hash (64 hex) or 'self'.
+    const pqOk = pq === undefined || (!!pq && typeof pq === 'object' && typeof pq.anchor === 'string' && /^(self|[0-9a-f]{64})$/.test(pq.anchor) && typeof pq.signature === 'string' && /^[0-9a-f]{6618}$/i.test(pq.signature));
+    return common && pqOk && str('publicKey', keyRe) && ['hello', 'tls', 'signing', 'encryption', 'pq-anchor'].includes(x.purpose as string) && ['ed25519', 'p256', 'secp256k1', 'x25519', 'p256+ml-kem-768', 'ml-dsa-65'].includes(x.algorithm as string);
+  }
   return false;
 }
 

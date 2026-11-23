@@ -17,7 +17,7 @@ import { Client, Wallet } from 'xrpl';
 import { XRPL_ENDPOINTS, type XrplNetwork } from '../../src/lib/xrpl/ledgerCheck';
 import { walletForAccount } from '../../src/lib/xrpl/seedWallet';
 import { sha256Hex } from '../../src/lib/governance/PrinciplesChainlet';
-import { generateBoxKeyPair } from '../../src/lib/crypto/sealedBox';
+import { generateBoxKeyPair, upgradeBoxKeyPair } from '../../src/lib/crypto/sealedBox';
 import { resolveMarket, type MarketState } from '../../src/lib/marketplace/replay';
 import { DEMO_YOU, DemoRunner, seedDemoMarket } from '../../src/lib/marketplace/demo';
 import { MARKET_NETWORKS, PUBLIC_LOG_PARTITION, attributePublicLog, authorHashOf, marketPartition, publishToPublicLog, pullPublicLog, type MarketNetwork, type PublicLogPort } from '../../src/lib/marketplace/publicLog';
@@ -297,10 +297,21 @@ export async function walletStatus(address: string, network: XrplNetwork): Promi
 
 // ─── Keys kept on this computer ───────────────────────────────────
 
-/** This party's box key (P-256): the public half goes on the profile, the private half stays here. */
+/**
+ * This party's box key (P-256 + ML-KEM-768): the public half goes on the profile, the private half stays here.
+ * A key saved before 16.2.0 (P-256 only) gains its ML-KEM-768 half here, in place: its P-256 half is unchanged,
+ * so secrets already sealed to it still open, and the next `profile` publishes the hybrid key so new boxes
+ * sealed to this party are post-quantum.
+ */
 export async function boxKey(): Promise<{ publicKey: JsonWebKey; privateKey: JsonWebKey }> {
   const k = await readJson<{ publicKey: JsonWebKey; privateKey: JsonWebKey }>('box-key.json');
-  if (k) return k;
+  if (k) {
+    const up = upgradeBoxKeyPair(k);
+    if (!up.upgraded) return k;
+    const pair = { publicKey: up.publicKey, privateKey: up.privateKey };
+    await writeJson('box-key.json', pair, true);
+    return pair;
+  }
   const pair = await generateBoxKeyPair();
   await writeJson('box-key.json', pair, true);
   return pair;

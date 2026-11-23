@@ -36,7 +36,7 @@ import { encodeJsonFrame, decodeJsonFrame, FrameDecoder, type FrameCommand } fro
 import { signCanonical, verifyCanonical, generateSigningKey, importSigningKey, type SigningKey } from '../sync/helloSignature.ts';
 import { declareKey, evaluateKey, verifyKeyDeclaration, type KeyDeclaration, type KeyRevocation } from '../identity/keyDeclaration.ts';
 import { canonicalJson, fromBase64Url, sha256HexOf } from '../identity/canonical.ts';
-import { generateBoxKeyPair, p256HexFromJwk } from '../crypto/sealedBox.ts';
+import { boxPublicKeyHex, generateBoxKeyPair } from '../crypto/sealedBox.ts';
 import {
   createBundle, bundleId, openBody, jsonBody, readJsonBody,
   type MeshBundle, type MeshBundleHeader, type MeshCredentials, type BundleKind,
@@ -547,7 +547,7 @@ export class MeshNode {
     else if (b.h.kind === 'contact') {
       // { decl, alias } (a bare declaration from older nodes). The bundle is signed by the wallet's device key, so the alias is the wallet's own.
       const d = ('decl' in payload ? payload.decl : payload) as KeyDeclaration;
-      if (d?.walletAddress === b.h.src && d.purpose === 'encryption' && d.algorithm === 'p256' && (await verifyKeyDeclaration(d, this.now())) === 'valid') {
+      if (d?.walletAddress === b.h.src && d.purpose === 'encryption' && (d.algorithm === 'p256' || d.algorithm === 'p256+ml-kem-768') && (await verifyKeyDeclaration(d, this.now())) === 'valid') {
         this.contacts.set(d.walletAddress, d.publicKey);
         this.o.onContact?.({ wallet: d.walletAddress, alias: typeof payload.alias === 'string' ? payload.alias : undefined });
       }
@@ -632,12 +632,17 @@ export async function provisionMeshDevice(p: {
   grant?: MeshMembership;
   ttlMs?: number;
   now?: number;
+  /** Hybrid P-256 + ML-KEM-768 box key (bigger messages, closed to a future quantum computer). */
+  postQuantum?: boolean;
 }): Promise<MeshNodeIdentity> {
   const now = p.now ?? Date.now();
   const deviceKey = await generateSigningKey();
   const decl = await declareKey(p.walletPrivateKey, p.walletAddress, { publicKey: deviceKey.publicKeyHex, algorithm: 'ed25519', purpose: 'hello' }, p.ttlMs, now);
-  const box = await generateBoxKeyPair();
-  const encryptionDeclaration = await declareKey(p.walletPrivateKey, p.walletAddress, { publicKey: p256HexFromJwk(box.publicKey), algorithm: 'p256', purpose: 'encryption' }, p.ttlMs, now);
+  // Radio links are measured in bytes: a hybrid (post-quantum) box adds the 1088-byte ML-KEM ciphertext
+  // to every sealed message, so mesh devices stay P-256 unless the mesh asks for it.
+  const box = await generateBoxKeyPair({ classic: !p.postQuantum });
+  const enc = boxPublicKeyHex(box.publicKey);
+  const encryptionDeclaration = await declareKey(p.walletPrivateKey, p.walletAddress, { publicKey: enc.publicKey, algorithm: enc.algorithm, purpose: 'encryption' }, p.ttlMs, now);
   return { walletAddress: p.walletAddress, deviceKey, credentials: { decl, ...(p.grant ? { grant: p.grant } : {}) }, encryptionPrivateKey: box.privateKey, encryptionDeclaration };
 }
 

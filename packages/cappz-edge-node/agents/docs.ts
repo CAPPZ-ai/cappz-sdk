@@ -27,6 +27,8 @@ export interface DocSettings {
   vaultCheckPrice?: number;
   vaultGuardPrice?: number;
   vaultGuardDays?: number;
+  /** Quantum key exposure check (16.2.0); default 1 XRP. */
+  keyExposurePrice?: number;
   /** The same agents on the other network ('' when there is none). */
   peerBase?: string;
 }
@@ -44,6 +46,7 @@ export const DOC_FILES: Readonly<Record<string, { file: string; type: string }>>
   '/draw/SKILL.md': { file: 'draw.SKILL.md', type: 'text/markdown; charset=utf-8' },
   '/vault-check/SKILL.md': { file: 'vault-check.SKILL.md', type: 'text/markdown; charset=utf-8' },
   '/vault-guard/SKILL.md': { file: 'vault-guard.SKILL.md', type: 'text/markdown; charset=utf-8' },
+  '/key-exposure/SKILL.md': { file: 'key-exposure.SKILL.md', type: 'text/markdown; charset=utf-8' },
   /** A draw's public page (also served at /draw/draws/<jobId> to browsers). */
   '/draw/view': { file: 'draw.html', type: 'text/html; charset=utf-8' },
   '/verify.mjs': { file: 'verify.mjs', type: 'text/javascript; charset=utf-8' },
@@ -60,6 +63,7 @@ export function docVars(s: DocSettings): Record<string, string> {
     DRAW_PRICE: round(s.drawPrice ?? 0.1), DRAW_MAX_DAYS: String(s.drawMaxDays ?? 30),
     DRAW_LEAD: String(Math.round((s.drawMinLeadSeconds ?? 120) / 60 * 10) / 10),
     VC_PRICE: round(s.vaultCheckPrice ?? 1), VG_PRICE: round(s.vaultGuardPrice ?? 10), VG_DAYS: String(s.vaultGuardDays ?? 30),
+    KE_PRICE: round(s.keyExposurePrice ?? 1),
   };
 }
 

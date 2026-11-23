@@ -11,6 +11,7 @@ The same agents run on {{PEER_NETWORK}}: {{PEER_BASE}}/llms.txt. Validate a flow
 - [Signed webhook receiver]({{BASE}}/webhook/SKILL.md): a webhook URL open for {{DAYS}} days. Every POST becomes a signed record, and at the end you get the signed bundle of all records. {{WH_PRICE}} XRP: {{WH_DEPOSIT}} deposit opens the URL, {{WH_REST}} when the bundle is ready. Input: `{"label":"optional, ≤100 chars"}`.
 - [Fair draw]({{BASE}}/draw/SKILL.md): pick winners from a list (giveaways, raffles, audit samples, selection by lot) by the hash of an XRP Ledger ledger closed after the list was locked, so nobody can steer them and anyone can recompute them. {{DRAW_PRICE}} XRP, paid once up front; the result is free. Input: `{"entries":["…"],"winners":1,"drawAt":"ISO, optional","public":true}` or `{"entriesSha256":"…","count":N,"winners":1}`. Commitments: {{BASE}}/draw/log.
 - [Vault check]({{BASE}}/vault-check/SKILL.md): a signed report on a pooled XRPL account: is a guard co-signer load-bearing, or could a stolen key move money alone (master key, regular key, signer-list weights); with a policy, the worst case; with the guard's approvals, every recent outflow matched. Read-only, no key held. {{VC_PRICE}} XRP on completion. Input: `{"account":"r…","guard":"r… optional","recovery":["r…"],"policy":{…},"approvals":[…]}`.
+- [Quantum key exposure check]({{BASE}}/key-exposure/SKILL.md): a signed report on up to 10 XRPL accounts: which signing keys have published their public key (what a quantum computer attacks), since when, whether the master key is still live, which accounts are safe receive-only vaults; with unsigned rotation, disable-master and quickSweep transactions. Read-only, full history, no key held. {{KE_PRICE}} XRP on completion. Input: `{"accounts":["r…"],"vault":"r… optional","bufferXrp":20,"maxExposureDays":30}`.
 - [Vault guard]({{BASE}}/vault-guard/SKILL.md): this node becomes a vault's guard co-signer for {{VG_DAYS}} days: stolen operator keys move nothing; it co-signs only inside the owner's policy (destinations, per-payment and rolling-window caps, next sequence only), signs every decision, reconciles every 10 minutes and alerts on anything unapproved. {{VG_PRICE}} XRP up front, paid **from the vault itself**; a policy change must be paid with the recovery keys. Guard address: `GET {{BASE}}/vault-guard/guard/<vault>`. Co-sign: `POST {{BASE}}/vault-guard/cosign/<jobId> {"tx":…}`.
 
 ## Fastest path
@@ -27,7 +28,7 @@ The same agents run on {{PEER_NETWORK}}: {{PEER_BASE}}/llms.txt. Validate a flow
 
 - [Guide for people, with try-it forms]({{BASE}}/)
 - [OpenAPI 3.1]({{BASE}}/openapi.json)
-- Agent cards (JSON): [timestamp]({{BASE}}/timestamp/agent), [webhook]({{BASE}}/webhook/agent), [draw]({{BASE}}/draw/agent), [vault-check]({{BASE}}/vault-check/agent), [vault-guard]({{BASE}}/vault-guard/agent)
+- Agent cards (JSON): [timestamp]({{BASE}}/timestamp/agent), [webhook]({{BASE}}/webhook/agent), [draw]({{BASE}}/draw/agent), [vault-check]({{BASE}}/vault-check/agent), [vault-guard]({{BASE}}/vault-guard/agent), [key-exposure]({{BASE}}/key-exposure/agent)
 - [Receipt verifier, Node 20+ or Deno]({{BASE}}/verify.mjs)
 - [General skill: hiring CAPPZ paid agents](https://github.com/CAPPZ-ai/cappz-sdk/blob/main/skills/hiring-cappz-paid-agents/SKILL.md)
 

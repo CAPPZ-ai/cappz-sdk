@@ -4,6 +4,7 @@
     "npm:@anthropic-ai/sdk@^1.12.0": "1.12.0",
     "npm:@noble/curves@^2.4.0": "2.4.0",
     "npm:@noble/hashes@^2.4.0": "2.4.0",
+    "npm:@noble/post-quantum@~0.7.1": "0.7.1",
     "npm:@noble/secp256k1@^3.2.0": "3.2.0",
     "npm:@scure/bip39@^2.4.0": "2.4.0",
     "npm:@types/node@^22.7.9": "22.20.5",
@@ -198,6 +199,9 @@
         "@tybys/wasm-util"
       ]
     },
+    "@noble/ciphers@2.4.0": {
+      "integrity": "sha512-AnjFn0Jv92laAkvMrghlFZq4qQCIN/4DxFV/eooqtC2YTjB7kBeLMS2T9KJX4Dn+ZVXLOwK0lSgqDtx9gvxtiw=="
+    },
     "@noble/curves@2.4.0": {
       "integrity": "sha512-P4/62zrgfH33CneE3Dn4WhJVA22YUU0eR51wKIan4NVRvwsA0YnPTwWGpNbpuacSujmSFLvyzpyuR30+fbq2Ew==",
       "dependencies": [
@@ -206,6 +210,14 @@
     },
     "@noble/hashes@2.4.0": {
       "integrity": "sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA=="
+    },
+    "@noble/post-quantum@0.7.1": {
+      "integrity": "sha512-+P9981IiAnVh+rmcubozzVwrEy3XsN/tMhTnvsjV9VDaYpOnNCqWqKo2FLWxbu92YHfjGIlE5XnW175UK+ln+Q==",
+      "dependencies": [
+        "@noble/ciphers",
+        "@noble/curves",
+        "@noble/hashes"
+      ]
     },
     "@noble/secp256k1@3.2.0": {
       "integrity": "sha512-Z3ZAWOTxJ0EuTuZTi7Y69iK7GgrLHh8sgm45lVDhg/b3Nk1TpAiKhick2KkZisHuupeepSkyIydN/J459SdX1w=="
@@ -768,6 +780,7 @@
         "npm:@anthropic-ai/sdk@^1.12.0",
         "npm:@noble/curves@^2.4.0",
         "npm:@noble/hashes@^2.4.0",
+        "npm:@noble/post-quantum@~0.7.1",
         "npm:@noble/secp256k1@^3.2.0",
         "npm:@scure/bip39@^2.4.0",
         "npm:@types/node@^22.7.9",

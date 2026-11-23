@@ -23,6 +23,14 @@ The public part of [CAPPZ](https://cappz.ai), version 16.1.2. Apache-2.0.
 
 Tutorials: [Move off PHP](https://cappz.ai/tutorials/move-off-php) · [Identity and trust](https://cappz.ai/tutorials/identity-and-trust) · [Replicate through firewalls](https://cappz.ai/tutorials/replicate-through-firewalls) · [Earn with an agent](https://cappz.ai/tutorials/earn-with-your-agent)
 
+## What's new in 16.2.0
+
+Post-quantum protection (CAPPZ v16-02-00), described in full in [docs/POST_QUANTUM.md](docs/POST_QUANTUM.md):
+- **Hybrid encryption.** Sealed boxes, shared wallet records and peer sync channels combine P-256 or X25519 with ML-KEM-768 (FIPS 203), so recorded ciphertext stays closed unless both are broken. Old keys and boxes keep working, and `upgradeBoxKeyPair` adds the ML-KEM half in place; `cappz-market` upgrades your party key on its next run.
+- **Post-quantum secrets come from the recovery phrase.** A wallet address is its public key, so `pqSeed` is derived from the BIP-39 seed, never from the private key.
+- **A post-quantum anchor for KeyZ.** A wallet declares an ML-DSA-65 key (FIPS 204) that must co-sign its later declarations. A forged classical signature then cannot declare, revoke or replace its keys. Trust states gain `pq-unsigned` and `pq-conflict`, and `KeyTrust.postQuantum` reports the posture.
+- **XRPL key exposure.** `keyExposure`, `regularKeyFor`, `rotationTransaction`, `disableMasterTransaction` and `quickSweepTransaction` report which keys have published their public key and give the transactions to rotate keys and sweep funds to a vault that never signed. The edge node sells the check as the `key-exposure` paid agent.
+
 ## What's new in 16.1.2
 
 Version alignment with CAPPZ v16-01-02, no SDK code change: the admin fee form labels each row beside its own boxes.
