@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect } from 'vitest';
 import { Wallet } from 'xrpl';
 import { keyExposure, quickSweepTransaction, regularKeyFor, rotationTransaction, disableMasterTransaction } from '../lib/treasury/keyExposure';
