@@ -23,6 +23,14 @@ The public part of [CAPPZ](https://cappz.ai), version 16.1.2. Apache-2.0.
 
 Tutorials: [Move off PHP](https://cappz.ai/tutorials/move-off-php) · [Identity and trust](https://cappz.ai/tutorials/identity-and-trust) · [Replicate through firewalls](https://cappz.ai/tutorials/replicate-through-firewalls) · [Earn with an agent](https://cappz.ai/tutorials/earn-with-your-agent)
 
+## What's new in 16.3.0
+
+Post-quantum protection, continued (CAPPZ v16-03-00; [docs/POST_QUANTUM.md](docs/POST_QUANTUM.md)):
+- **Records sealed to a wallet.** `sealForWallet(…, { pqSeed })` writes `cw3.` records, whose key needs the private key **and** the recovery phrase's `pqSeed`. `cw1.` records still open. Shared records take `ownerPqSeed`, and `sharedWrapNeeds` says when opening needs `pqSeed`.
+- **Agent requests.** Agent requests carry a second RFC 9421 signature, ML-DSA-65 `sig2`, when the profile declares `pqAnchor` and `pqKeyDeclaration`. Verifiers require it from such a party (`pq-unsigned` otherwise), and `RequestAuth.postQuantum` reports the posture. `cappz-market` creates the anchor and key on its next run, and `profile` publishes them along with the hybrid box key.
+- **Several signatures per request.** The edge gateway reads `sig1` from Signature headers that carry several signatures (`signatureMembers`, `parseSignatureInput(…, label)`, `signatureBytes`).
+- **Key-exposure check docs.** The agent's skill tells buyers to pay from an account they are not checking, because paying exposes that account's key.
+
 ## What's new in 16.2.0
 
 Post-quantum protection (CAPPZ v16-02-00), described in full in [docs/POST_QUANTUM.md](docs/POST_QUANTUM.md):

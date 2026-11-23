@@ -96,7 +96,7 @@ export function buildAgentCard(i: CardInput): AgentCard {
   if (i.manifest) for (const op of i.manifest.operations) skills.push({ id: op.verb, name: op.verb, description: op.summary, tags: [i.manifest.name, op.writes ? 'governed-write' : 'read'], inputModes: ['application/json'], outputModes: ['application/json'] });
   skills.push(...(i.extraSkills ?? []));
   if (i.requestSigning) extensions.push({ uri: REQUEST_SIGNATURE_EXTENSION, required: i.requestSigning === 'required', description: 'HTTP Message Signatures (RFC 9421, alg ed25519) with Content-Digest (RFC 9530), keyed by the party’s KeyZ-declared signing key on its marketplace profile. Unsigned requests are reported, not refused, unless the agent’s mandate binds a key.',
-    params: { alg: 'ed25519', components: [...AGENT_SIGNED_COMPONENTS], keyDirectory: 'the party profile (keyDeclaration) on the market’s public log', states: ['verified-bound', 'verified-unbound', 'not-signed', 'bad-signature', 'revoked', 'expired', 'stale', 'replayed', 'malformed'] } });
+    params: { alg: 'ed25519', pqAlg: 'ml-dsa-65 (sig2, when the profile declares pqKeyDeclaration)', components: [...AGENT_SIGNED_COMPONENTS], keyDirectory: 'the party profile (keyDeclaration, pqAnchor, pqKeyDeclaration) on the market’s public log', states: ['verified-bound', 'verified-unbound', 'not-signed', 'bad-signature', 'revoked', 'expired', 'stale', 'replayed', 'malformed', 'pq-unsigned'] } });
   return {
     protocolVersion: A2A_PROTOCOL_VERSION,
     name: i.name ?? i.paid?.name ?? i.manifest!.name,

@@ -21,11 +21,17 @@
  * sender (`verified-unbound`, treated like `not-signed`), and adding a
  * signature never makes the outcome worse than sending none: only a mandate
  * bound to a key (MandateContent.boundKey) requires `verified-bound`.
+ *
+ * v16-03-00 post-quantum: an agent whose profile declares an ML-DSA-65 request key (pqKeyDeclaration, co-signed by
+ * its pqAnchor) adds a second signature, sig2 (alg "ml-dsa-65", keyid = SHA-256 of the key), over the same
+ * components. Verifiers then require it: a request from such a party without a valid sig2 is `pq-unsigned` (a
+ * forged Ed25519 signature alone is not enough), and `postQuantum` reports hybrid / classical-only.
  */
-import { contentDigestHeader, createVerifyGateway, requestSigner, signatureBase, SIGNED_COMPONENTS, type EdgeVerdict } from '../identity/edgeVerify';
+import { contentDigestHeader, createVerifyGateway, parseSignatureInput, requestSigner, signatureBase, signatureBytes, SIGNED_COMPONENTS, type EdgeVerdict } from '../identity/edgeVerify';
+import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
 import type { KeyDeclaration, KeyRevocation } from '../identity/keyDeclaration';
 import { fromHex, toHex } from '../identity/canonical';
-import { agentKeyState, boundKeysOf } from './agentKeys';
+import { agentKeyState, agentPqKeyState, boundKeysOf } from './agentKeys';
 import type { MarketState } from './replay';
 
 export type RequestAuthState =
@@ -38,6 +44,7 @@ export type RequestAuthState =
   | 'stale'             // signed outside the accepted clock window
   | 'replayed'          // the nonce was seen before (or none was sent)
   | 'malformed'
+  | 'pq-unsigned'       // the party declares an ML-DSA-65 request key, and the request lacks its valid second signature
   | 'unavailable';      // the verifier could not evaluate (replay cache full): refused rather than guessed
 
 export interface RequestAuth {
@@ -47,6 +54,8 @@ export interface RequestAuth {
   keyId?: string;
   walletAddress?: string;
   because: string;
+  /** 'hybrid': Ed25519 and the declared ML-DSA-65 key both signed; 'classical-only': Ed25519 only (the party declares no ML-DSA key). */
+  postQuantum?: 'hybrid' | 'classical-only';
 }
 
 /** The party a request acts as: covered by the signature, so it cannot be swapped. */
@@ -54,7 +63,15 @@ export const PARTY_HEADER = 'cappz-party';
 export const AGENT_SIGNED_COMPONENTS = [...SIGNED_COMPONENTS, PARTY_HEADER] as const;
 
 /** What an agent keeps to sign: its profile's declaration and the Ed25519 secret (32 bytes, hex) — on its own computer only. */
-export interface AgentSigningKey { partyId: string; declaration: KeyDeclaration; secretKeyHex: string }
+export interface AgentSigningKey {
+  partyId: string; declaration: KeyDeclaration; secretKeyHex: string;
+  /** v16-03-00: the ML-DSA-65 request key (its declaration and 32-byte seed, hex): adds sig2. */
+  pq?: { declaration: KeyDeclaration; seedHex: string };
+}
+
+const PQ_ALG = 'ml-dsa-65';
+const sha256Hex = async (hex: string) => toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', fromHex(hex) as BufferSource)));
+const b64 = (u: Uint8Array) => { let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode(...u.subarray(i, i + 0x8000)); return btoa(s); };
 
 /** A request to sign, as a hook receives it. */
 export interface OutgoingRequest { method: string; url: string; body?: Uint8Array | string }
@@ -73,8 +90,18 @@ export async function signAgentRequest(req: OutgoingRequest, key: AgentSigningKe
   const raw = `(${AGENT_SIGNED_COMPONENTS.map((c) => `"${c}"`).join(' ')});created=${Math.floor(now / 1000)};keyid="${signer.publicKeyHex}";alg="ed25519";nonce="${nonce}"`;
   const base = signatureBase({ components: AGENT_SIGNED_COMPONENTS, raw }, { method: req.method, url: new URL(req.url), headers: h })!;
   const sigHex = await signer.sign(base);
-  h.set('signature-input', `sig1=${raw}`);
-  h.set('signature', `sig1=:${btoa(String.fromCharCode(...fromHex(sigHex)))}:`);
+  let input = `sig1=${raw}`;
+  let sig = `sig1=:${btoa(String.fromCharCode(...fromHex(sigHex)))}:`;
+  if (key.pq) {
+    const keyid = await sha256Hex(key.pq.declaration.publicKey.toLowerCase());
+    const raw2 = `(${AGENT_SIGNED_COMPONENTS.map((c) => `"${c}"`).join(' ')});created=${Math.floor(now / 1000)};keyid="${keyid}";alg="${PQ_ALG}";nonce="${nonce}"`;
+    const base2 = signatureBase({ components: AGENT_SIGNED_COMPONENTS, raw: raw2 }, { method: req.method, url: new URL(req.url), headers: h })!;
+    const sk = ml_dsa65.keygen(fromHex(key.pq.seedHex)).secretKey;
+    input += `, sig2=${raw2}`;
+    sig += `, sig2=:${b64(ml_dsa65.sign(new TextEncoder().encode(base2), sk))}:`;
+  }
+  h.set('signature-input', input);
+  h.set('signature', sig);
   return Object.fromEntries(h.entries());
 }
 
@@ -119,8 +146,26 @@ export function createAgentRequestVerifier(o: { maxAgeSec?: number; now?: () => 
       if (!partyId) return { state: 'verified-unbound', partyId, ...ids, because: 'signed, but names no party (cappz-party)' };
       const k = await agentKeyState(state, partyId, v.keyId!, new Date(now()).toISOString(), revocations);
       if (k.walletAddress && v.walletAddress && k.walletAddress.toLowerCase() !== v.walletAddress.toLowerCase()) return { state: 'verified-unbound', partyId, ...ids, because: 'signed under a wallet other than the one that declared the profile key' };
-      const s: RequestAuthState = k.state === 'declared' ? 'verified-bound' : k.state === 'revoked' ? 'revoked' : k.state === 'expired' ? 'expired' : 'verified-unbound';
-      return { state: s, partyId, ...ids, because: s === 'verified-bound' ? `signed by ${partyId}'s declared key (${k.because})` : `key ${k.state}: ${k.because}` };
+      const s: RequestAuthState = k.state === 'declared' ? 'verified-bound' : k.state === 'revoked' ? 'revoked' : k.state === 'expired' ? 'expired' : k.state === 'pq-unsigned' ? 'pq-unsigned' : 'verified-unbound';
+      if (s !== 'verified-bound') return { state: s, partyId, ...ids, because: `key ${k.state}: ${k.because}` };
+      // Post-quantum: a party that declares an ML-DSA request key must sign with it too.
+      const profile = state.parties.get(partyId)!;
+      const pq = await agentPqKeyState(profile, new Date(now()).toISOString(), revocations);
+      if (!pq) return { state: s, partyId, ...ids, postQuantum: 'classical-only', because: `signed by ${partyId}'s declared key (${k.because})` };
+      if (pq.state !== 'declared') return { state: 'pq-unsigned', partyId, ...ids, because: `the profile's ML-DSA-65 key is ${pq.state} (${pq.because})` };
+      const p1 = parseSignatureInput(headers.get('signature-input'), 'sig1');
+      const p2 = parseSignatureInput(headers.get('signature-input'), 'sig2');
+      const sig2 = signatureBytes(headers.get('signature'), 'sig2');
+      if (!p2 || !sig2) return { state: 'pq-unsigned', partyId, ...ids, because: `${partyId} declares an ML-DSA-65 request key; the request carries no sig2` };
+      const sameComponents = p2.components.join(' ') === AGENT_SIGNED_COMPONENTS.join(' ');
+      if (p2.alg !== PQ_ALG || !sameComponents || p2.keyid !== (await sha256Hex(pq.publicKey)) || p2.created !== p1?.created || p2.nonce !== p1?.nonce) {
+        return { state: 'bad-signature', partyId, ...ids, because: 'sig2 does not cover the same components, time and nonce with the declared ML-DSA-65 key' };
+      }
+      const base2 = signatureBase({ components: p2.components, raw: p2.raw }, { method: req.method, url: new URL(req.url), headers });
+      let ok2 = false;
+      try { ok2 = !!base2 && ml_dsa65.verify(sig2, new TextEncoder().encode(base2), fromHex(pq.publicKey)); } catch { ok2 = false; }
+      if (!ok2) return { state: 'bad-signature', partyId, ...ids, because: 'sig2 (ML-DSA-65) does not verify' };
+      return { state: s, partyId, ...ids, postQuantum: 'hybrid', because: `signed by ${partyId}'s declared Ed25519 and ML-DSA-65 keys (${k.because})` };
     },
   };
 }

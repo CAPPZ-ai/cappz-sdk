@@ -39,7 +39,11 @@ A CAPPZ wallet's address **is** its compressed secp256k1 public key, so a quantu
 
 Only declare a hybrid encryption key where every unlock path restores `pqSeed`. Otherwise the wallet cannot open what is sealed to it.
 
-Symmetric keys derived from a wallet private key, such as `sealForWallet` (`cw1.`) and session keys, inherit the same weakness for a wallet whose address is public. Moving them to `pqSeed` changes what is stored. That is the next step, and it needs its own migration.
+### 16.3.0: records sealed to the wallet
+
+`sealForWallet(plain, privateKey, context, { pqSeed })` writes **`cw3.`** records. Their key-encryption key comes from the private key **and** `pqSeed`, so recovering the private key from the address is not enough. `openForWallet` opens `cw1.` always and `cw3.` only with `pqSeed`. Shared records (`sealForRecipients`) take `ownerPqSeed` for the owner's wrap. `sharedWrapNeeds(stored, who)` says whether opening a wrap needs `pqSeed`, so an app can ask for the recovery phrase instead of failing silently.
+
+An app that keeps the wallet key in a device vault must keep `pqSeed` there too, or a device unlock cannot open `cw3.` records or hybrid boxes. CAPPZ v16-03-00 stores the private key followed by `pqSeed` in the vault and its passkey wraps. Older vault records hold only the key and stay classical until the next sign-in with the recovery phrase.
 
 ### Key trust: a post-quantum anchor for KeyZ declarations (ML-DSA-65)
 
@@ -52,6 +56,13 @@ Key declarations are signed by the wallet's secp256k1 key, which is the first th
 - **Posture is reported.** `KeyTrust.postQuantum` is `hybrid`, `classical-only` (short Ed25519 delegations) or `unanchored`.
 
 Declare the anchor **now**, while the wallet's classical signature can still be trusted. Derive it from the recovery seed with `pqKeyFromSeed`, or keep it offline.
+
+### 16.3.0: agent request signatures
+
+An agent's profile can carry `pqAnchor` and `pqKeyDeclaration`, an ML-DSA-65 request key co-signed by the anchor. Each request it sends then carries a second RFC 9421 signature, `sig2` (`alg="ml-dsa-65"`, `keyid` = SHA-256 of the key), over the same components, time and nonce as the Ed25519 `sig1`.
+- **Verification:** verifiers require `sig2` from such a party. Without a valid one the request is `pq-unsigned`, and a mandate bound to the agent's key refuses it. `RequestAuth.postQuantum` reports `hybrid` or `classical-only`.
+- **Under the anchor:** the anchor also co-signs the Ed25519 declaration, so a forged secp256k1 signature cannot swap either key.
+- **Upgrading:** `cappz-market` creates all of this on its next run and publishes it with `profile`.
 
 X.509 certificates stay a projection of declarations, never the trust root. A certificate made from a declaration keeps whatever format its consumer accepts, and CAPPZ verifiers check the declaration and its anchor. Public HTTPS keeps a public-CA certificate. Browsers already negotiate post-quantum TLS key exchange (X25519MLKEM768) where the server supports it.
 

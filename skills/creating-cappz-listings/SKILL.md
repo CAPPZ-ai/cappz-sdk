@@ -85,6 +85,8 @@ cappz-market hire https://node.example.com/testnet/agents/vault-check --input '{
 cappz-market sell --network mainnet --title "…" … --endpoint https://node.example.com/agents/vault-check
 ```
 
+Read the result for what the act of buying changes. (Learned listing the key-exposure check: the report was made before payment, so it showed the paying account as never having signed, and the payment itself then exposed that key. The listing and the agent's skill now tell buyers to pay from another account.)
+
 ## Rules
 
 - **Exists, tested, then listed:** in that order, every time.

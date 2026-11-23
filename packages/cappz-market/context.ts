@@ -27,7 +27,7 @@ import type { MarketTx, MarketTxLike } from '../../src/lib/marketplace/ledger';
 import type { Actor } from '../../src/lib/marketplace/model';
 import * as secp from '@noble/secp256k1';
 import { ed25519 } from '@noble/curves/ed25519.js';
-import { declarationHash, declareKey, type KeyDeclaration } from '../../src/lib/identity/keyDeclaration';
+import { declarationHash, declareKey, declarePqAnchor, generatePqKey, pqCosign, type KeyDeclaration } from '../../src/lib/identity/keyDeclaration';
 import { fromHex, toHex } from '../../src/lib/identity/canonical';
 import type { AgentSigningKey } from '../../src/lib/marketplace/agentRequestAuth';
 
@@ -334,30 +334,53 @@ export async function recallSecret(contractId: string, milestone: number): Promi
  * CAPPZ_HOME (0600); only the declaration (public key + wallet signature) goes on the profile. It is separate from the
  * XRPL wallet, which may be Ed25519 and which moves money: the signing key can be rotated without moving funds.
  */
-interface AgentKeyFile { walletPrivateKey: string; walletAddress: string; secretKey: string; declaration: KeyDeclaration }
+interface AgentKeyFile {
+  walletPrivateKey: string; walletAddress: string; secretKey: string; declaration: KeyDeclaration;
+  /**
+   * 16.3.0 post-quantum: 32-byte seeds (hex) for the wallet's ML-DSA-65 anchor and the ML-DSA-65 request key, the
+   * anchor declaration, and the request key's declaration (co-signed by the anchor). The Ed25519 declaration above
+   * is co-signed by the anchor too (in place: its hash does not change).
+   */
+  pq?: { anchorSeed: string; signingSeed: string; anchor: KeyDeclaration; declaration: KeyDeclaration };
+}
 /** Renew the declaration when it has less than this left. */
 const RENEW_BEFORE_MS = 14 * 86_400_000;
 
 export async function agentKey(): Promise<AgentKeyFile | null> { return readJson<AgentKeyFile>('agent-key.json'); }
 
-/** The agent key, created on first use and its declaration renewed (superseding the old one) before it expires. */
+/**
+ * The agent key, created on first use and its declaration renewed (superseding the old one) before it expires. From
+ * 16.3.0 it also holds the post-quantum anchor and ML-DSA request key: an existing key file gains them on the next
+ * run, the Ed25519 key stays the same.
+ */
 export async function ensureAgentKey(now = Date.now()): Promise<AgentKeyFile> {
   const k = await agentKey();
-  if (k && Date.parse(k.declaration.expiresAt) - now > RENEW_BEFORE_MS) return k;
+  const fresh = k && Date.parse(k.declaration.expiresAt) - now > RENEW_BEFORE_MS;
+  const pqFresh = k?.pq && Date.parse(k.pq.declaration.expiresAt) - now > RENEW_BEFORE_MS;
+  if (fresh && pqFresh) return k!;
   const walletPrivateKey = k ? fromHex(k.walletPrivateKey) : secp.utils.randomSecretKey();
   const walletAddress = k?.walletAddress ?? toHex(secp.getPublicKey(walletPrivateKey, true));
   const secretKey = k ? fromHex(k.secretKey) : crypto.getRandomValues(new Uint8Array(32));
-  const declaration = await declareKey(walletPrivateKey, walletAddress, { publicKey: toHex(ed25519.getPublicKey(secretKey)), algorithm: 'ed25519', purpose: 'signing', ...(k ? { supersedes: await declarationHash(k.declaration) } : {}) }, undefined, now);
-  const out: AgentKeyFile = { walletPrivateKey: toHex(walletPrivateKey), walletAddress, secretKey: toHex(secretKey), declaration };
+  // The anchor is long-lived (5 years) and kept across renewals: replacing it would read as a rival anchor.
+  const anchorSeed = k?.pq ? fromHex(k.pq.anchorSeed) : crypto.getRandomValues(new Uint8Array(32));
+  const anchorKey = generatePqKey(anchorSeed);
+  const anchor = k?.pq?.anchor ?? await declarePqAnchor(walletPrivateKey, walletAddress, anchorKey, { now });
+  const signingSeed = k?.pq ? fromHex(k.pq.signingSeed) : crypto.getRandomValues(new Uint8Array(32));
+  const pqSigning = generatePqKey(signingSeed);
+  const ed = fresh ? k!.declaration : await declareKey(walletPrivateKey, walletAddress, { publicKey: toHex(ed25519.getPublicKey(secretKey)), algorithm: 'ed25519', purpose: 'signing', ...(k ? { supersedes: await declarationHash(k.declaration) } : {}) }, undefined, now);
+  const declaration = await pqCosign(ed, anchor, anchorKey);
+  const pqDecl = pqFresh ? k!.pq!.declaration : await pqCosign(await declareKey(walletPrivateKey, walletAddress, { publicKey: pqSigning.publicKey, algorithm: 'ml-dsa-65', purpose: 'signing', ...(k?.pq ? { supersedes: await declarationHash(k.pq.declaration) } : {}) }, undefined, now), anchor, anchorKey);
+  const out: AgentKeyFile = { walletPrivateKey: toHex(walletPrivateKey), walletAddress, secretKey: toHex(secretKey), declaration, pq: { anchorSeed: toHex(anchorSeed), signingSeed: toHex(signingSeed), anchor, declaration: pqDecl } };
   await writeJson('agent-key.json', out, true);
   return out;
 }
 
 /** What signs this party's requests — only when its profile declares this computer's key (a stale or foreign key would sign nothing useful). */
-export async function agentSigningKey(partyId: string | null, declared: KeyDeclaration | undefined): Promise<AgentSigningKey | null> {
+export async function agentSigningKey(partyId: string | null, declared: KeyDeclaration | undefined, pqDeclared?: KeyDeclaration): Promise<AgentSigningKey | null> {
   const k = await agentKey();
   if (!k || !partyId || !declared || declared.publicKey.toLowerCase() !== k.declaration.publicKey.toLowerCase()) return null;
-  return { partyId, declaration: declared, secretKeyHex: k.secretKey };
+  const pq = k.pq && pqDeclared && pqDeclared.publicKey.toLowerCase() === k.pq.declaration.publicKey.toLowerCase() ? { declaration: pqDeclared, seedHex: k.pq.signingSeed } : undefined;
+  return { partyId, declaration: declared, secretKeyHex: k.secretKey, ...(pq ? { pq } : {}) };
 }
 
 export const homeDir = HOME;

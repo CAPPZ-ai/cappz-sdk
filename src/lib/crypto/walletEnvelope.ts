@@ -28,6 +28,13 @@ import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
 import { openBytesWith, p256JwkFromHex, sealBytesTo, type BoxJwk, type CompactSealedBox } from './sealedBox';
 
 export const WALLET_ENVELOPE_PREFIX = 'cw1.';
+/**
+ * v16-03-00: 'cw3.' — the same layout, but the key-encryption key comes from the wallet private key AND the recovery
+ * phrase's pqSeed (WalletKeyPair.pqSeed). A wallet's address is its public key, so a quantum computer recovers the
+ * private key; it cannot recover pqSeed (a one-way derivation of the BIP39 seed). sealForWallet writes cw3 whenever
+ * pqSeed is given; openForWallet opens cw1 always and cw3 only with pqSeed.
+ */
+export const PQ_WALLET_ENVELOPE_PREFIX = 'cw3.';
 const LABEL = 'cappz.wallet-envelope.v1';
 const te = new TextEncoder();
 const buf = (b: Uint8Array): ArrayBuffer => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer;
@@ -44,41 +51,52 @@ function fromBase64(b64: string): Uint8Array {
   return out;
 }
 
-async function keyEncryptionKey(walletPrivateKey: Uint8Array, context: string): Promise<CryptoKey> {
+async function keyEncryptionKey(walletPrivateKey: Uint8Array, context: string, pqSeed?: Uint8Array): Promise<CryptoKey> {
   if (walletPrivateKey.length < 32) throw new Error('wallet envelope: wallet private key must be at least 32 bytes');
-  const ikm = await crypto.subtle.importKey('raw', buf(walletPrivateKey), 'HKDF', false, ['deriveKey']);
-  return crypto.subtle.deriveKey({ name: 'HKDF', hash: 'SHA-256', salt: buf(te.encode(LABEL)), info: buf(te.encode(context)) }, ikm, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  if (pqSeed && pqSeed.length < 32) throw new Error('wallet envelope: pqSeed must be at least 32 bytes');
+  const material = pqSeed ? new Uint8Array([...walletPrivateKey, ...pqSeed]) : walletPrivateKey;
+  try {
+    const ikm = await crypto.subtle.importKey('raw', buf(material), 'HKDF', false, ['deriveKey']);
+    return crypto.subtle.deriveKey({ name: 'HKDF', hash: 'SHA-256', salt: buf(te.encode(pqSeed ? `${LABEL}|pq` : LABEL)), info: buf(te.encode(context)) }, ikm, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  } finally {
+    if (pqSeed) material.fill(0);
+  }
 }
 
-export const isWalletEnvelope = (stored: string) => stored.startsWith(WALLET_ENVELOPE_PREFIX);
+/** A wallet-sealed record, classical (cw1) or post-quantum (cw3). */
+export const isWalletEnvelope = (stored: string) => stored.startsWith(WALLET_ENVELOPE_PREFIX) || stored.startsWith(PQ_WALLET_ENVELOPE_PREFIX);
+/** Opening this record needs the wallet's pqSeed (it is cw3). */
+export const walletEnvelopeNeedsPqSeed = (stored: string) => stored.startsWith(PQ_WALLET_ENVELOPE_PREFIX);
 
-/** Encrypt `plain` so that only `walletPrivateKey` (with the same `context`) opens it. */
-export async function sealForWallet(plain: Uint8Array, walletPrivateKey: Uint8Array, context: string): Promise<string> {
+/** Encrypt `plain` so that only `walletPrivateKey` (with the same `context`, and `pqSeed` when given: cw3) opens it. */
+export async function sealForWallet(plain: Uint8Array, walletPrivateKey: Uint8Array, context: string, opts: { pqSeed?: Uint8Array } = {}): Promise<string> {
   const aad = buf(te.encode(context));
   const dataKeyBytes = crypto.getRandomValues(new Uint8Array(32));
   try {
     const kekIv = crypto.getRandomValues(new Uint8Array(12));
     const dataIv = crypto.getRandomValues(new Uint8Array(12));
-    const wrapped = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: buf(kekIv), additionalData: aad }, await keyEncryptionKey(walletPrivateKey, context), buf(dataKeyBytes)));
+    const wrapped = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: buf(kekIv), additionalData: aad }, await keyEncryptionKey(walletPrivateKey, context, opts.pqSeed), buf(dataKeyBytes)));
     const dataKey = await crypto.subtle.importKey('raw', buf(dataKeyBytes), 'AES-GCM', false, ['encrypt']);
     const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: buf(dataIv), additionalData: aad }, dataKey, buf(plain)));
     const out = new Uint8Array(12 + wrapped.length + 12 + ct.length);
     out.set(kekIv); out.set(wrapped, 12); out.set(dataIv, 12 + wrapped.length); out.set(ct, 24 + wrapped.length);
-    return WALLET_ENVELOPE_PREFIX + toBase64(out);
+    return (opts.pqSeed ? PQ_WALLET_ENVELOPE_PREFIX : WALLET_ENVELOPE_PREFIX) + toBase64(out);
   } finally {
     dataKeyBytes.fill(0);
   }
 }
 
-/** Open a record sealed by sealForWallet. Null for the wrong wallet, the wrong context or changed bytes. */
-export async function openForWallet(stored: string, walletPrivateKey: Uint8Array, context: string): Promise<Uint8Array | null> {
+/** Open a record sealed by sealForWallet. Null for the wrong wallet, the wrong context, changed bytes, or a cw3 record without pqSeed. */
+export async function openForWallet(stored: string, walletPrivateKey: Uint8Array, context: string, opts: { pqSeed?: Uint8Array } = {}): Promise<Uint8Array | null> {
   if (!isWalletEnvelope(stored)) return null;
+  const pq = walletEnvelopeNeedsPqSeed(stored);
+  if (pq && !opts.pqSeed) return null;
   let dataKeyBytes: Uint8Array | null = null;
   try {
-    const raw = fromBase64(stored.slice(WALLET_ENVELOPE_PREFIX.length));
+    const raw = fromBase64(stored.slice((pq ? PQ_WALLET_ENVELOPE_PREFIX : WALLET_ENVELOPE_PREFIX).length));
     if (raw.length < 12 + 48 + 12 + 16) return null;
     const aad = buf(te.encode(context));
-    dataKeyBytes = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf(raw.subarray(0, 12)), additionalData: aad }, await keyEncryptionKey(walletPrivateKey, context), buf(raw.subarray(12, 60))));
+    dataKeyBytes = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf(raw.subarray(0, 12)), additionalData: aad }, await keyEncryptionKey(walletPrivateKey, context, pq ? opts.pqSeed : undefined), buf(raw.subarray(12, 60))));
     const dataKey = await crypto.subtle.importKey('raw', buf(dataKeyBytes), 'AES-GCM', false, ['decrypt']);
     return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf(raw.subarray(60, 72)), additionalData: aad }, dataKey, buf(raw.subarray(72))));
   } catch {
@@ -114,7 +132,7 @@ const unb64u = (s: string) => fromBase64(s.replace(/-/g, '+').replace(/_/g, '/')
  * record, so a wrap cannot be moved onto another record's ciphertext.
  * Verify each recipient's key declaration (purpose 'encryption') first.
  */
-export async function sealForRecipients(plain: Uint8Array, context: string, o: { ownerPrivateKey?: Uint8Array; recipients: readonly EnvelopeRecipient[] }): Promise<string> {
+export async function sealForRecipients(plain: Uint8Array, context: string, o: { ownerPrivateKey?: Uint8Array; ownerPqSeed?: Uint8Array; recipients: readonly EnvelopeRecipient[] }): Promise<string> {
   if (!o.ownerPrivateKey && !o.recipients.length) throw new Error('shared envelope: nobody to seal for');
   const dataKeyBytes = crypto.getRandomValues(new Uint8Array(32));
   try {
@@ -122,7 +140,7 @@ export async function sealForRecipients(plain: Uint8Array, context: string, o: {
     const dataKey = await crypto.subtle.importKey('raw', buf(dataKeyBytes), 'AES-GCM', false, ['encrypt']);
     const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: buf(iv), additionalData: buf(te.encode(context)) }, dataKey, buf(plain)));
     const wraps: SharedEnvelope['wraps'] = [];
-    if (o.ownerPrivateKey) wraps.push({ to: 'owner', kind: 'wallet', sealed: await sealForWallet(dataKeyBytes, o.ownerPrivateKey, `${context}|data-key`) });
+    if (o.ownerPrivateKey) wraps.push({ to: 'owner', kind: 'wallet', sealed: await sealForWallet(dataKeyBytes, o.ownerPrivateKey, `${context}|data-key`, { pqSeed: o.ownerPqSeed }) });
     for (const r of o.recipients) wraps.push({ to: r.id, kind: 'p256', box: await sealBytesTo(r.publicKey.toLowerCase(), dataKeyBytes) });
     const env: SharedEnvelope = { v: 2, iv: b64u(iv), ct: b64u(ct), wraps };
     return SHARED_ENVELOPE_PREFIX + b64u(te.encode(JSON.stringify(env)));
@@ -141,6 +159,17 @@ function parseShared(stored: string): SharedEnvelope | null {
   }
 }
 
+/**
+ * What opening a shared record needs from this party: 'pq-seed' when its wrap is post-quantum (owner cw3, or a
+ * recipient box sealed hybrid), 'classical' otherwise, null when it has no wrap.
+ */
+export function sharedWrapNeeds(stored: string, who: 'owner' | string): 'pq-seed' | 'classical' | null {
+  const w = parseShared(stored)?.wraps.find((x) => x.to === who);
+  if (!w) return null;
+  if (w.kind === 'wallet') return walletEnvelopeNeedsPqSeed(w.sealed) ? 'pq-seed' : 'classical';
+  return w.box.scheme === 'ECDH-P256+ML-KEM-768-AES-GCM' ? 'pq-seed' : 'classical';
+}
+
 /** Who can open a shared record ('owner' and recipient ids). */
 export function envelopeRecipients(stored: string): string[] {
   return parseShared(stored)?.wraps.map((w) => w.to) ?? [];
@@ -151,14 +180,14 @@ export function envelopeRecipients(stored: string): string[] {
  * (its id and its encryption private key, from walletEncryptionKey). Null
  * when this party has no wrap, the key is wrong, or the record was changed.
  */
-export async function openSharedEnvelope(stored: string, context: string, as: { ownerPrivateKey: Uint8Array } | { recipientId: string; encryptionPrivateKey: JsonWebKey }): Promise<Uint8Array | null> {
+export async function openSharedEnvelope(stored: string, context: string, as: { ownerPrivateKey: Uint8Array; ownerPqSeed?: Uint8Array } | { recipientId: string; encryptionPrivateKey: JsonWebKey }): Promise<Uint8Array | null> {
   const env = parseShared(stored);
   if (!env) return null;
   let dataKeyBytes: Uint8Array | null = null;
   try {
     if ('ownerPrivateKey' in as) {
       const w = env.wraps.find((x) => x.to === 'owner' && x.kind === 'wallet') as { sealed: string } | undefined;
-      dataKeyBytes = w ? await openForWallet(w.sealed, as.ownerPrivateKey, `${context}|data-key`) : null;
+      dataKeyBytes = w ? await openForWallet(w.sealed, as.ownerPrivateKey, `${context}|data-key`, { pqSeed: as.ownerPqSeed }) : null;
     } else {
       const w = env.wraps.find((x) => x.to === as.recipientId && x.kind === 'p256') as { box: CompactSealedBox } | undefined;
       dataKeyBytes = w ? await openBytesWith(as.encryptionPrivateKey, w.box) : null;

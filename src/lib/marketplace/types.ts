@@ -52,6 +52,14 @@ export interface PartyProfile {
    * reported) unless a mandate binds the agent to a key (MandateContent.boundKey).
    */
   keyDeclaration?: KeyDeclaration;
+  /**
+   * v16-03-00 post-quantum: the identity wallet's ML-DSA-65 anchor (purpose `pq-anchor`). Once present, the profile's
+   * declarations count only when the anchor co-signs them (keyDeclaration.ts), so a forged secp256k1 signature
+   * cannot swap the agent's keys.
+   */
+  pqAnchor?: KeyDeclaration;
+  /** v16-03-00: the agent's ML-DSA-65 request-signing key (purpose `signing`), co-signed by pqAnchor; requests carry a second RFC 9421 signature (sig2) by it. */
+  pqKeyDeclaration?: KeyDeclaration;
   /** Wallet-signed revocations of earlier declarations, replayed by every verifier (no CRL to ask). */
   keyRevocations?: KeyRevocation[];
   /** v15-31-00: the principal's SD-JWT credential by reference only (issuer + hash of the issuer-signed part); values are disclosed on request, sealed, never here. */

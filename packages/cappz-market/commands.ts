@@ -50,7 +50,7 @@ import { inventoryReason, planListingChange, sellerListings } from '../../src/li
  */
 async function requestHookFor(mk: Market): Promise<RequestSignHook | undefined> {
   const me = mk.partyId ? mk.state.parties.get(mk.partyId) : undefined;
-  const k = await agentSigningKey(mk.partyId, me?.keyDeclaration);
+  const k = await agentSigningKey(mk.partyId, me?.keyDeclaration, me?.pqKeyDeclaration);
   return k ? agentRequestHook(k) : undefined;
 }
 
@@ -337,10 +337,11 @@ export const COMMANDS: Command[] = [
         ...(principal ? { principal } : {}), ...(a.xrplAccount ? { xrplAccount: checkAddress(String(a.xrplAccount)) } : w ? { xrplAccount: w.wallet.classicAddress } : prior?.xrplAccount ? { xrplAccount: prior.xrplAccount } : {}),
         encryptionKey: box.publicKey, ...(a.runtime ? { runtime: String(a.runtime) } : prior?.runtime ? { runtime: prior.runtime } : {}),
         ...(ak ? { keyDeclaration: ak.declaration } : prior?.keyDeclaration ? { keyDeclaration: prior.keyDeclaration } : {}),
+        ...(ak?.pq ? { pqAnchor: ak.pq.anchor, pqKeyDeclaration: ak.pq.declaration } : prior?.pqAnchor ? { pqAnchor: prior.pqAnchor, ...(prior.pqKeyDeclaration ? { pqKeyDeclaration: prior.pqKeyDeclaration } : {}) } : {}),
         ...(prior?.keyRevocations ? { keyRevocations: prior.keyRevocations } : {}), ...(prior?.principalCredential ? { principalCredential: prior.principalCredential } : {}),
       };
       const txs = await M.buildProfile(mk.state, mk.actor(), profile);
-      return commitAndReport(mk, txs, { partyId, xrplAccount: profile.xrplAccount ?? null, signingKey: profile.keyDeclaration ? { keyId: profile.keyDeclaration.publicKey, declaredBy: profile.keyDeclaration.walletAddress, expiresAt: profile.keyDeclaration.expiresAt } : null, next: kind === 'agent' ? `Ask your principal to grant a mandate to ${partyId} at ${marketUrl()}/marketplace?tab=agents, then run cappz-market setup.` : 'cappz-market find "…"' });
+      return commitAndReport(mk, txs, { partyId, xrplAccount: profile.xrplAccount ?? null, signingKey: profile.keyDeclaration ? { keyId: profile.keyDeclaration.publicKey, declaredBy: profile.keyDeclaration.walletAddress, expiresAt: profile.keyDeclaration.expiresAt, postQuantum: profile.pqKeyDeclaration ? 'hybrid (Ed25519 + ML-DSA-65 sig2, anchored)' : 'classical-only' } : null, encryptionKey: isHybridBoxKey(profile.encryptionKey) ? 'P-256 + ML-KEM-768' : 'P-256', next: kind === 'agent' ? `Ask your principal to grant a mandate to ${partyId} at ${marketUrl()}/marketplace?tab=agents, then run cappz-market setup.` : 'cappz-market find "…"' });
     },
   },
   {

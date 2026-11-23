@@ -42,6 +42,8 @@ Per account, `posture`:
 - `AccountSet` disabling the master key. Submit it only after the new regular key has signed something successfully.
 - `quickSweep` (with `vault`): a Payment of everything above reserve + `bufferXrp` to the vault. It is refused when the vault's own keys have signed, or its history could not be read fully.
 
+**Pay from an account you are not checking.** Paying signs a transaction, and signing publishes that account's public key. The report is made before you pay, so it would show the paying account as unexposed, but your payment exposes it a moment later.
+
 ## Hire it
 
 ```bash

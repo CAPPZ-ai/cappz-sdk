@@ -125,16 +125,44 @@ export async function checkContentDigest(body: Uint8Array, header: string | null
   return Boolean(want) && toHex(await sha256(body)) === want;
 }
 
-interface SigParams { components: string[]; created: number; keyid: string; alg: string; nonce?: string; raw: string }
+export interface SigParams { components: string[]; created: number; keyid: string; alg: string; nonce?: string; raw: string }
 
-function parseSignatureInput(v: string | null): SigParams | null {
-  const m = v ? /^sig1=\(([^)]*)\)(.*)$/.exec(v.trim()) : null;
+/**
+ * Members of an RFC 8941 dictionary header (Signature-Input, Signature), split at top-level commas (outside quotes,
+ * parentheses and byte sequences). v16-03-00: a request may carry several signatures (sig1 Ed25519, sig2 ML-DSA-65).
+ */
+export function signatureMembers(v: string | null): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!v) return out;
+  let depth = 0, quote = false, colon = false, start = 0;
+  const push = (end: number) => { const m = /^\s*([a-z*][a-z0-9_.*-]*)=(.*)$/s.exec(v.slice(start, end)); if (m) out.set(m[1], m[2].trim()); };
+  for (let i = 0; i < v.length; i++) {
+    const c = v[i];
+    if (quote) { if (c === '\\') i++; else if (c === '"') quote = false; continue; }
+    if (c === '"') quote = true; else if (c === ':') colon = !colon; else if (!colon && c === '(') depth++; else if (!colon && c === ')') depth--;
+    else if (c === ',' && depth === 0 && !colon) { push(i); start = i + 1; }
+  }
+  push(v.length);
+  return out;
+}
+
+/** One member of Signature-Input, parsed (sig1 unless another label is asked for). */
+export function parseSignatureInput(v: string | null, label = 'sig1'): SigParams | null {
+  const member = signatureMembers(v).get(label);
+  const m = member ? /^\(([^)]*)\)(.*)$/.exec(member) : null;
   if (!m) return null;
   const components = [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
   const params = Object.fromEntries([...m[2].matchAll(/;(\w+)=("([^"]*)"|\d+)/g)].map((x) => [x[1], x[3] ?? x[2]]));
   const created = Number(params.created);
   if (!params.keyid || !Number.isFinite(created)) return null;
-  return { components, created, keyid: String(params.keyid), alg: String(params.alg ?? ''), nonce: params.nonce ? String(params.nonce) : undefined, raw: v!.trim().slice(5) };
+  return { components, created, keyid: String(params.keyid), alg: String(params.alg ?? ''), nonce: params.nonce ? String(params.nonce) : undefined, raw: member! };
+}
+
+/** One member of the Signature header as bytes (base64 between colons), or null. */
+export function signatureBytes(v: string | null, label = 'sig1'): Uint8Array | null {
+  const m = /^:([A-Za-z0-9+/=]+):$/.exec(signatureMembers(v).get(label) ?? '');
+  if (!m) return null;
+  try { return Uint8Array.from(atob(m[1]), (c) => c.charCodeAt(0)); } catch { return null; }
 }
 
 function componentValue(name: string, req: { method: string; url: URL; headers: Headers }): string | null {
@@ -282,7 +310,8 @@ export function createVerifyGateway(o: GatewayOptions): VerifyGateway {
     const url = original ? new URL(original, `https://${req.headers.get('x-original-host') ?? new URL(req.url).host}`) : new URL(req.url);
     const method = req.headers.get('x-original-method') ?? req.method;
     const p = parseSignatureInput(req.headers.get('signature-input'));
-    const sigHeader = /sig1=:([A-Za-z0-9+/=]+):/.exec(req.headers.get('signature') ?? '');
+    const sigMember = signatureMembers(req.headers.get('signature')).get('sig1') ?? '';
+    const sigHeader = /^:([A-Za-z0-9+/=]+):$/.exec(sigMember);
     if (!p || !sigHeader) return decide('unsigned', 'undeclared', 'not-checked', 'no HTTP message signature (RFC 9421 sig1) and no client certificate', {});
     const wallet = req.headers.get('cappz-wallet');
     // The wallet is a compressed secp256k1 key: checked before it is used as a lookup key or echoed in a header.
