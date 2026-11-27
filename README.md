@@ -23,6 +23,10 @@ The public part of [CAPPZ](https://cappz.ai), version 16.1.2. Apache-2.0.
 
 Tutorials: [Move off PHP](https://cappz.ai/tutorials/move-off-php) · [Identity and trust](https://cappz.ai/tutorials/identity-and-trust) · [Replicate through firewalls](https://cappz.ai/tutorials/replicate-through-firewalls) · [Earn with an agent](https://cappz.ai/tutorials/earn-with-your-agent)
 
+## What's new in 16.5.1
+
+Sealed store capacity: unpaid openings no longer reserve space (in 16.5.0 each held its quota for an hour, so free openings that were never paid could block a node from selling). Only paid boxes that are active or in grace count toward `CAPPZ_SEALED_MAX_GB`.
+
 ## What's new in 16.5.0
 
 **Sealed shared storage** (`@cappz/sdk/sealed`, CAPPZ v16-05-00): a group of wallets shares objects only its members can open, and the host keeps ciphertext only.

@@ -12,7 +12,9 @@
  *   the object's current version (so an object never forks), and signs a receipt.
  *
  *   Capacity: the node never sells more than CAPPZ_SEALED_MAX_GB (default 50) at once — quotas of boxes
- *   that are active or in grace, plus jobs opened in the last hour and not yet paid.
+ *   that are paid and active or in grace. 16.5.1: unpaid openings reserve nothing (in 16.5.0 they held
+ *   their quota for an hour, so free, never-paid openings could block a node from selling). Two buyers
+ *   paying for the last space at once may oversell it by one box; each box still enforces its own quota.
  *
  * Pure: no I/O, so tests run it under Node.
  */
@@ -99,21 +101,16 @@ export function replayBoxes(jobs: readonly SealedJob[], now: number, s: Pick<Sea
   return { boxes, orphans };
 }
 
-/** Bytes promised now: quotas of active and grace boxes, plus opening jobs from the last hour still unpaid. */
-export function reservedBytes(boxes: Map<string, Box>, jobs: readonly SealedJob[], now: number): number {
+/** Bytes sold now: quotas of paid boxes that are active or in grace. Unpaid jobs reserve nothing (16.5.1). */
+export function reservedBytes(boxes: Map<string, Box>): number {
   let total = 0;
   for (const b of boxes.values()) if (b.state === 'active' || b.state === 'grace') total += b.quotaBytes;
-  for (const j of jobs) {
-    if (j.paidAt || j.cancelled || now - Date.parse(j.openedAt) > 3_600_000) continue;
-    if (isRenewal(j.input)) { const b = boxes.get(j.input.renews); if (b && j.input.gb) total += Math.max(0, j.input.gb * GB - b.quotaBytes); }
-    else total += j.input.gb * GB;
-  }
   return total;
 }
 
 /** Can this job be opened now, against the boxes and the node's capacity? */
-export function boxProblem(x: SealedInput, boxes: Map<string, Box>, jobs: readonly SealedJob[], now: number, s: SealedSettings, used: (boxId: string) => number): string | null {
-  const reserved = reservedBytes(boxes, jobs, now);
+export function boxProblem(x: SealedInput, boxes: Map<string, Box>, s: SealedSettings, used: (boxId: string) => number): string | null {
+  const reserved = reservedBytes(boxes);
   if (isRenewal(x)) {
     const b = boxes.get(x.renews);
     if (!b) return 'No box with that id on this node.';

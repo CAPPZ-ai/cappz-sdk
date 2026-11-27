@@ -52,7 +52,7 @@ Deno.test('sealed store: open, publish keys, seal, write, read, version, purge, 
   eq(await sealed.check({ gb: 2, writers: [ann.address, bob.address] }), null, 'first box fits');
   const { job } = await sealed.agent.openJob({ gb: 2, writers: [ann.address, bob.address], label: 'team' });
   eq(job.terms.price, 0.5, 'priced by gigabytes');
-  eq(typeof await sealed.check({ gb: 2, writers: [ann.address] }), 'string', 'over capacity while the first is unpaid');
+  eq(await sealed.check({ gb: 2, writers: [ann.address] }), null, 'an unpaid opening reserves nothing (16.5.1)');
   const boxId = job.jobId;
 
   // Unpaid: writes refused.
@@ -94,6 +94,8 @@ Deno.test('sealed store: open, publish keys, seal, write, read, version, purge, 
   try { await Deno.stat(`${dir}/drive/testnet/boxes/${boxId}/blobs/${v1.sha256}`); throw new Error('purged blob still on disk'); } catch (e) { if (!(e instanceof Deno.errors.NotFound)) throw e; }
   eq(state.rejected, [], 'nothing rejected');
 
+  // Once the first box is paid, a second 2 GB box no longer fits in the 3 GB sold in all.
+  eq(typeof await sealed.check({ gb: 2, writers: [ann.address] }), 'string', 'over capacity once the first box is paid');
   // Renewal priced from the box's quota; a renewal of an unknown box is refused.
   eq(await sealed.check({ renews: boxId }), null, 'renewal ok');
   eq((await sealed.agent.openJob({ renews: boxId })).job.terms.price, 0.5, 'renewal priced by current quota');

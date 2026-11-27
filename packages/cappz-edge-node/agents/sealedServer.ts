@@ -134,7 +134,7 @@ export async function createSealedStore(d: SealedDeps) {
     const problem = sealedInputProblem(input, S);
     if (problem) return problem;
     const { boxes: all } = await boxes();
-    return boxProblem(input as SealedInput, all, await jobs(), Date.now(), S, (id) => usedNow.get(id) ?? 0);
+    return boxProblem(input as SealedInput, all, S, (id) => usedNow.get(id) ?? 0);
   }
 
   /** Boxes past their grace lose their bytes; the records and a signed purge record stay. */

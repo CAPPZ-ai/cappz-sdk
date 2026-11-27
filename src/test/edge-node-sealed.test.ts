@@ -63,18 +63,17 @@ describe('sealed store: periods', () => {
 });
 
 describe('sealed store: capacity', () => {
-  it('counts active and grace boxes and recent unpaid openings, never expired boxes or stale unpaid jobs', () => {
+  it('counts paid active and grace boxes only: expired boxes and unpaid openings reserve nothing (16.5.1)', () => {
     const now = T0 + 31 * DAY;
-    const jobs = [open(A, 10, T0), open(B, 20, T0 - 40 * DAY), open(C, 5, null, now - 60_000), open(D, 7, null, now - 2 * 3_600_000)];
+    const jobs = [open(A, 10, T0), open(B, 20, T0 - 40 * DAY), open(C, 5, null, now - 60_000), open(D, 50, null, now - 1_000)];
     const { boxes } = replayBoxes(jobs, now, S);
-    expect(reservedBytes(boxes, jobs, now)).toBe(15 * GB); // A in grace (10) + C unpaid recent (5); B expired, D stale
-    expect(boxProblem({ gb: 35, writers: [ann.address] }, boxes, jobs, now, S, () => 0)).toBeNull();
-    expect(boxProblem({ gb: 36, writers: [ann.address] }, boxes, jobs, now, S, () => 0)).toMatch(/35\.0 GB left/);
-    expect(boxProblem({ renews: A, gb: 45 }, boxes, jobs, now, S, () => 0)).toBeNull();
-    expect(boxProblem({ renews: A, gb: 46 }, boxes, jobs, now, S, () => 0)).toMatch(/left to sell/);
-    expect(boxProblem({ renews: A, gb: 1 }, boxes, jobs, now, S, () => 3 * GB)).toMatch(/already holds/);
-    expect(boxProblem({ renews: B }, boxes, jobs, now, S, () => 0)).toMatch(/past its grace/);
-    expect(boxProblem({ renews: C }, boxes, jobs, now, S, () => 0)).toMatch(/not been paid/);
+    expect(reservedBytes(boxes)).toBe(10 * GB); // A in grace; B expired; C and D unpaid (D alone asked for all 50 GB)
+    expect(boxProblem({ gb: 40, writers: [ann.address] }, boxes, S, () => 0)).toBeNull();
+    expect(boxProblem({ gb: 41, writers: [ann.address] }, boxes, S, () => 0)).toMatch(/40\.0 GB left/);
+    expect(boxProblem({ renews: A, gb: 50 }, boxes, S, () => 0)).toBeNull();
+    expect(boxProblem({ renews: A, gb: 1 }, boxes, S, () => 3 * GB)).toMatch(/already holds/);
+    expect(boxProblem({ renews: B }, boxes, S, () => 0)).toMatch(/past its grace/);
+    expect(boxProblem({ renews: C }, boxes, S, () => 0)).toMatch(/not been paid/);
   });
 });
 
