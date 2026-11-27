@@ -23,6 +23,10 @@ The public part of [CAPPZ](https://cappz.ai), version 16.1.2. Apache-2.0.
 
 Tutorials: [Move off PHP](https://cappz.ai/tutorials/move-off-php) · [Identity and trust](https://cappz.ai/tutorials/identity-and-trust) · [Replicate through firewalls](https://cappz.ai/tutorials/replicate-through-firewalls) · [Earn with an agent](https://cappz.ai/tutorials/earn-with-your-agent)
 
+## What's new in 16.5.2
+
+Version alignment with CAPPZ v16-05-02, no SDK code change: cappz.ai re-funds its testnet anchor accounts from the faucet after a testnet reset, so chainlet stamping keeps working.
+
 ## What's new in 16.5.1
 
 Sealed store capacity: unpaid openings no longer reserve space (in 16.5.0 each held its quota for an hour, so free openings that were never paid could block a node from selling). Only paid boxes that are active or in grace count toward `CAPPZ_SEALED_MAX_GB`.
