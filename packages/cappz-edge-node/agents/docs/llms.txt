@@ -1,6 +1,6 @@
 # CAPPZ paid agents on {{HOST}} ({{NETWORK}})
 
-> Five pay-per-job agents on a CAPPZ edge node, paid in XRP on the XRP Ledger ({{NETWORK}}). Every result is signed with the node's Ed25519 key {{NODE}}, and anyone can check it offline. No account and no API key: open a job over HTTP, pay the stage it shows (with its destination tag), then collect the result. For a work stage you see the result's SHA-256 before you pay.
+> Pay-per-job agents on a CAPPZ edge node, paid in XRP on the XRP Ledger ({{NETWORK}}). Every result is signed with the node's Ed25519 key {{NODE}}, and anyone can check it offline. No account and no API key: open a job over HTTP, pay the stage it shows (with its destination tag), then collect the result. For a work stage you see the result's SHA-256 before you pay.
 
 Network: {{NETWORK}}. Pays to: {{PAYTO}}. Signer (node key): {{NODE}}.
 The same agents run on {{PEER_NETWORK}}: {{PEER_BASE}}/llms.txt. Validate a flow on testnet (free test XRP) before paying real XRP on mainnet. Every signed record states its network in `payload.network`; only mainnet records carry value as proof.
@@ -13,6 +13,7 @@ The same agents run on {{PEER_NETWORK}}: {{PEER_BASE}}/llms.txt. Validate a flow
 - [Vault check]({{BASE}}/vault-check/SKILL.md): a signed report on a pooled XRPL account: is a guard co-signer load-bearing, or could a stolen key move money alone (master key, regular key, signer-list weights); with a policy, the worst case; with the guard's approvals, every recent outflow matched. Read-only, no key held. {{VC_PRICE}} XRP on completion. Input: `{"account":"r…","guard":"r… optional","recovery":["r…"],"policy":{…},"approvals":[…]}`.
 - [Quantum key exposure check]({{BASE}}/key-exposure/SKILL.md): a signed report on up to 10 XRPL accounts: which signing keys have published their public key (what a quantum computer attacks), since when, whether the master key is still live, which accounts are safe receive-only vaults; with unsigned rotation, disable-master and quickSweep transactions. Read-only, full history, no key held. {{KE_PRICE}} XRP on completion. Input: `{"accounts":["r…"],"vault":"r… optional","bufferXrp":20,"maxExposureDays":30}`.
 - [Vault guard]({{BASE}}/vault-guard/SKILL.md): this node becomes a vault's guard co-signer for {{VG_DAYS}} days: stolen operator keys move nothing; it co-signs only inside the owner's policy (destinations, per-payment and rolling-window caps, next sequence only), signs every decision, reconciles every 10 minutes and alerts on anything unapproved. {{VG_PRICE}} XRP up front, paid **from the vault itself**; a policy change must be paid with the recovery keys. Guard address: `GET {{BASE}}/vault-guard/guard/<vault>`. Co-sign: `POST {{BASE}}/vault-guard/cosign/<jobId> {"tx":…}`.
+- [Sealed store]({{BASE}}/sealed-store/SKILL.md): storage only your group can open — share files, deliverables, datasets, agent memory or records between people and agents. A box of whole gigabytes for {{SS_DAYS}} days, written by the wallets you name; each object is sealed on the writer's machine for the wallets that may read it (`@cappz/sdk/sealed`; hybrid ML-KEM-768 + P-256 when their keys are), so the node holds ciphertext only. Every write is wallet-signed and gets a signed receipt; versions chain per object. {{SS_PRICE}} XRP per GB per {{SS_DAYS}} days, paid up front; renew with `{"renews":"<boxId>"}`. Reads, writes and the key directory are free. Input: `{"gb":1,"writers":["<wallet address>"],"label":"optional"}`. Key directory: `GET {{BASE}}/sealed-store/keys/<wallet>`.
 
 ## Fastest path
 
@@ -28,7 +29,7 @@ The same agents run on {{PEER_NETWORK}}: {{PEER_BASE}}/llms.txt. Validate a flow
 
 - [Guide for people, with try-it forms]({{BASE}}/)
 - [OpenAPI 3.1]({{BASE}}/openapi.json)
-- Agent cards (JSON): [timestamp]({{BASE}}/timestamp/agent), [webhook]({{BASE}}/webhook/agent), [draw]({{BASE}}/draw/agent), [vault-check]({{BASE}}/vault-check/agent), [vault-guard]({{BASE}}/vault-guard/agent), [key-exposure]({{BASE}}/key-exposure/agent)
+- Agent cards (JSON): [timestamp]({{BASE}}/timestamp/agent), [webhook]({{BASE}}/webhook/agent), [draw]({{BASE}}/draw/agent), [vault-check]({{BASE}}/vault-check/agent), [vault-guard]({{BASE}}/vault-guard/agent), [key-exposure]({{BASE}}/key-exposure/agent), [sealed-store]({{BASE}}/sealed-store/agent)
 - [Receipt verifier, Node 20+ or Deno]({{BASE}}/verify.mjs)
 - [General skill: hiring CAPPZ paid agents](https://github.com/CAPPZ-ai/cappz-sdk/blob/main/skills/hiring-cappz-paid-agents/SKILL.md)
 
@@ -38,3 +39,4 @@ The same agents run on {{PEER_NETWORK}}: {{PEER_BASE}}/llms.txt. Validate a flow
 - This node is on {{NETWORK}}. Testnet XRP is free from the XRPL faucet. Move real XRP only with the OK of the person you act for.
 - Limits: webhook bodies up to 64 KB, and at most 10,000 records per period. Draws: up to 10,000 entries inline (1,000,000 by hash), 1,000 winners, {{DRAW_MAX_DAYS}} days ahead.
 - A draw's payment must reach the node before its draw time: the commitment is signed only after payment.
+- Sealed store: objects up to {{SS_MAX_OBJECT_MB}} MB (split larger files into parts), up to 20 writer wallets per box, {{SS_MAX_GB}} GB sold in all on this node. After the last paid period a box is read-only for {{SS_GRACE}} days, then its bytes are deleted (its signed records stay). Keep your own copy: if every member loses their keys, nobody can open the data, not even the node.

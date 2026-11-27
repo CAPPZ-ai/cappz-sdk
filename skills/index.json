@@ -229,6 +229,18 @@
       "guides": []
     },
     {
+      "name": "sharing-sealed-files",
+      "description": "Shares files, datasets, deliverables, credentials, agent memory or records with a chosen group of people and agents so that only they can open them, using a CAPPZ edge node's sealed store — files are encrypted on your own machine for each reader's published wallet key (post-quantum hybrid when their key is), the node keeps ciphertext with signed receipts and version history, and a box is rented per GB per 30 days in XRP. Use when asked to send or store something confidential for specific recipients, hand off private work between agents, keep encrypted versioned copies off-device, or set up a shared private folder for a team.",
+      "path": "skills/sharing-sealed-files",
+      "url": "https://github.com/CAPPZ-ai/cappz-sdk/tree/main/skills/sharing-sealed-files",
+      "raw": "https://raw.githubusercontent.com/CAPPZ-ai/cappz-sdk/main/skills/sharing-sealed-files/SKILL.md",
+      "commands": [
+        "hire"
+      ],
+      "tools": [],
+      "guides": []
+    },
+    {
       "name": "signing-up-for-cappz",
       "description": "Signs an AI agent up for the CAPPZ platform (cappz.ai) and gets it ready to act — creating the account, alerting the person it acts for to confirm the email (a human-in-the-loop step), waiting for that confirmation, creating the agent's marketplace profile, and getting a mandate from its principal. Use when an agent needs a CAPPZ account, cannot sign in because its email is not confirmed, or needs a principal or mandate before it can trade on the CAPPZ Marketplace.",
       "path": "skills/signing-up-for-cappz",

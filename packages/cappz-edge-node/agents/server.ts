@@ -87,6 +87,8 @@ import { DRAW_RULE, drawInputProblem, drawPicks, drawSeed, effectiveDrawAt, entr
 import { DOC_FILES, docVars, renderDoc, WEBHOOK_DEPOSIT_SHARE } from './docs.ts';
 import { checkSignerSetup, guardCosign, outflowIntentHash, policyHash, reconcileOutflows, worstCaseLoss, signerWeights, type OutflowApproval, type ReconReport } from '../../../src/lib/treasury/vaultGuard.ts';
 import { keyExposure, quickSweepTransaction, disableMasterTransaction, type KeyExposureReport } from '../../../src/lib/treasury/keyExposure.ts';
+import { createSealedStore } from './sealedServer.ts';
+import { sealedInputProblem } from './sealed.ts';
 import { authorizeGuardJob, checkInputProblem, keyExposureInputProblem, type KeyExposureInput, fullPolicy, guardInputProblem, guardWalletFor, setupFromAccountInfo, validatedFromAccountTx, windowSpent, GUARD_DERIVATION, type VaultCheckInput, type VaultGuardInput } from './vault.ts';
 
 const env = (k: string, d?: string) => Deno.env.get(k)?.trim() || d;
@@ -111,6 +113,14 @@ const VAULT_GUARD_PRICE = Number(env('CAPPZ_VAULT_GUARD_PRICE_XRP', '10'));
 const VAULT_GUARD_DAYS = Number(env('CAPPZ_VAULT_GUARD_DAYS', '30'));
 /** 32 random bytes (hex) the guard keys are derived from; unset → the guard is not offered. Back it up. */
 const GUARD_SECRET = env('CAPPZ_VAULT_GUARD_SECRET');
+// 16.5.0 — sealed store: storage for ciphertext only, on the drive CAPPZ_SEALED_STORE_DIR names; the node sells at most CAPPZ_SEALED_MAX_GB.
+const SEALED_PRICE = Number(env('CAPPZ_SEALED_PRICE_XRP_PER_GB', '0.25'));
+const SEALED_MAX_GB = Number(env('CAPPZ_SEALED_MAX_GB', '50'));
+const SEALED_SETTINGS = {
+  days: Number(env('CAPPZ_SEALED_DAYS', '30')), graceDays: Number(env('CAPPZ_SEALED_GRACE_DAYS', '7')), maxGb: SEALED_MAX_GB,
+  maxBoxGb: Math.min(SEALED_MAX_GB, Number(env('CAPPZ_SEALED_MAX_BOX_GB', String(SEALED_MAX_GB)))),
+  maxObjectBytes: Number(env('CAPPZ_SEALED_MAX_OBJECT_MB', '256')) * 1024 ** 2, maxWriters: 20,
+};
 const VAULT_RECONCILE_MS = Number(env('CAPPZ_VAULT_RECONCILE_SECONDS', '600')) * 1000;
 const PRINCIPLE = "m/44'/144'/100'/principles/cope/v1#local-first";
 const DAY = 86_400_000;
@@ -660,6 +670,7 @@ setInterval(async () => {
   try { await vaultCheck.tick(); } catch (e) { console.warn('[agents] vault-check tick:', (e as Error).message); }
   try { await keyExposureAgent.tick(); } catch (e) { console.warn('[agents] key-exposure tick:', (e as Error).message); }
   try { await watchLong(vaultGuard); } catch (e) { console.warn('[agents] vault-guard watch:', (e as Error).message); }
+  if (sealed) try { await watchLong(sealed.agent); await sealed.purgeExpired(); } catch (e) { console.warn('[agents] sealed-store watch:', (e as Error).message); }
   // Active guard periods: reconcile each vault every 10 minutes (alerts on any outflow the guard did not approve).
   if (GUARD_SECRET) for (const j of (await vaultGuard.jobs().catch(() => [])).filter((j) => j.state === 'working')) {
     if (Date.now() - (lastReconcile.get(j.jobId) ?? 0) < VAULT_RECONCILE_MS) continue;
@@ -672,9 +683,23 @@ setInterval(async () => {
 
 // ─── HTTP ────────────────────────────────────────────────────────────────────
 
-const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'GET, POST, OPTIONS' };
+const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type, x-cappz-sealed-record', 'access-control-expose-headers': 'x-sha256, x-result-sha256', 'access-control-allow-methods': 'GET, POST, OPTIONS' };
 const json = (code: number, body: unknown) => new Response(JSON.stringify(body, null, 2), { status: code, headers: { 'content-type': 'application/json; charset=utf-8', ...CORS } });
-const AGENTS: Record<string, { agent: PaidAgent; howToUse: string; validate: (input: unknown) => string | null }> = {
+
+// ─── Agent 7: sealed store (sealedServer.ts; pay per period, ciphertext only) ─
+// A store drive that is missing (an unplugged USB disk) turns the sealed store off; the other agents keep running.
+const sealed = await createSealedStore({
+  network: NETWORK, payTo: PAY_TO, pow: POW, publicBase: PUBLIC_BASE, nodeKeyHex: key.publicKeyHex,
+  jobDir: `${DATA}/sealed-store`, storeDir: env('CAPPZ_SEALED_STORE_DIR', `${DATA}/sealed-store`)!,
+  pricePerGb: SEALED_PRICE, settings: SEALED_SETTINGS, fileJobStore, signed, evidenceFor, verifyHow: VERIFY_HOW, json, cors: CORS,
+}).catch((e) => { console.error(`[agents] sealed store off: its folder ${env('CAPPZ_SEALED_STORE_DIR', `${DATA}/sealed-store`)} is unavailable (${(e as Error).message}). Reconnect the drive and restart the agents.`); return null; });
+const AGENTS: Record<string, { agent: PaidAgent; howToUse: string; validate: (input: unknown) => string | null; check?: (input: unknown) => Promise<string | null> }> = {
+  ...(sealed ? { 'sealed-store': {
+    agent: sealed.agent,
+    howToUse: `Open a box: cappz-market hire ${PUBLIC_BASE}/sealed-store --input '{"gb":1,"writers":["<wallet address>"]}' --max ${SEALED_PRICE} (${SEALED_PRICE} XRP per GB per ${SEALED_SETTINGS.days} days). Then, free: publish encryption keys (POST ${PUBLIC_BASE}/sealed-store/keys), seal on your machine and write (POST ${PUBLIC_BASE}/sealed-store/boxes/<jobId>/objects), read (GET …/boxes/<jobId>). Renew: --input '{"renews":"<jobId>"}'. Client: @cappz/sdk/sealed (sealedStoreClient).`,
+    validate: (i) => sealedInputProblem(i, SEALED_SETTINGS),
+    check: (i) => sealed.check(i),
+  } } : {}),
   timestamp: {
     agent: timestamp,
     howToUse: `cappz-market hire ${PUBLIC_BASE}/timestamp --input '{"sha256":"<64 hex>","note":"optional"}' --max ${TIMESTAMP_PRICE} — or POST /jobs {"input":{"sha256":"…"}} → pay the stage shown → GET /jobs/<id>/stages/0/result`,
@@ -726,6 +751,8 @@ const VARS = docVars({
   drawPrice: DRAW_PRICE, drawMaxDays: DRAW_MAX_DAYS, drawMinLeadSeconds: DRAW_MIN_LEAD_MS / 1000,
   vaultCheckPrice: VAULT_CHECK_PRICE, vaultGuardPrice: VAULT_GUARD_PRICE, vaultGuardDays: VAULT_GUARD_DAYS,
   keyExposurePrice: KEY_EXPOSURE_PRICE,
+  sealedPricePerGb: SEALED_PRICE, sealedDays: SEALED_SETTINGS.days, sealedGraceDays: SEALED_SETTINGS.graceDays,
+  sealedMaxGb: SEALED_SETTINGS.maxGb, sealedMaxObjectMb: SEALED_SETTINGS.maxObjectBytes / 1024 ** 2,
   peerBase: env('CAPPZ_AGENT_PEER_BASE', '')!.replace(/\/+$/, ''),
 });
 async function doc(path: string): Promise<Response> {
@@ -760,6 +787,14 @@ function openapi(): unknown {
     paths: {
       ...agentPaths('timestamp', { type: 'object', required: ['sha256'], properties: { sha256: { type: 'string', pattern: '^[0-9a-fA-F]{64}$' }, note: { type: 'string', maxLength: 200 } } }),
       ...agentPaths('webhook', { type: 'object', properties: { label: { type: 'string', maxLength: 100 } } }),
+      ...agentPaths('sealed-store', { type: 'object', description: 'Open a box ({gb, writers, label?}) or renew one ({renews, gb?}).', properties: { gb: { type: 'integer', minimum: 1 }, writers: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'string', pattern: '^0[23][0-9a-f]{64}$' } }, label: { type: 'string', maxLength: 100 }, renews: { type: 'string', pattern: '^job-[0-9a-f]{16}$' } } }),
+      '/sealed-store/keys': { post: { summary: 'Key directory: publish a wallet-signed encryption key declaration (free)', requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['declaration'], properties: { declaration: { type: 'object' } } } } } }, responses: { 200: { description: 'Stored' }, 422: { description: 'Not a valid encryption declaration' } } } },
+      '/sealed-store/keys/revocations': { post: { summary: 'Key directory: publish a wallet-signed revocation (free)', requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['revocation'], properties: { revocation: { type: 'object' } } } } } }, responses: { 200: { description: 'Stored' } } } },
+      '/sealed-store/keys/{wallet}': { get: { summary: 'Key directory: a wallet\'s declarations and revocations (verify them yourself: evaluateKey)', parameters: [{ name: 'wallet', in: 'path', required: true, schema: { type: 'string', pattern: '^0[23][0-9a-f]{64}$' } }], responses: { 200: { description: '{wallet, declarations, revocations}' } } } },
+      '/sealed-store/boxes/{boxId}': { get: { summary: 'A box: writers, quota, usage, state, periods and every {record, receipt}', parameters: [{ ...idParam, name: 'boxId' }], responses: { 200: { description: 'Box' }, 404: { description: 'Unknown box' } } } },
+      '/sealed-store/boxes/{boxId}/objects': { post: { summary: 'Write sealed bytes (body) under a wallet-signed write record (header x-cappz-sealed-record, base64url JSON)', parameters: [{ ...idParam, name: 'boxId' }], requestBody: { required: true, content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } }, responses: { 200: { description: '{writeId, receipt}' }, 402: { description: 'Box not paid' }, 403: { description: 'Not a writer' }, 409: { description: 'parent is not the current version' }, 410: { description: 'Box not in a paid period' }, 413: { description: 'Object too large' }, 422: { description: 'Bad record or bytes' }, 507: { description: 'Quota full' } } } },
+      '/sealed-store/boxes/{boxId}/purges': { post: { summary: 'Free one version\'s bytes under a wallet-signed purge record', parameters: [{ ...idParam, name: 'boxId' }], requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['record'], properties: { record: { type: 'object' } } } } } }, responses: { 200: { description: '{purgeId, receipt}' } } } },
+      '/sealed-store/boxes/{boxId}/blobs/{sha256}': { get: { summary: 'The stored (sealed) bytes of a live version', parameters: [{ ...idParam, name: 'boxId' }, { name: 'sha256', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-f]{64}$' } }], responses: { 200: { description: 'Bytes (header x-sha256)' }, 404: { description: 'No live version has these bytes' }, 410: { description: 'Box past its grace period' } } } },
       ...agentPaths('draw', {
         type: 'object', description: 'Either entries, or entriesSha256 with count.',
         properties: {
@@ -818,7 +853,7 @@ function openapi(): unknown {
   };
 }
 
-const ROUTE = /^\/agents\/(timestamp|webhook|draw|vault-check|vault-guard|key-exposure)(\/agent|\/health|\/jobs|\/jobs\/(job-[0-9a-f]{16})(\/payments|\/retry|\/stages\/(\d+)\/result)?|\/hooks\/(job-[0-9a-f]{16}))?\/?$/;
+const ROUTE = /^\/agents\/(timestamp|webhook|draw|vault-check|vault-guard|key-exposure|sealed-store)(\/agent|\/health|\/jobs|\/jobs\/(job-[0-9a-f]{16})(\/payments|\/retry|\/stages\/(\d+)\/result)?|\/hooks\/(job-[0-9a-f]{16}))?\/?$/;
 
 async function handle(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
@@ -872,6 +907,9 @@ async function handle(req: Request): Promise<Response> {
     }
     return json(405, { error: 'Method not allowed.' });
   }
+  if (url.pathname.startsWith('/agents/sealed-store/') && !sealed) return json(503, { error: 'The sealed store is off on this node right now: its storage drive is unavailable. Try again later.' });
+  const sr = sealed ? await sealed.route(req, url) : null;
+  if (sr) return sr;
   const m = ROUTE.exec(url.pathname);
   if (!m) return json(404, { error: 'Not found.', docs: docsFor() });
   const [, name, sub, id, tail, stageN, hookId] = m;
@@ -884,7 +922,7 @@ async function handle(req: Request): Promise<Response> {
   if (req.method === 'POST' && sub === '/jobs') {
     if (Number(req.headers.get('content-length') ?? 0) > DRAW_MAX_BODY) return json(413, { error: 'Requests are limited to 3 MB: send entriesSha256 and count for big lists.' });
     const body = await req.json().catch(() => null) as { input?: unknown } | null;
-    const problem = a.validate(body?.input);
+    const problem = a.validate(body?.input) ?? (a.check ? await a.check(body?.input) : null);
     if (problem) return json(422, { error: problem });
     return json(200, await a.agent.openJob(body?.input ?? {}));
   }

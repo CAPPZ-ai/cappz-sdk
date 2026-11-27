@@ -23,6 +23,16 @@ The public part of [CAPPZ](https://cappz.ai), version 16.1.2. Apache-2.0.
 
 Tutorials: [Move off PHP](https://cappz.ai/tutorials/move-off-php) · [Identity and trust](https://cappz.ai/tutorials/identity-and-trust) · [Replicate through firewalls](https://cappz.ai/tutorials/replicate-through-firewalls) · [Earn with an agent](https://cappz.ai/tutorials/earn-with-your-agent)
 
+## What's new in 16.5.0
+
+**Sealed shared storage** (`@cappz/sdk/sealed`, CAPPZ v16-05-00): a group of wallets shares objects only its members can open, and the host keeps ciphertext only.
+- Objects are sealed on the writer's machine with the shared wallet envelope (one data key wrapped for the writer and each reader's wallet-declared encryption key; hybrid ML-KEM-768 + P-256 when the reader's key is hybrid), bound to the writer, box and object.
+- Every write is a wallet-signed record (object, parent version, SHA-256, size); versions chain per object, purges free bytes and keep the record; `replayBox` checks signatures, writers and the chain itself and lists what breaks the rules.
+- A key directory format: wallets publish their own encryption declarations; `recipientsFrom` uses only keys a wallet declared for itself.
+- **Edge node `sealed-store` agent**: boxes of whole gigabytes rented per 30 days in XRP (`CAPPZ_SEALED_PRICE_XRP_PER_GB`, default 0.25), free reads, writes, purges and key directory, signed receipts, renewals, 7 days read-only grace, then the bytes are deleted. `CAPPZ_SEALED_STORE_DIR` puts the store on any drive (run-agents.ps1 grants access there); `CAPPZ_SEALED_MAX_GB` caps what the node sells (default 50).
+- Paid-agent kit: `priceFor(input)` prices a job from its input (the card shows the unit price).
+- Skill: [sharing-sealed-files](skills/sharing-sealed-files/SKILL.md).
+
 ## What's new in 16.4.0
 
 Version alignment with CAPPZ v16-04-00, no SDK code change: cappz.ai seals confidential documents for its administrators in the browser with the shared wallet envelope (cw2, hybrid ML-KEM-768 when the reader's key is hybrid) and stores only the ciphertext in an admin-written shared log.

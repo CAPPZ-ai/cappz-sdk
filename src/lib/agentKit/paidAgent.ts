@@ -328,7 +328,15 @@ export type StageWork = (ctx: WorkContext) => Promise<string | Uint8Array | Reco
 export interface LedgerReader { incoming(network: XrplNetwork, account: string): Promise<LedgerTx[]>; tx(network: XrplNetwork, hash: string): Promise<LedgerTx> }
 export const xrplLedgerReader: LedgerReader = { incoming: (n, a) => fetchIncomingPayments(n, a), tx: (n, h) => fetchLedgerTx(n, h) };
 
-export interface PaidAgentOptions { offer: AgentOffer; work: StageWork; store?: JobStore; ledger?: LedgerReader; now?: () => string; newJobId?: () => string }
+export interface PaidAgentOptions {
+  offer: AgentOffer; work: StageWork; store?: JobStore; ledger?: LedgerReader; now?: () => string; newJobId?: () => string;
+  /**
+   * 16.5.0 — the price of one job from its input (e.g. storage priced by the gigabytes asked for). The
+   * offer's price is then the unit the card shows. The job's terms record the price it was opened at,
+   * so a later price change never changes a running job; the same stage rules apply to every price.
+   */
+  priceFor?: (input: unknown) => number;
+}
 
 export type ResultAnswer =
   | { state: 'released'; bytes: Uint8Array; hash: string }
@@ -395,7 +403,10 @@ export function createPaidAgent(opts: PaidAgentOptions) {
     },
     async openJob(input: unknown): Promise<{ job: JobView; pay: PaymentRequest | null }> {
       const jobId = newJobId();
-      await store.append({ type: 'JobOpened', jobId, at: now(), terms, input });
+      const price = opts.priceFor ? opts.priceFor(input) : offer.price;
+      // defineAgentOffer throws when this price cannot be split into the offer's stages.
+      const jobTerms: JobTerms = price === offer.price ? terms : { ...terms, price: defineAgentOffer({ ...offer, price }).price };
+      await store.append({ type: 'JobOpened', jobId, at: now(), terms: jobTerms, input });
       const job = (await view(jobId))!;
       if (job.state === 'working') void runWork(job);
       return { job, pay: await due(job) };

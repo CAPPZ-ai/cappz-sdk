@@ -28,14 +28,22 @@ if (-not $env:CAPPZ_AGENT_DATA) { $env:CAPPZ_AGENT_DATA = if ($Name) { "$data\$N
 # (the node's own evidence file); when it exists the agents sign its hash into every record and refuse to sign without it.
 $decl = "$node\data\key-declarations.json"; $revs = "$node\data\key-revocations.json"
 if (-not $env:CAPPZ_NODE_KEY_DECLARATIONS -and (Test-Path $decl)) { $env:CAPPZ_NODE_KEY_DECLARATIONS = $decl }
+# 16.5.0: the sealed store may live on another drive (CAPPZ_SEALED_STORE_DIR, e.g. an external disk); the agents may read and write there too.
+$sealed = $env:CAPPZ_SEALED_STORE_DIR
+$sealedGrant = ''
+if ($sealed) {
+  # A removable drive may be missing: then the sealed store stays off (the server answers 503) and the other agents still start.
+  try { New-Item -ItemType Directory -Force $sealed -ErrorAction Stop | Out-Null; $sealedGrant = ",`"$sealed`"" }
+  catch { Add-Content $log "[run-agents$suffix] $(Get-Date -Format s) sealed store folder $sealed unavailable ($($_.Exception.Message)); sealed store off until the drive is back and the agents restart" }
+}
 $env:DENO_DIR = "$node\deno-cache"
 $env:NO_COLOR = '1'
 $mutex = New-Object System.Threading.Mutex($false, "Local\cappz-agents$suffix")
 if (-not $mutex.WaitOne(0)) { exit 0 }
 $deno = "$env:USERPROFILE\.deno\bin\deno.exe"
 # --cached-only: no code downloads at run time (deno cache the server once after setup).
-# Network: XRPL (payments) and the 127.0.0.1 listener. Reads the SDK, $data (its jobs and results) and the key declarations; writes only $data.
-$denoArgs = "run --cached-only --config `"$sdk\deno.json`" --allow-net --allow-read=`"$sdk`",`"$data`",`"$decl`",`"$revs`" --allow-write=`"$data`" --allow-env `"$server`""
+# Network: XRPL (payments) and the 127.0.0.1 listener. Reads the SDK, $data (its jobs and results), the key declarations and the sealed store; writes only $data and the sealed store.
+$denoArgs = "run --cached-only --config `"$sdk\deno.json`" --allow-net --allow-read=`"$sdk`",`"$data`",`"$decl`",`"$revs`"$sealedGrant --allow-write=`"$data`"$sealedGrant --allow-env `"$server`""
 while ($true) {
   cmd /c "`"$deno`" $denoArgs >> `"$log`" 2>&1"
   Add-Content $log "[run-agents$suffix] $(Get-Date -Format s) agents exited ($LASTEXITCODE); restarting in 10 s"

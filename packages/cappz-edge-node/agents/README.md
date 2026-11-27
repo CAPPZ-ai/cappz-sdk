@@ -48,6 +48,15 @@ Both agents use the SDK's Vault Guard (`src/lib/treasury/vaultGuard.ts`; guide `
 - **Back up** `CAPPZ_VAULT_GUARD_SECRET` with `node.env`, and `<data>/vault-guard/` with the jobs. A lost secret changes every guard address; customers then need their recovery keys.
 - **Real testnet run:** `npx vite-node tools/vault-agents-testnet.ts` starts this server on 127.0.0.1:41470 with throwaway keys and runs every step above with real payments.
 
+## Sealed store (16.5.0)
+
+Storage a group of wallets shares and only its members can open (`sealed.ts` rules, `sealedServer.ts` I/O; SDK `@cappz/sdk/sealed`). Writers seal each object on their own machine; the node stores ciphertext only.
+
+- **Boxes.** A job `{"gb", "writers", "label"?}` opens a box of whole gigabytes for `CAPPZ_SEALED_DAYS` (default 30) at `CAPPZ_SEALED_PRICE_XRP_PER_GB` × gb, paid up front (`priceFor`). `{"renews": "<boxId>", "gb"?}` pays the next period: it starts when the current one ends, or at payment if later. After the last period the box is read-only for `CAPPZ_SEALED_GRACE_DAYS` (default 7), then its bytes are deleted and `SealedBoxPurged` is signed; the records stay. A renewal paid after the grace never revives a box (refund it by hand). The free second stage is the signed period report.
+- **Writes.** `POST /agents/sealed-store/boxes/<boxId>/objects`: sealed bytes as the body, the wallet-signed write record (base64url JSON) in `x-cappz-sealed-record`. The node checks signature, writer, clock (±10 min), size and SHA-256 while streaming, object size (`CAPPZ_SEALED_MAX_OBJECT_MB`, default 256), quota, and that the record names the object's current version (409 otherwise), then signs `SealedObjectStored`. `POST …/purges` frees a version (`SealedVersionPurged`). Reads (`GET …/boxes/<id>`, `GET …/blobs/<sha256>`) and the key directory (`POST /keys`, `POST /keys/revocations`, `GET /keys/<wallet>`) are free.
+- **Drive and capacity.** `CAPPZ_SEALED_STORE_DIR` puts the store on any drive (a USB disk, e.g. `D:\cappz-sealed`), one subfolder per network; `run-agents.ps1` grants read and write there. If the drive is missing at start, the sealed store answers 503 and the other agents run. `CAPPZ_SEALED_MAX_GB` (default 50) caps what the instance sells at once: quotas of active and grace boxes plus openings from the last hour not yet paid. Keep the sum over instances under the drive's free space.
+- **Tests:** rules in `src/test/edge-node-sealed.test.ts`; the routes end to end under Deno: `deno test --config deno.json --allow-read --allow-write --allow-env packages/cappz-edge-node/agents/sealed_server_test.ts`.
+
 ## A wallet vouches for the signer, not the certificate (15.44.0)
 
 The HTTPS certificate in front of the agents (Caddy with Let's Encrypt) is still needed. Browsers, XRPL wallets and `cappz-market hire` only accept a public-CA certificate for `https://`. But that certificate proves who controls the DNS name, not who signs the receipts. Without a declaration, a buyer learns the signing key from that page, so whoever takes over the name (a hijacked dynamic-DNS account, for example) could serve another key.

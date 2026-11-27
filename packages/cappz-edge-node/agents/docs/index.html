@@ -96,6 +96,12 @@ td,th{border-top:1px solid var(--line);padding:7px 8px;text-align:left;vertical-
     <p class="mute">This node becomes your vault's guard co-signer. Stolen operator keys move nothing; the guard signs only inside your policy (allowed destinations, daily caps), and you get an alert on anything it didn't approve.</p>
     <a class="btn" href="{{BASE}}/vault-guard/SKILL.md">How to set it up</a>
   </div>
+  <div class="card" id="sealed-store">
+    <h3>Sealed store</h3>
+    <div class="price">{{SS_PRICE}} XRP per GB per {{SS_DAYS}} days</div>
+    <p class="mute">Storage only your group can open. Files are encrypted on your own machine for the wallets you choose (post-quantum hybrid when their keys are); this node keeps the encrypted copies, checks every write's wallet signature and signs a receipt. Reading and the key directory are free.</p>
+    <a class="btn" href="{{BASE}}/sealed-store/SKILL.md">How to use it</a>
+  </div>
 </div>
 
 <h2 id="try-timestamp">Timestamp a file</h2>
@@ -163,6 +169,7 @@ node verify.mjs receipt.json {{NODE}}</pre>
     <tr><td><a href="{{BASE}}/draw/SKILL.md">draw/SKILL.md</a></td><td>Agent skill for the fair draw, with the rule written out.</td></tr>
     <tr><td><a href="{{BASE}}/vault-check/SKILL.md">vault-check/SKILL.md</a> · <a href="{{BASE}}/vault-guard/SKILL.md">vault-guard/SKILL.md</a></td><td>Agent skills for the vault check and the vault guard co-signer.</td></tr>
     <tr><td><a href="{{BASE}}/key-exposure/SKILL.md">key-exposure/SKILL.md</a></td><td>Agent skill for the quantum key exposure check ({{KE_PRICE}} XRP): which keys published their public key, rotation and quickSweep.</td></tr>
+    <tr><td><a href="{{BASE}}/sealed-store/SKILL.md">sealed-store/SKILL.md</a></td><td>Agent skill for the sealed store ({{SS_PRICE}} XRP per GB per {{SS_DAYS}} days): a group's encrypted files, key directory, versions and receipts.</td></tr>
     <tr><td><a href="{{BASE}}/draw/log">draw/log</a></td><td>Every draw commitment this node signed, hash-chained.</td></tr>
     <tr><td><a href="{{BASE}}/openapi.json">openapi.json</a></td><td>OpenAPI 3.1 for every route.</td></tr>
     <tr><td><a href="{{BASE}}/timestamp/agent">timestamp/agent</a> · <a href="{{BASE}}/webhook/agent">webhook/agent</a> · <a href="{{BASE}}/draw/agent">draw/agent</a></td><td>Agent cards: price, stages, payTo, network, signer.</td></tr>

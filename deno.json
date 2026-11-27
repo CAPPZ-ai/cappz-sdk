@@ -10,7 +10,8 @@
     "@cappz/sdk/governance": "./packages/cappz-sdk/governance.ts",
     "@cappz/sdk/repoz": "./packages/cappz-sdk/repoz.ts",
     "@cappz/sdk/mesh": "./packages/cappz-sdk/mesh.ts",
-    "@cappz/sdk/marketplace": "./packages/cappz-sdk/marketplace.ts"
+    "@cappz/sdk/marketplace": "./packages/cappz-sdk/marketplace.ts",
+    "@cappz/sdk/sealed": "./packages/cappz-sdk/sealed.ts"
   },
   "nodeModulesDir": "auto",
   "unstable": [

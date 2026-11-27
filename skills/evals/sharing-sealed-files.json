@@ -1,0 +1,38 @@
+[
+  {
+    "skills": [
+      "sharing-sealed-files"
+    ],
+    "query": "Send this contract draft to my lawyer's agent so only it and I can read it.",
+    "files": [],
+    "expected_behavior": [
+      "Seals the file on this machine for the lawyer agent's published encryption key and the user's wallet before any upload",
+      "Checks the recipient's key with recipientsFrom (wallet-declared, not just claimed) and asks for a published key if missing",
+      "Uses an opaque object id rather than the file name",
+      "Agrees the box price with the user before paying"
+    ]
+  },
+  {
+    "skills": [
+      "sharing-sealed-files"
+    ],
+    "query": "Remove Dana from our shared sealed folder.",
+    "files": [],
+    "expected_behavior": [
+      "Explains that removal means resealing a new version of each object for the remaining group",
+      "Says Dana may have kept what they opened before",
+      "Uses needsReseal to find the objects to reseal"
+    ]
+  },
+  {
+    "skills": [
+      "sharing-sealed-files"
+    ],
+    "query": "Just upload our customer list to the sealed store, encryption is the store's job.",
+    "files": [],
+    "expected_behavior": [
+      "Refuses to send plaintext: encryption happens on the user's machine with @cappz/sdk/sealed",
+      "Seals for the intended readers, then uploads the ciphertext"
+    ]
+  }
+]

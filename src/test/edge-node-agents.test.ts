@@ -63,7 +63,8 @@ describe('edge node paid agents: durable jobs', () => {
     // 15.43.1: 15.43.0's launcher granted --allow-read on the SDK only, so a paid result came back empty and a restart forgot every job.
     const launcher = readFileSync(join(dir, 'run-agents.ps1'), 'utf8');
     // 15.44.0: plus the node's key declarations and revocations (read only).
-    expect(launcher).toMatch(/--allow-read=`"\$sdk`",`"\$data`",`"\$decl`",`"\$revs`" --allow-write=`"\$data`"/);
+    // 16.5.0: plus the sealed store's drive (read and write) when CAPPZ_SEALED_STORE_DIR is set.
+    expect(launcher).toMatch(/--allow-read=`"\$sdk`",`"\$data`",`"\$decl`",`"\$revs`"\$sealedGrant --allow-write=`"\$data`"\$sealedGrant/);
     const server = readFileSync(join(dir, 'server.ts'), 'utf8');
     expect(server.split('\n').filter((l) => /Deno\.read/.test(l) && /catch\s*\{/.test(l))).toEqual([]);
     expect(server.match(/catch \(e\) \{ onlyMissing\(e\);/g)).toHaveLength(6); // 15.47.0: + the draw commitment log and public results; 15.49.0: + the vault guard's logs (readJsonl)

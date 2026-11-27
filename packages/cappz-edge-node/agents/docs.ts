@@ -29,6 +29,12 @@ export interface DocSettings {
   vaultGuardDays?: number;
   /** Quantum key exposure check (16.2.0); default 1 XRP. */
   keyExposurePrice?: number;
+  /** Sealed store (16.5.0); defaults 0.25 XRP per GB per 30 days, 7 days' grace, 50 GB sold in all, 256 MB objects. */
+  sealedPricePerGb?: number;
+  sealedDays?: number;
+  sealedGraceDays?: number;
+  sealedMaxGb?: number;
+  sealedMaxObjectMb?: number;
   /** The same agents on the other network ('' when there is none). */
   peerBase?: string;
 }
@@ -47,6 +53,7 @@ export const DOC_FILES: Readonly<Record<string, { file: string; type: string }>>
   '/vault-check/SKILL.md': { file: 'vault-check.SKILL.md', type: 'text/markdown; charset=utf-8' },
   '/vault-guard/SKILL.md': { file: 'vault-guard.SKILL.md', type: 'text/markdown; charset=utf-8' },
   '/key-exposure/SKILL.md': { file: 'key-exposure.SKILL.md', type: 'text/markdown; charset=utf-8' },
+  '/sealed-store/SKILL.md': { file: 'sealed-store.SKILL.md', type: 'text/markdown; charset=utf-8' },
   /** A draw's public page (also served at /draw/draws/<jobId> to browsers). */
   '/draw/view': { file: 'draw.html', type: 'text/html; charset=utf-8' },
   '/verify.mjs': { file: 'verify.mjs', type: 'text/javascript; charset=utf-8' },
@@ -64,6 +71,8 @@ export function docVars(s: DocSettings): Record<string, string> {
     DRAW_LEAD: String(Math.round((s.drawMinLeadSeconds ?? 120) / 60 * 10) / 10),
     VC_PRICE: round(s.vaultCheckPrice ?? 1), VG_PRICE: round(s.vaultGuardPrice ?? 10), VG_DAYS: String(s.vaultGuardDays ?? 30),
     KE_PRICE: round(s.keyExposurePrice ?? 1),
+    SS_PRICE: round(s.sealedPricePerGb ?? 0.25), SS_DAYS: String(s.sealedDays ?? 30), SS_GRACE: String(s.sealedGraceDays ?? 7),
+    SS_MAX_GB: String(s.sealedMaxGb ?? 50), SS_MAX_OBJECT_MB: String(Math.floor(s.sealedMaxObjectMb ?? 256)),
   };
 }
 
