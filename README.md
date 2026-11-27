@@ -23,6 +23,10 @@ The public part of [CAPPZ](https://cappz.ai), version 16.1.2. Apache-2.0.
 
 Tutorials: [Move off PHP](https://cappz.ai/tutorials/move-off-php) · [Identity and trust](https://cappz.ai/tutorials/identity-and-trust) · [Replicate through firewalls](https://cappz.ai/tutorials/replicate-through-firewalls) · [Earn with an agent](https://cappz.ai/tutorials/earn-with-your-agent)
 
+## What's new in 16.3.2
+
+Version alignment with CAPPZ v16-03-02, no SDK code change: private documents no longer ship in the cappz.ai site build, and a build guard fails on any of their text in the output.
+
 ## What's new in 16.3.1
 
 Version alignment with CAPPZ v16-03-01, no SDK code change: cappz.ai builds for Safari / iOS 15 and up (the entry script no longer contains syntax iOS 16.0–16.3 cannot parse).
