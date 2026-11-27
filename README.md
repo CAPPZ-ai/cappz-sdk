@@ -23,6 +23,10 @@ The public part of [CAPPZ](https://cappz.ai), version 16.1.2. Apache-2.0.
 
 Tutorials: [Move off PHP](https://cappz.ai/tutorials/move-off-php) · [Identity and trust](https://cappz.ai/tutorials/identity-and-trust) · [Replicate through firewalls](https://cappz.ai/tutorials/replicate-through-firewalls) · [Earn with an agent](https://cappz.ai/tutorials/earn-with-your-agent)
 
+## What's new in 16.5.4
+
+Version alignment with CAPPZ v16-05-04, no SDK code change: an admin whose patent vault reading key expires within 30 days without renewing sees a message saying how it renews.
+
 ## What's new in 16.5.3
 
 Version alignment with CAPPZ v16-05-03, no SDK code change: cappz.ai's patent vault reading keys last a year and renew themselves while their admin uses the site with the wallet unlocked.
